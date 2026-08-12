@@ -20,6 +20,7 @@
 11. 私域由企业配置兼容 OpenAI 接口的模型服务，不捆绑大模型。
 12. 每次迭代采用 Spec、Plan、TDD、全量回归和独立干净上下文回归 Agent 门禁。
 13. Superpowers 与选定的 Matt Pocock Skills 作为项目级、锁定来源的工程能力；升级前必须审计。
+14. 内部待办能力通过结构化意图路由到 Go Application Command，不使用 MCP 或内部 HTTP 回调；MCP 仅作为未来外部系统与开放生态的适配器。
 
 ## 2. 交付范围
 
@@ -156,6 +157,8 @@ Conversation 拥有会话记录、Intent Proposal、Clarification 和 Confirmati
 ```
 
 模型适配器之后必须执行运行时 Schema 校验。未知字段、非法枚举、越界字符串和不合法时间均视为无效提案，不能直接降级为写操作。
+
+Conversation 的外部 seam 是 `ModelPort`，用于把文字转换成 Intent Proposal；它的内部路由把合法提案映射到 Todo 的公开应用接口。模型不持有工具执行权，Intent Proposal 也不是 Application Command。
 
 ### 4.4 Reminder
 
@@ -311,7 +314,58 @@ cmd -> concrete adapters (composition only)
 
 ## 6. 关键业务流程
 
-### 6.1 智能新增
+### 6.1 Agent 与应用接口
+
+MVP 使用单轮结构化意图路由，不实现开放式 Agent 工具循环：
+
+```text
+Next.js
+-> Conversation HTTP Adapter
+-> Conversation Application
+-> ModelPort
+-> OpenAI-compatible Model Adapter
+-> Intent Proposal
+-> Schema / Policy / Confirmation validation
+-> Intent Router
+-> Todo Application Command or Query
+-> deterministic Result
+-> user-facing response
+```
+
+Intent Router 只认识显式注册的意图及其目标公开接口：
+
+```text
+todo.create -> CreateTodo Command
+todo.delete -> candidate search / Confirmation Request / DeleteTodo Command
+todo.list   -> ListTodos Query
+unknown     -> unsupported-intent response
+```
+
+约束如下：
+
+- 模型不能直接访问 Repository、PostgreSQL、River、HTTP Client 或通知供应商。
+- 内部模块调用不经过 MCP，也不通过本应用的 HTTP 接口回调自身。
+- Intent Proposal 必须先通过 Schema、用户、工作区、权限、确认和幂等策略，才能转换为 Application Command。
+- 本地工具不提供任意 HTTP、SQL、Shell 或动态代码执行能力。
+- 手动表单、HTTP API 和智能意图最终调用相同的 Application Command，避免业务规则分叉。
+- 未来引入多步 Function Calling 时，使用受控 Tool Registry；每个工具声明 Schema、权限、确认级别、超时、幂等和审计策略。
+
+未来 MCP 有两个独立方向：
+
+```text
+Workbench as MCP Client
+-> MCP Client Adapter
+-> Feishu / DingTalk / Calendar MCP Servers
+
+External Agent as MCP Client
+-> Workbench MCP Server Adapter
+-> OAuth scopes / Policy / Confirmation
+-> existing Application Commands
+```
+
+无论使用 Function Calling 还是 MCP，业务副作用都必须落到现有 Application Command；协议适配器不能成为第二套业务入口。
+
+### 6.2 智能新增
 
 ```text
 用户文字
@@ -328,7 +382,7 @@ cmd -> concrete adapters (composition only)
 
 表单新增调用同一个 `CreateTodo` 应用命令，不维护第二套规则。
 
-### 6.2 智能删除
+### 6.3 智能删除
 
 ```text
 用户文字
@@ -345,7 +399,7 @@ cmd -> concrete adapters (composition only)
 
 确认请求必须短时有效、单次使用，并绑定 Workspace、User、Todo 和 Todo Version。任何自然语言批量删除均拒绝。
 
-### 6.3 查询和仪表盘
+### 6.4 查询和仪表盘
 
 模型只把自然语言转换为筛选 DTO；所有结果和统计由确定性查询生成。仪表盘至少包含：
 
@@ -356,7 +410,7 @@ cmd -> concrete adapters (composition only)
 - 最近 7 天完成数。
 - 提醒重试中或失败数。
 
-### 6.4 到期提醒
+### 6.5 到期提醒
 
 1. 创建或改期待办时，在业务事务内插入带 `ScheduledAt=DueAt` 的 River Job。
 2. River 将任务持久化为 `scheduled`；维护调度器周期性将近期到期任务转为 `available`。
@@ -380,7 +434,7 @@ workspaceId:todoId:todoReminderVersion:channel
 
 River 保证持久化、领取和可靠重试，但不能使外部短信/邮件副作用天然“恰好一次”。供应商支持幂等键时必须透传；不支持时由本地投递记录降低重复概率，产品不得宣称绝对仅发送一次。
 
-### 6.5 集群运行模型
+### 6.6 集群运行模型
 
 ```text
 API replicas
@@ -588,6 +642,7 @@ docs/iterations/ITER-0001/
 - PostgreSQL 集成测试：Repository、迁移、并发和事务入队。
 - River Adapter 契约测试：定时入队、取消/失效、重试、重复执行和恢复。
 - AI 契约与评测：固定中英文语料、意图、参数、澄清、注入和危险操作拒绝。
+- 意图路由契约测试：仅注册意图可到达应用接口，MCP/模型适配器不能绕过策略或直接触达基础设施。
 - 前端组件测试：表单、列表、候选选择、确认和异常状态。
 - OpenAPI 契约测试：生成类型和兼容性。
 - E2E：登录、智能/手动新增、查询、删除确认、改期、完成和提醒。
@@ -644,6 +699,7 @@ Go 执行格式化、静态分析、竞态检测和漏洞扫描；TypeScript 执
 - 相同导出包重复导入不会产生重复 Todo。
 - 未经确认的智能删除永不执行。
 - 模型不可用时仍可登录、手动管理和查看待办。
+- 内部待办命令不依赖 MCP 服务可用性；未来 MCP Adapter 故障不能绕过或改变应用规则。
 
 ## 14. 交付切片
 

@@ -679,4 +679,3 @@ Go 执行格式化、静态分析、竞态检测和漏洞扫描；TypeScript 执
 - [River](https://riverqueue.com/)
 - [River source and configuration](https://github.com/riverqueue/river)
 - [OpenAI Function Calling and Structured Outputs](https://help.openai.com/en/articles/8555517-function-calling-in-the-openai-api-Function)
-

@@ -19,4 +19,3 @@ _Avoid_: Cancelled Job
 **Delivery Receipt（投递回执）**：
 外部供应商针对一次提醒投递返回或回调的状态证据。
 _Avoid_: Success、Guaranteed Delivery
-

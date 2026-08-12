@@ -19,4 +19,3 @@ _Avoid_: Local ID、UUID
 **Import Conflict（导入冲突）**：
 来源标识相同但内容无法安全合并的记录。
 _Avoid_: Duplicate
-

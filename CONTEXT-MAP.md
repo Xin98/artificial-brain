@@ -16,4 +16,3 @@
 - **Todo → Reminder**：Todo 的到期安排产生或失效提醒计划；Reminder 在执行前重新验证待办版本。
 - **Identity → Todo / Conversation / Reminder / Portability**：Identity 提供当前用户、个人工作区和已验证联系通道。
 - **Portability → Identity / Todo / Reminder**：Portability 读取版本化快照并通过各上下文的公开应用接口导入，禁止直接复制内部表。
-

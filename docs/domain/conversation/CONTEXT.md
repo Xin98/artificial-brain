@@ -19,4 +19,3 @@ _Avoid_: Approval Token、Delete Command
 **Candidate（候选待办）**：
 与用户删除描述相符、可供用户明确选择的待办摘要。
 _Avoid_: Match Result
-

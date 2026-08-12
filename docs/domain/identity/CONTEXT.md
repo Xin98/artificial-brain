@@ -19,4 +19,3 @@ _Avoid_: Address、Endpoint
 **Login Challenge（登录挑战）**：
 向手机号发出、短时有效且只能使用一次的登录验证要求。
 _Avoid_: Password、Permanent Code
-

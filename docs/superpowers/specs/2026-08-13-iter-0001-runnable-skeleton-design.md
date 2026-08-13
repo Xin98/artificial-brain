@@ -108,6 +108,8 @@ API 是 Go 模块化单体的 HTTP 组合入口。本迭代只提供：
 
 Worker 与 API 共用配置、数据库和可观测性平台包，但拥有独立组合入口和生命周期。它不消费提醒任务，只完成数据库连接、运行状态登记、存活/就绪探针和优雅停机。
 
+Worker 在仅供容器内部访问的独立健康端口提供 `GET /health/live` 和 `GET /health/ready`；该端口不由反向代理或 Web 对外暴露。存活探针只检查进程事件循环，就绪探针检查必要配置、数据库连接和心跳循环状态。Compose 与未来编排平台使用这两个探针，Web 聚合状态不直接访问 Worker，而是通过 API 读取心跳租约。
+
 Worker 状态通过带租约的数据库心跳发布。状态记录包含实例标识、启动时间、最近心跳时间和进程版本；API 只在心跳未超过允许时限时把 Worker 判定为健康。进程正常退出时尽力注销，异常退出则依赖租约自然过期，因此不会永久显示假健康。
 
 ### 4.4 PostgreSQL 与迁移
@@ -183,18 +185,19 @@ cmd -> concrete adapters
 make dev                构建并启动本地完整栈
 make down               停止本地栈并保留数据库卷
 make format             格式化 Go、TypeScript 和仓库配置
+make format-check       只读检查格式，不修改工作区
 make lint               执行 Go 与 TypeScript 静态检查
 make architecture-test  验证依赖方向和目录政策
 make test               执行单元与组件测试
 make migration-test     在隔离数据库上从空库执行迁移验证
 make build              构建 Web、API、Worker 和 migrate
 make smoke-test         验证运行栈和健康页面
-make verify             执行提交前全部确定性门禁
+make verify             执行提交前全部只读、确定性门禁
 ```
 
 `make down` 不删除卷；清理持久数据必须使用名称明确的独立命令，并要求显式确认，避免日常命令误删开发数据。
 
-CI 依次执行：
+`make verify` 调用 `format-check` 而不是 `format`，验证过程不得改写源码。CI 依次执行：
 
 ```text
 format check
@@ -277,4 +280,3 @@ ITER-0001 在以下条件全部满足时完成：
 - **迁移竞争**：只有一次性 migrate 进程执行迁移，API 和 Worker 只验证兼容性。
 - **工具链漂移**：语言、包管理器、依赖和容器基础镜像版本在仓库中锁定，升级必须显式评审。
 - **冒烟测试不稳定**：所有等待基于健康条件和总超时，不使用固定长时间睡眠。
-

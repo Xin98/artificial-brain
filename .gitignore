@@ -1,0 +1,17 @@
+.DS_Store
+.env
+.env.*
+!.env.example
+
+node_modules/
+.next/
+coverage/
+dist/
+build/
+*.out
+
+compose.override.yaml
+docker-compose.override.yml
+
+.worktrees/
+.superpowers/

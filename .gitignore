@@ -3,6 +3,7 @@
 .env.*
 !.env.example
 
+.pnpm-store/
 node_modules/
 .next/
 coverage/

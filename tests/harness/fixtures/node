@@ -1,0 +1,2 @@
+#!/bin/sh
+printf 'v%s\n' "${TOOLCHAIN_FAKE_NODE_VERSION:-24.18.0}"

@@ -1,0 +1,19 @@
+{
+  "name": "artificial-brain",
+  "private": true,
+  "packageManager": "pnpm@11.19.0",
+  "engines": {
+    "node": "24.18.0",
+    "pnpm": "11.19.0"
+  },
+  "scripts": {
+    "format": "prettier --write package.json pnpm-workspace.yaml compose.yaml '.github/**/*.yml' scripts/check-secrets.mjs && pnpm --filter @artificial-brain/web format",
+    "format:check": "prettier --check package.json pnpm-workspace.yaml compose.yaml '.github/**/*.yml' scripts/check-secrets.mjs && pnpm --filter @artificial-brain/web format:check",
+    "lint": "pnpm --filter @artificial-brain/web lint",
+    "test": "pnpm --filter @artificial-brain/web test",
+    "build": "pnpm --filter @artificial-brain/web build"
+  },
+  "devDependencies": {
+    "prettier": "3.9.6"
+  }
+}

@@ -53,6 +53,9 @@ The public interfaces above are the test surfaces. pgx queries, clock functions,
 - Create: `Makefile`
 - Create: `scripts/check-toolchain.sh`
 - Create: `tests/harness/repository_policy_test.sh`
+- Create: `tests/harness/fixtures/go`
+- Create: `tests/harness/fixtures/node`
+- Create: `tests/harness/fixtures/pnpm`
 - Create: `AGENTS.md`
 - Create: `apps/web/AGENTS.md`
 - Create: `backend/AGENTS.md`
@@ -78,19 +81,29 @@ Create `tests/harness/repository_policy_test.sh` with assertions that fail becau
 #!/bin/sh
 set -eu
 
-test "$(cat .node-version)" = "24.18.0"
-grep -qx 'go 1.26.0' go.mod
-grep -qx 'toolchain go1.26.5' go.mod
-grep -q '"packageManager": "pnpm@11.19.0"' package.json
-grep -q '^  - apps/\*$' pnpm-workspace.yaml
+fixture_dir=$(mktemp -d)
+trap 'rm -rf "$fixture_dir"' EXIT
 
-for file in AGENTS.md apps/web/AGENTS.md backend/AGENTS.md architecture/AGENTS.md deploy/AGENTS.md; do
-  test -s "$file"
+mkdir -p "$fixture_dir/bin"
+for tool in go node pnpm; do
+  cp "tests/harness/fixtures/$tool" "$fixture_dir/bin/$tool"
+  chmod +x "$fixture_dir/bin/$tool"
 done
 
-for file in brief.md spec.md plan.md progress.md decisions.md test-matrix.md handoff.md; do
-  test -s "docs/iterations/ITER-0001/$file"
-done
+PATH="$fixture_dir/bin:$PATH" sh scripts/check-toolchain.sh
+
+TOOLCHAIN_FAKE_GO_VERSION=go1.25.0 \
+  PATH="$fixture_dir/bin:$PATH" \
+  sh -c 'if sh scripts/check-toolchain.sh; then exit 1; fi'
+
+node -e '
+  const fs = require("node:fs");
+  const pkg = JSON.parse(fs.readFileSync("package.json", "utf8"));
+  if (pkg.packageManager !== "pnpm@11.19.0") process.exit(1);
+  if (pkg.engines.node !== "24.18.0") process.exit(1);
+'
+
+corepack pnpm --silent list --depth=-1 >/dev/null
 
 if git ls-files | grep -E '(^|/)\.DS_Store$|(^|/)\.env$'; then
   echo 'tracked local or secret file detected' >&2
@@ -159,7 +172,7 @@ harness-test:
 	@sh tests/harness/repository_policy_test.sh
 ```
 
-`scripts/check-toolchain.sh` compares installed major/minor versions to the pinned files, accepts patch-newer Go 1.26 and exact Node/pnpm versions, and prints actionable install messages without installing anything.
+Add executable fixtures `tests/harness/fixtures/go`, `tests/harness/fixtures/node`, and `tests/harness/fixtures/pnpm`. Each prints the real command's version shape and reads only its matching `TOOLCHAIN_FAKE_*_VERSION` variable, defaulting to the approved version. `scripts/check-toolchain.sh` compares those observable command outputs to the pinned policy, accepts patch-newer Go 1.26 and exact Node/pnpm versions, and prints actionable install messages without installing anything. The test must prove the valid fixture set succeeds and an older Go fixture fails; it must not assert configuration by grepping source text.
 
 Iteration docs must copy the approved scope and ten acceptance criteria, link the design and this plan, mark Task 1 in progress, and state that `regression-report.md` is intentionally absent until clean-context regression.
 
@@ -176,7 +189,7 @@ Expected in an equipped execution environment: PASS and print the pinned version
 - [ ] **Step 5: Commit the baseline**
 
 ```bash
-git add .gitignore .node-version go.mod package.json pnpm-workspace.yaml Makefile scripts/check-toolchain.sh tests/harness/repository_policy_test.sh AGENTS.md apps/web/AGENTS.md backend/AGENTS.md architecture/AGENTS.md deploy/AGENTS.md docs/iterations/ITER-0001
+git add .gitignore .node-version go.mod package.json pnpm-workspace.yaml Makefile scripts/check-toolchain.sh tests/harness/repository_policy_test.sh tests/harness/fixtures AGENTS.md apps/web/AGENTS.md backend/AGENTS.md architecture/AGENTS.md deploy/AGENTS.md docs/iterations/ITER-0001
 git commit -m "chore: establish ITER-0001 harness"
 ```
 
@@ -495,6 +508,8 @@ git commit -m "feat: track worker heartbeat leases"
 - Create: `backend/internal/platform/systemhealth/checker_test.go`
 - Create: `contracts/openapi/system-health.yaml`
 - Create: `tests/contract/system_health_contract_test.go`
+- Modify: `go.mod`
+- Modify: `go.sum`
 - Modify: `docs/iterations/ITER-0001/progress.md`
 - Modify: `docs/iterations/ITER-0001/test-matrix.md`
 
@@ -564,7 +579,7 @@ Lease age exactly equal to TTL remains healthy; only `age > TTL` expires it. Cla
 }
 ```
 
-The schema requires all top-level properties and component `status`/`checkedAt`, makes component `detail` optional, forbids additional properties, constrains `detail` to 200 characters, and documents 200 for system health, 200/503 for readiness, and 200 for liveness. `tests/contract/system_health_contract_test.go` marshals a representative `Report`, checks exact JSON field names/enums, and checks that the YAML contains each route and status enum. This is a lightweight source-contract test; do not add a code generator in ITER-0001.
+The schema requires all top-level properties and component `status`/`checkedAt`, makes component `detail` optional, forbids additional properties, constrains `detail` to 200 characters, and documents 200 for system health, 200/503 for readiness, and 200 for liveness. Pin `gopkg.in/yaml.v3 v3.0.1`. `tests/contract/system_health_contract_test.go` parses the YAML into typed test structs, asserts `openapi: 3.1.1`, traverses the parsed `paths`/response maps for every route and status code, and compares the parsed status enum with the JSON produced by a representative `Report`. Malformed YAML, comment-only route names, misplaced enums, or missing response schemas must fail. This is a lightweight structured source-contract test; do not add a code generator in ITER-0001.
 
 - [ ] **Step 5: Run health and contract tests**
 
@@ -575,7 +590,7 @@ Expected: PASS.
 - [ ] **Step 6: Update evidence and commit**
 
 ```bash
-git add backend/internal/platform/systemhealth contracts/openapi/system-health.yaml tests/contract docs/iterations/ITER-0001/progress.md docs/iterations/ITER-0001/test-matrix.md
+git add backend/internal/platform/systemhealth contracts/openapi/system-health.yaml tests/contract go.mod go.sum docs/iterations/ITER-0001/progress.md docs/iterations/ITER-0001/test-matrix.md
 git commit -m "feat: define system health contract"
 ```
 
@@ -1132,6 +1147,7 @@ git commit -m "build: add reproducible local runtime"
 - Create: `README.md`
 - Create: `scripts/check-format.sh`
 - Create: `scripts/check-secrets.sh`
+- Create: `tests/harness/workflow_test.go`
 - Modify: `Makefile`
 - Modify: `docs/iterations/ITER-0001/progress.md`
 - Modify: `docs/iterations/ITER-0001/test-matrix.md`
@@ -1144,7 +1160,7 @@ git commit -m "build: add reproducible local runtime"
 
 - [ ] **Step 1: Write failing harness assertions for the complete Make interface**
 
-Extend `tests/harness/repository_policy_test.sh` to require each target name and require CI to contain `make verify`, `make migration-test`, and `make smoke-test`. It must reject a `make verify` recipe containing `format` without `format-check`.
+Extend `tests/harness/repository_policy_test.sh` to exercise the Make interface with a temporary executable `make` dependency fixture directory: invoke `make -n format-check lint architecture-test test build verify` and require every target to resolve successfully without executing its recipe. Run `make -n verify` and assert from Make's expanded command graph that it selects `format-check` and never selects the mutating formatter command. Parse `.github/workflows/ci.yml` with `gopkg.in/yaml.v3` in a small Go harness test, traverse `jobs.*.steps[*].run`, and require executable steps for `make verify`, `make migration-test`, and `make smoke-test`; comments and unrelated scalar strings do not count.
 
 Run: `make harness-test`
 
@@ -1216,7 +1232,7 @@ Expected: every command exits 0. `git status --short` shows only deliberate iter
 Update every test-matrix row with its command and evidence commit. Mark implementation complete but regression pending in `progress.md` and `handoff.md`.
 
 ```bash
-git add .github/workflows/ci.yml README.md scripts/check-format.sh scripts/check-secrets.sh Makefile tests/harness/repository_policy_test.sh docs/iterations/ITER-0001
+git add .github/workflows/ci.yml README.md scripts/check-format.sh scripts/check-secrets.sh Makefile tests/harness/repository_policy_test.sh tests/harness/workflow_test.go docs/iterations/ITER-0001
 git commit -m "ci: enforce ITER-0001 verification gates"
 ```
 

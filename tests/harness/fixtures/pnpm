@@ -1,0 +1,2 @@
+#!/bin/sh
+printf '%s\n' "${TOOLCHAIN_FAKE_PNPM_VERSION:-11.19.0}"

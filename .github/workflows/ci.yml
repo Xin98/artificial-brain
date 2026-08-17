@@ -1,0 +1,77 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v5
+        with:
+          version: 11.19.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24.18.0
+          cache: pnpm
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: 1.26.5
+          cache: true
+
+      - name: Install dependencies
+        run: |
+          mkdir -p .artifacts
+          printf '%s\n' 'Smoke test did not run or produced no diagnostics.' >.artifacts/smoke-diagnostics.log
+          corepack pnpm install --frozen-lockfile
+
+      - name: Verify
+        run: make verify
+
+      - name: Test migrations
+        run: make migration-test
+
+      - name: Test runtime stack
+        run: make smoke-test >.artifacts/smoke-raw.log 2>&1
+
+      - name: Redact smoke diagnostics
+        if: always()
+        shell: bash
+        run: |
+          redaction_status=0
+          if [[ -f .artifacts/smoke-raw.log ]]; then
+            set +e
+            sh scripts/redact-logs.sh <.artifacts/smoke-raw.log >.artifacts/smoke-diagnostics.tmp
+            redaction_status=$?
+            set -e
+            if [[ "$redaction_status" -eq 0 ]]; then
+              mv .artifacts/smoke-diagnostics.tmp .artifacts/smoke-diagnostics.log
+            else
+              rm -f .artifacts/smoke-diagnostics.tmp
+            fi
+            rm .artifacts/smoke-raw.log
+          fi
+          exit "$redaction_status"
+
+      - name: Upload redacted smoke diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: redacted-smoke-diagnostics
+          path: .artifacts/smoke-diagnostics.log
+          if-no-files-found: error

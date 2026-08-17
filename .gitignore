@@ -13,5 +13,9 @@ build/
 compose.override.yaml
 docker-compose.override.yml
 
+# Local Docker Compose overrides
+compose.local.yaml
+docker-compose.local.yml
+
 .worktrees/
 .superpowers/

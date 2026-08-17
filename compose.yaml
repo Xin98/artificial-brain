@@ -1,0 +1,150 @@
+services:
+  postgres:
+    image: postgres:18.4-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-artificial_brain}
+      POSTGRES_USER: ${POSTGRES_USER:-artificial_brain}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-local-development-only}
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test:
+        ["CMD-SHELL", 'pg_isready -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"']
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: runtime
+      args:
+        BINARY: migrate
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-artificial_brain}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-artificial_brain}?sslmode=disable
+      MIGRATIONS_DIR: /migrations
+      SERVICE_VERSION: ${SERVICE_VERSION:-dev}
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-10s}
+      WORKER_HEARTBEAT_INTERVAL: ${WORKER_HEARTBEAT_INTERVAL:-2s}
+      WORKER_LEASE_TTL: ${WORKER_LEASE_TTL:-6s}
+    volumes:
+      - ./deploy/migrations:/migrations:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: "no"
+
+  api:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: runtime
+      args:
+        BINARY: api
+    environment:
+      API_HTTP_ADDRESS: ${API_HTTP_ADDRESS:-:8080}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-artificial_brain}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-artificial_brain}?sslmode=disable
+      SERVICE_VERSION: ${SERVICE_VERSION:-dev}
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-10s}
+      WORKER_HEARTBEAT_INTERVAL: ${WORKER_HEARTBEAT_INTERVAL:-2s}
+      WORKER_LEASE_TTL: ${WORKER_LEASE_TTL:-6s}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    ports:
+      - ${API_PORT:-8080}:8080
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1:8080/health/ready",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+    restart: unless-stopped
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: runtime
+      args:
+        BINARY: worker
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-artificial_brain}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-artificial_brain}?sslmode=disable
+      SERVICE_VERSION: ${SERVICE_VERSION:-dev}
+      SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-10s}
+      WORKER_HEALTH_ADDRESS: ${WORKER_HEALTH_ADDRESS:-:8081}
+      WORKER_HEARTBEAT_INTERVAL: ${WORKER_HEARTBEAT_INTERVAL:-2s}
+      WORKER_LEASE_TTL: ${WORKER_LEASE_TTL:-6s}
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1:8081/health/ready",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      target: runtime
+    environment:
+      API_INTERNAL_URL: http://api:8080
+      NEXT_TELEMETRY_DISABLED: "1"
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - ${WEB_PORT:-3000}:3000
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--no-verbose",
+          "--tries=1",
+          "--spider",
+          "http://127.0.0.1:3000/health/live",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
+    restart: unless-stopped
+
+  backend-test:
+    profiles: [test]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+      target: test
+    environment:
+      TEST_DATABASE_URL: postgresql://${POSTGRES_USER:-artificial_brain}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-artificial_brain}?sslmode=disable
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:

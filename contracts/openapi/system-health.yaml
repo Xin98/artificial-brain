@@ -1,0 +1,98 @@
+openapi: 3.1.1
+info:
+  title: Artificial Brain System Health API
+  version: 0.1.0
+paths:
+  /api/v1/system/health:
+    get:
+      operationId: getSystemHealth
+      responses:
+        '200':
+          description: System health report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemHealthReport'
+  /health/live:
+    get:
+      operationId: getSystemLiveness
+      responses:
+        '200':
+          description: API process is live.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Liveness'
+  /health/ready:
+    get:
+      operationId: getSystemReadiness
+      responses:
+        '200':
+          description: Dependencies are ready.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemHealthReport'
+        '503':
+          description: One or more dependencies are unavailable.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SystemHealthReport'
+components:
+  schemas:
+    SystemHealthReport:
+      type: object
+      additionalProperties: false
+      required:
+        - status
+        - checkedAt
+        - correlationId
+        - components
+      properties:
+        status:
+          type: string
+          enum: [healthy, degraded]
+        checkedAt:
+          type: string
+          format: date-time
+        correlationId:
+          type: string
+        components:
+          type: object
+          additionalProperties: false
+          required: [api, database, worker]
+          properties:
+            api:
+              $ref: '#/components/schemas/HealthComponent'
+            database:
+              $ref: '#/components/schemas/HealthComponent'
+            worker:
+              $ref: '#/components/schemas/HealthComponent'
+    HealthComponent:
+      type: object
+      additionalProperties: false
+      required: [status, checkedAt]
+      properties:
+        status:
+          type: string
+          enum: [healthy, unavailable]
+        checkedAt:
+          type: string
+          format: date-time
+        detail:
+          type: string
+          maxLength: 200
+    Liveness:
+      type: object
+      additionalProperties: false
+      required: [status, checkedAt, correlationId]
+      properties:
+        status:
+          type: string
+          enum: [healthy]
+        checkedAt:
+          type: string
+          format: date-time
+        correlationId:
+          type: string

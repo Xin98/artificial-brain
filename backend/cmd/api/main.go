@@ -41,7 +41,7 @@ func main() {
 	}
 	workers := workerstatus.NewRegistry(pool, time.Now)
 	checker := systemhealth.NewChecker(pool, workers, time.Now, cfg.WorkerLeaseTTL)
-	srv := &http.Server{Addr: cfg.HTTPAddress, Handler: server.NewAPIHandler(ready, checker)}
+	srv := &http.Server{Addr: cfg.HTTPAddress, Handler: buildHandler(cfg, pool, ready, checker)}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if err := server.Serve(ctx, srv, cfg.ShutdownTimeout); err != nil && !errors.Is(err, http.ErrServerClosed) {

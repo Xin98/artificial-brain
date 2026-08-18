@@ -1,6 +1,6 @@
 # Artificial Brain
 
-ITER-0001 is a runnable, deliberately narrow system skeleton: a server-rendered Next.js health page, a Go API, a Go Worker, a one-shot migration command, and PostgreSQL. It proves startup ordering, health propagation, lifecycle handling, and repository verification without adding business-domain behavior.
+ITER-0002 delivers the first business closed loop on the ITER-0001 skeleton: phone + SMS-code cloud login (fake SMS outbox with a gated dev inbox), personal workspaces with enforced isolation, the full Todo lifecycle with optimistic concurrency, a deterministic dashboard, and a conversation path that turns natural language into strictly validated intents — creating todos, listing them, and deleting them only through candidate matching plus a one-time confirmation. A minimal Reminder seam (plans + a no-op scheduler) is pre-wired for ITER-0003; no delivery, no River, and no real model calls happen in this iteration.
 
 ## Prerequisites
 
@@ -21,13 +21,33 @@ make dev
 
 Compose waits for PostgreSQL, runs the migration process to completion, then starts API and Worker, and finally starts Web after API readiness succeeds. The default host URLs are:
 
-- Web status page: `http://localhost:3000/`
+- Web workbench (session-gated dashboard): `http://localhost:3000/`
+- Web todos / conversation / settings: `http://localhost:3000/todos`, `/conversation`, `/settings`
+- Web login: `http://localhost:3000/login`
+- Web system status page: `http://localhost:3000/status`
 - Web liveness: `http://localhost:3000/health/live`
 - API liveness: `http://localhost:8080/health/live`
 - API readiness: `http://localhost:8080/health/ready`
 - API system health: `http://localhost:8080/api/v1/system/health`
 
-The Worker health port and PostgreSQL are private to the Compose network. Browser code never receives their Compose service names.
+Web proxies `/api/v1/:path*` to the API, so the browser only ever talks to the Web origin. The Worker health port and PostgreSQL are private to the Compose network. Browser code never receives their Compose service names.
+
+### Logging in locally
+
+Compose runs in cloud mode with a fake SMS outbox. Login is a two-step flow: request a code for a phone number, then read the code from the double-gated dev inbox (`GET /api/v1/dev/sms-inbox?address=<phone>` — present only when `APP_ENV` is not `production` **and** `DEV_INBOX_ENABLED=true`), and verify it to receive the `ab_session` cookie. Every workbench route redirects to `/login` without a validated session.
+
+### Business API routes
+
+All business routes return stable `{code, message, correlationId}` error envelopes and live behind the session cookie except where noted:
+
+- `POST /api/v1/auth/login/request`, `POST /api/v1/auth/login/verify`, `POST /api/v1/auth/logout`, `GET /api/v1/auth/session`
+- `GET|POST /api/v1/settings/contact-channels`, `POST /api/v1/settings/contact-channels/{channelId}/verify`, `PATCH /api/v1/settings/contact-channels/{channelId}`
+- `GET|POST /api/v1/todos`, `GET|PATCH /api/v1/todos/{todoId}`, `POST /api/v1/todos/{todoId}/complete`
+- `GET /api/v1/dashboard/summary?timezone=<IANA>`
+- `POST /api/v1/conversation/messages`, `POST /api/v1/confirmations`, `POST /api/v1/confirmations/{confirmationId}/confirm`
+- `GET /api/v1/dev/sms-inbox?address=<phone>` (unauthenticated, double-gated, dev only)
+
+There is deliberately no raw `DELETE /api/v1/todos/{id}`: manual and smart deletes both require a one-time, TTL-bounded confirmation bound to the user, workspace, todo, and todo version.
 
 Copy `.env.example` to an ignored `.env` only when local overrides are needed. Never commit real credentials.
 
@@ -46,7 +66,18 @@ Copy `.env.example` to an ignored `.env` only when local overrides are needed. N
 | `WEB_PORT` | `3000` | Web host port; set to `0` for Docker assignment |
 | `DATABASE_URL` | supplied by Compose | Required PostgreSQL URL for direct Go process execution |
 | `MIGRATIONS_DIR` | `/migrations` | Migration directory used only by the migrate command |
-| `API_INTERNAL_URL` | `http://api:8080` | Server-only API base URL for Web |
+| `API_INTERNAL_URL` | `http://api:8080` | Server-only API base URL for Web; also baked into the Web rewrite destination at image build time |
+| `APP_ENV` | `development` | Deployment environment; the dev inbox requires a non-`production` value |
+| `DEV_INBOX_ENABLED` | `true` | Enables the fake SMS inbox route; `config.Load` fails if `true` with `APP_ENV=production` |
+| `MODEL_ADAPTER` | `deterministic` | Conversation model adapter: `deterministic` (embedded corpus) or `openai_compatible` |
+| `MODEL_BASE_URL`, `MODEL_NAME`, `MODEL_API_KEY` | unset | Required when `MODEL_ADAPTER=openai_compatible`; never point CI or Compose at a real model |
+| `MODEL_TIMEOUT` | `15s` | Timeout for OpenAI-compatible model calls |
+| `SESSION_TTL` | `168h` | Session cookie lifetime |
+| `LOGIN_CHALLENGE_TTL` | `5m` | Login code lifetime |
+| `CHANNEL_CODE_TTL` | `10m` | Contact-channel verification code lifetime |
+| `CONFIRMATION_TTL` | `5m` | Delete-confirmation lifetime |
+
+Integration tests for the PostgreSQL adapters additionally use `TEST_DATABASE_URL` (skipped when unset).
 
 ## Health semantics
 
@@ -72,8 +103,8 @@ make architecture-test
 make test             # Go race tests plus Web tests
 make build            # production Go and Web builds
 make verify           # all Docker-free, read-only pre-commit gates
-make migration-test   # isolated empty-schema and migration ownership proof
-make smoke-test       # complete healthy/degraded/recovered Compose proof
+make migration-test   # isolated empty-schema, migration ownership, and adapter DB proof (schema v5)
+make smoke-test       # complete healthy/degraded/recovered Compose proof plus the authenticated end-to-end loop
 ```
 
 `make verify` never calls `make format`, Docker, migration tests, or smoke tests. Run the complete local acceptance sequence as CI does:

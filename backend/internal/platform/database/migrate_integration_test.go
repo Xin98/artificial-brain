@@ -48,4 +48,30 @@ func TestRunMigrationsTwice(t *testing.T) {
 	if workerTableCount != 1 {
 		t.Fatalf("runtime.worker_heartbeats count = %d, want 1", workerTableCount)
 	}
+
+	expectedTables := [][2]string{
+		{"identity", "workspaces"},
+		{"identity", "users"},
+		{"identity", "login_challenges"},
+		{"identity", "sessions"},
+		{"identity", "contact_channels"},
+		{"identity", "message_outbox"},
+		{"todo", "todos"},
+		{"reminder", "reminder_plans"},
+		{"conversation", "confirmation_requests"},
+		{"conversation", "messages"},
+	}
+	for _, schemaTable := range expectedTables {
+		var count int
+		if err := conn.QueryRow(ctx, `
+			select count(*)
+			from information_schema.tables
+			where table_schema = $1 and table_name = $2
+		`, schemaTable[0], schemaTable[1]).Scan(&count); err != nil {
+			t.Fatalf("table query error for %s.%s = %v", schemaTable[0], schemaTable[1], err)
+		}
+		if count != 1 {
+			t.Fatalf("%s.%s count = %d, want 1", schemaTable[0], schemaTable[1], count)
+		}
+	}
 }

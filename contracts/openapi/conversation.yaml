@@ -1,0 +1,240 @@
+openapi: 3.1.1
+info:
+  title: Artificial Brain Conversation API
+  version: 0.1.0
+paths:
+  /api/v1/conversation/messages:
+    post:
+      operationId: postConversationMessage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConversationMessageRequest'
+      responses:
+        '200':
+          description: The resolved outcome of the turn.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationResponse'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Missing or oversized text, or missing timezone.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/confirmations:
+    post:
+      operationId: createConfirmation
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmationRequest'
+      responses:
+        '201':
+          description: Confirmation created, bound to the todo version.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConfirmationCreated'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Todo not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: Todo is not pending.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/confirmations/{confirmationId}/confirm:
+    post:
+      operationId: confirmAction
+      responses:
+        '200':
+          description: The confirmed action executed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConversationResponse'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Confirmation not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: Confirmation consumed or todo version stale.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '410':
+          description: Confirmation expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+components:
+  schemas:
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [code, message, correlationId]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        correlationId:
+          type: string
+    ConversationMessageRequest:
+      type: object
+      additionalProperties: false
+      required: [text, timezone]
+      properties:
+        text:
+          type: string
+          maxLength: 1000
+        timezone:
+          type: string
+    ConfirmationRequest:
+      type: object
+      additionalProperties: false
+      required: [intent, todoId]
+      properties:
+        intent:
+          type: string
+          enum: [todo.delete]
+        todoId:
+          type: string
+    ConfirmationCreated:
+      type: object
+      additionalProperties: false
+      required: [confirmationId, expiresAt]
+      properties:
+        confirmationId:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    ConversationResponse:
+      type: object
+      additionalProperties: false
+      required: [kind, correlationId]
+      properties:
+        kind:
+          type: string
+          enum:
+            - todo_created
+            - clarification
+            - candidates
+            - confirmation_required
+            - todo_list
+            - todo_deleted
+            - not_found
+            - unsupported
+        correlationId:
+          type: string
+        todo:
+          $ref: '#/components/schemas/TodoView'
+        resolvedDueAtUtc:
+          type: string
+          format: date-time
+        localEcho:
+          type: string
+        timezoneEcho:
+          type: string
+        missingFields:
+          type: array
+          items:
+            type: string
+        candidates:
+          type: array
+          items:
+            $ref: '#/components/schemas/Candidate'
+        confirmationId:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        todos:
+          type: array
+          items:
+            $ref: '#/components/schemas/TodoView'
+        todoId:
+          type: string
+    Candidate:
+      type: object
+      additionalProperties: false
+      required: [todoId, title, version]
+      properties:
+        todoId:
+          type: string
+        title:
+          type: string
+        dueAtUtc:
+          type: string
+          format: date-time
+        version:
+          type: integer
+    TodoView:
+      type: object
+      additionalProperties: false
+      required: [id, title, status, overdue, reminderVersion, version, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+          maxLength: 200
+        description:
+          type: string
+        dueAtUtc:
+          type: string
+          format: date-time
+        timezoneAtInput:
+          type: string
+        status:
+          type: string
+          enum: [pending, completed]
+        overdue:
+          type: boolean
+        reminderVersion:
+          type: integer
+        version:
+          type: integer
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: string
+          format: date-time
+        deletedAt:
+          type: string
+          format: date-time

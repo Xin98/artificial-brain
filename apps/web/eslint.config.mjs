@@ -7,4 +7,14 @@ export default [
   {
     ignores: [".next/**", "node_modules/**", "eslint.config.mjs"],
   },
+  {
+    rules: {
+      // Underscore-prefixed arguments are deliberately unused (test mocks,
+      // interface conformance).
+      "@typescript-eslint/no-unused-vars": [
+        "warn",
+        { argsIgnorePattern: "^_", varsIgnorePattern: "^_" },
+      ],
+    },
+  },
 ];

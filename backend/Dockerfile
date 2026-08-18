@@ -2,6 +2,11 @@
 
 FROM golang:1.26.5-alpine AS build
 
+# GOPROXY is overridable at build time for restricted networks (see
+# docs/iterations/ITER-0002/decisions.md, D10); the default is upstream.
+ARG GOPROXY=https://proxy.golang.org,direct
+ENV GOPROXY=${GOPROXY}
+
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
@@ -14,14 +19,22 @@ RUN mkdir -p /out \
 
 FROM build AS test
 
-RUN apk add --no-cache build-base
-CMD ["go", "test", "./backend/internal/platform/database", "./backend/internal/platform/workerstatus", "-race", "-v"]
+# APK_MIRROR is overridable at build time for restricted networks (see
+# docs/iterations/ITER-0002/decisions.md, D10); the default is upstream.
+ARG APK_MIRROR=dl-cdn.alpinelinux.org
+RUN sed -i "s|dl-cdn.alpinelinux.org|${APK_MIRROR}|g" /etc/apk/repositories \
+    && apk add --no-cache build-base
+CMD ["go", "test", "-p=1", "-race", "-v", "./backend/internal/platform/database", "./backend/internal/platform/workerstatus", "./backend/internal/modules/...", "./backend/cmd/api"]
 
 FROM alpine:3.23.3 AS certificates
 
 RUN apk add --no-cache ca-certificates
 
 FROM alpine:3.23.3 AS runtime
+
+# The IANA zoneinfo database is required: timezones travel per request (A1)
+# and are validated/loaded at runtime.
+RUN apk add --no-cache tzdata
 
 ARG BINARY
 RUN test "$BINARY" = api || test "$BINARY" = worker || test "$BINARY" = migrate \

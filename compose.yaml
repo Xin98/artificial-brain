@@ -47,6 +47,9 @@ services:
     environment:
       API_HTTP_ADDRESS: ${API_HTTP_ADDRESS:-:8080}
       DATABASE_URL: postgresql://${POSTGRES_USER:-artificial_brain}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-artificial_brain}?sslmode=disable
+      APP_ENV: ${APP_ENV:-development}
+      DEV_INBOX_ENABLED: ${DEV_INBOX_ENABLED:-true}
+      MODEL_ADAPTER: ${MODEL_ADAPTER:-deterministic}
       SERVICE_VERSION: ${SERVICE_VERSION:-dev}
       SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-10s}
       WORKER_HEARTBEAT_INTERVAL: ${WORKER_HEARTBEAT_INTERVAL:-2s}
@@ -110,8 +113,11 @@ services:
       context: .
       dockerfile: apps/web/Dockerfile
       target: runtime
+      args:
+        # Baked into the Next.js rewrite destination at build time.
+        API_INTERNAL_URL: http://api:8080
     environment:
-      API_INTERNAL_URL: http://api:8080
+      API_INTERNAL_URL: ${API_INTERNAL_URL:-http://api:8080}
       NEXT_TELEMETRY_DISABLED: "1"
     depends_on:
       api:

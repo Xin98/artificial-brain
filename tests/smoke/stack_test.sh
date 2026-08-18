@@ -90,6 +90,9 @@ expected_env = {
   "WORKER_HEARTBEAT_INTERVAL" => "2s",
   "WORKER_LEASE_TTL" => "6s",
   "SHUTDOWN_TIMEOUT" => "10s",
+  "APP_ENV" => "development",
+  "DEV_INBOX_ENABLED" => "true",
+  "MODEL_ADAPTER" => "deterministic",
 }
 actual_env = File.readlines(File.join(root, ".env.example"), chomp: true).to_h do |line|
   line.split("=", 2)
@@ -150,12 +153,13 @@ wait_for_system_state() {
 
 assert_page() {
 	wanted_status=$1
-	page=$(curl --fail --silent --show-error --max-time 5 "http://127.0.0.1:${WEB_PORT}/")
+	page_path=$2
+	page=$(curl --fail --silent --show-error --max-time 5 "http://127.0.0.1:${WEB_PORT}${page_path}")
 	printf '%s\n' "$page" | grep -F "data-system-status=\"${wanted_status}\"" >/dev/null || \
-		fail "Web page did not render ${wanted_status}"
+		fail "Web page ${page_path} did not render ${wanted_status}"
 	for label in Web API PostgreSQL Worker; do
 		printf '%s\n' "$page" | grep -F ">${label}<" >/dev/null || \
-			fail "Web page did not render the ${label} label"
+			fail "Web page ${page_path} did not render the ${label} label"
 	done
 }
 
@@ -211,16 +215,95 @@ full_stack_test() {
 	sh tests/smoke/wait_for_url.sh "http://127.0.0.1:${API_PORT}/health/ready" 30
 	sh tests/smoke/wait_for_url.sh "http://127.0.0.1:${WEB_PORT}/health/live" 30
 	wait_for_system_state healthy healthy 30
-	assert_page healthy
+	assert_page healthy /status
+
+	# ITER-0002 authenticated end-to-end loop through the web /api/v1 rewrite.
+	e2e_phone="+8613800137001"
+	e2e_request=$(curl --fail --silent --show-error --max-time 5 \
+		--output /dev/null --write-out '%{http_code}' \
+		--header 'Content-Type: application/json' \
+		--data "{\"phone\":\"${e2e_phone}\"}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/auth/login/request")
+	[ "$e2e_request" = 202 ] || fail "login request status ${e2e_request}, want 202"
+
+	e2e_inbox=$(curl --fail --silent --show-error --max-time 5 \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/dev/sms-inbox?address=$(printf '%s' "$e2e_phone" | jq -sRr @uri)")
+	e2e_code=$(printf '%s\n' "$e2e_inbox" | jq -r '.messages[0].code')
+	case "$e2e_code" in '' | *[!0-9]*) fail "dev inbox did not return a numeric code" ;; esac
+
+	e2e_verify_headers=$(curl --fail --silent --show-error --max-time 5 \
+		--dump-header - --output /dev/null \
+		--header 'Content-Type: application/json' \
+		--data "{\"phone\":\"${e2e_phone}\",\"code\":\"${e2e_code}\"}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/auth/login/verify")
+	e2e_session=$(printf '%s\n' "$e2e_verify_headers" |
+		sed -n 's/^[Ss]et-[Cc]ookie: ab_session=\([^;]*\).*$/\1/p' | sed -n '1p')
+	[ -n "$e2e_session" ] || fail "verify did not set the ab_session cookie"
+	e2e_auth="Cookie: ab_session=${e2e_session}"
+
+	e2e_home=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" "http://127.0.0.1:${WEB_PORT}/")
+	printf '%s\n' "$e2e_home" | grep -F 'data-page="dashboard"' >/dev/null || \
+		fail "authenticated home did not render the dashboard page"
+
+	e2e_due=$(date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%SZ)
+	e2e_create=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" --header 'Content-Type: application/json' \
+		--data "{\"title\":\"冒烟待办\",\"dueAtUtc\":\"${e2e_due}\"}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/todos")
+	e2e_todo_id=$(printf '%s\n' "$e2e_create" | jq -r '.id')
+	[ -n "$e2e_todo_id" ] && [ "$e2e_todo_id" != null ] || \
+		fail "todo create did not return an id: ${e2e_create}"
+
+	e2e_dashboard=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/dashboard/summary?timezone=UTC")
+	printf '%s\n' "$e2e_dashboard" | jq -e '.pendingTotal >= 1' >/dev/null || \
+		fail "dashboard pendingTotal is not at least 1: ${e2e_dashboard}"
+
+	e2e_message=$(curl --fail --silent --show-error --max-time 10 \
+		--header "$e2e_auth" --header 'Content-Type: application/json' \
+		--data '{"text":"明天下午三点提醒我提交周报","timezone":"Asia/Shanghai"}' \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/conversation/messages")
+	printf '%s\n' "$e2e_message" | jq -e '.kind == "todo_created"' >/dev/null || \
+		fail "conversation did not create the todo: ${e2e_message}"
+
+	plan_count=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select count(*) from reminder.reminder_plans where status = 'planned'")
+	[ "$plan_count" -ge 1 ] || \
+		fail "expected at least one planned reminder plan, got ${plan_count}"
+
+	e2e_confirmation=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" --header 'Content-Type: application/json' \
+		--data "{\"intent\":\"todo.delete\",\"todoId\":\"${e2e_todo_id}\"}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/confirmations")
+	e2e_confirmation_id=$(printf '%s\n' "$e2e_confirmation" | jq -r '.confirmationId')
+	[ -n "$e2e_confirmation_id" ] && [ "$e2e_confirmation_id" != null ] || \
+		fail "confirmation create did not return an id: ${e2e_confirmation}"
+
+	e2e_confirmed=$(curl --fail --silent --show-error --max-time 5 \
+		--output /dev/null --write-out '%{http_code}' \
+		--header "$e2e_auth" --header 'Content-Type: application/json' --data '{}' \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/confirmations/${e2e_confirmation_id}/confirm")
+	[ "$e2e_confirmed" = 200 ] || fail "confirm status ${e2e_confirmed}, want 200"
+
+	e2e_remaining=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" --get --data-urlencode "keyword=冒烟待办" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/todos")
+	printf '%s\n' "$e2e_remaining" | jq -e '.todos | length == 0' >/dev/null || \
+		fail "deleted todo still listed: ${e2e_remaining}"
 
 	compose stop --timeout 15 worker
 	wait_for_system_state degraded unavailable "$degradation_deadline"
 	sh tests/smoke/wait_for_url.sh "http://127.0.0.1:${WEB_PORT}/health/live" 10
-	assert_page degraded
+	assert_page degraded /status
 
 	compose start worker
 	wait_for_system_state healthy healthy "$degradation_deadline"
-	assert_page healthy
+	assert_page healthy /status
 }
 
 case "${1:-}" in

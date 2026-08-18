@@ -1,0 +1,5 @@
+# Normalize text files to LF on check-in and check-out so shell scripts,
+# Go, TypeScript, YAML, and Markdown behave identically on macOS, Linux,
+# Windows, and WSL. Binary files are auto-detected and left untouched.
+# This keeps `make verify` gates runnable in any POSIX shell, including WSL.
+* text=auto eol=lf

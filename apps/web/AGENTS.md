@@ -2,9 +2,9 @@
 
 ## Zones
 
-- **Green:** implement the server-rendered system-health feature and its tests under `apps/web`.
-- **Yellow:** package boundaries, browser/server data boundaries, root workspace configuration, and public UI contracts require a planned review.
-- **Red:** feature code must not import deployment configuration or expose Compose service names to the browser; do not add business-domain behavior in ITER-0001.
+- **Green:** implement the server-rendered system-health feature and the ITER-0002 workbench features (auth, dashboard, todos, settings, conversation) and their tests under `apps/web`.
+- **Yellow:** package boundaries, browser/server data boundaries, root workspace configuration, the `next.config.ts` rewrite and `shared/server` session seams, and public UI contracts require a planned review.
+- **Red:** feature code must not import deployment configuration or expose Compose service names to the browser; in ITER-0002 do not add reminder-delivery or portability UI.
 
 ## Dependencies and verification
 

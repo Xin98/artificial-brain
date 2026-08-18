@@ -2,9 +2,9 @@
 
 ## Zones
 
-- **Green:** add focused implementation and tests within an existing feature or platform boundary.
+- **Green:** add focused implementation and tests within an existing feature or platform boundary, including the ITER-0002 Identity, Todo, Conversation, and reminder-seam modules.
 - **Yellow:** changes to root build configuration, CI, public contracts, migrations, architecture policy, or any `AGENTS.md` must be listed in the iteration plan and handled deliberately.
-- **Red:** do not add Identity, Todo, Conversation, Reminder, or Portability behavior in ITER-0001; do not commit credentials or local environment files.
+- **Red:** in ITER-0002 do not add reminder delivery, River, real notification providers, or Portability behavior; do not commit credentials or local environment files.
 
 ## Dependencies and verification
 

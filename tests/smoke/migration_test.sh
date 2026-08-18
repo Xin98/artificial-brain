@@ -137,8 +137,8 @@ schema_version=$(compose exec -T postgres psql \
 	--dbname "$database_name" \
 	--tuples-only --no-align \
 	--command 'select version from public.schema_version limit 1')
-[ "$schema_version" = 1 ] || {
-	printf 'migration test: schema version is %s, want 1\n' "$schema_version" >&2
+[ "$schema_version" = 5 ] || {
+	printf 'migration test: schema version is %s, want 5\n' "$schema_version" >&2
 	exit 1
 }
 
@@ -155,4 +155,6 @@ worker_table_count=$(compose exec -T postgres psql \
 compose --profile test run --build --no-deps --rm backend-test \
 	go test -p=1 -race -v \
 	./backend/internal/platform/database \
-	./backend/internal/platform/workerstatus
+	./backend/internal/platform/workerstatus \
+	./backend/internal/modules/... \
+	./backend/cmd/api

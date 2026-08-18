@@ -1,0 +1,384 @@
+openapi: 3.1.1
+info:
+  title: Artificial Brain Identity API
+  version: 0.1.0
+paths:
+  /api/v1/auth/login/request:
+    post:
+      operationId: requestLogin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '202':
+          description: Login challenge accepted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptyObject'
+        '422':
+          description: Invalid phone number.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: Too many challenges for this phone.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/auth/login/verify:
+    post:
+      operationId: verifyLogin
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginVerifyRequest'
+      responses:
+        '200':
+          description: Session issued; ab_session cookie set.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/LoginResult'
+        '401':
+          description: Code rejected.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Malformed request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: Too many verification attempts.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/auth/logout:
+    post:
+      operationId: logout
+      responses:
+        '200':
+          description: Session revoked; cookie cleared.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EmptyObject'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/auth/session:
+    get:
+      operationId: getSession
+      responses:
+        '200':
+          description: Current session principal.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionView'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/settings/contact-channels:
+    get:
+      operationId: listContactChannels
+      responses:
+        '200':
+          description: The caller's contact channels.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelList'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    post:
+      operationId: addContactChannel
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AddChannelRequest'
+      responses:
+        '201':
+          description: Channel created (unverified).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactChannel'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: Channel already exists.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Invalid kind or address.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '429':
+          description: Too many verification codes requested.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/settings/contact-channels/{channelId}/verify:
+    post:
+      operationId: verifyContactChannel
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyCodeRequest'
+      responses:
+        '200':
+          description: Channel verified.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChannelVerified'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Channel not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Code invalid or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/settings/contact-channels/{channelId}:
+    patch:
+      operationId: setContactChannelEnabled
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SetChannelEnabledRequest'
+      responses:
+        '200':
+          description: Updated channel.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactChannel'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Channel not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Malformed request.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/dev/sms-inbox:
+    get:
+      operationId: getDevSmsInbox
+      description: >-
+        Dev-only fake SMS inbox. Double-gated: the route exists only when
+        APP_ENV is not production AND DEV_INBOX_ENABLED=true; otherwise it is
+        absent and requests receive the JSON 404 envelope. Unauthenticated by
+        necessity because login completes before a session exists.
+      responses:
+        '200':
+          description: Latest five messages for the address.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevInbox'
+        '422':
+          description: Missing address.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+components:
+  schemas:
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [code, message, correlationId]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        correlationId:
+          type: string
+    EmptyObject:
+      type: object
+      additionalProperties: false
+      required: []
+      properties: {}
+    LoginRequest:
+      type: object
+      additionalProperties: false
+      required: [phone]
+      properties:
+        phone:
+          type: string
+          maxLength: 16
+    LoginVerifyRequest:
+      type: object
+      additionalProperties: false
+      required: [phone, code]
+      properties:
+        phone:
+          type: string
+          maxLength: 16
+        code:
+          type: string
+          maxLength: 6
+    LoginResult:
+      type: object
+      additionalProperties: false
+      required: [userId, workspaceId, expiresAt]
+      properties:
+        userId:
+          type: string
+        workspaceId:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+    SessionView:
+      type: object
+      additionalProperties: false
+      required: [userId, workspaceId, sessionId]
+      properties:
+        userId:
+          type: string
+        workspaceId:
+          type: string
+        sessionId:
+          type: string
+    ChannelList:
+      type: object
+      additionalProperties: false
+      required: [channels]
+      properties:
+        channels:
+          type: array
+          items:
+            $ref: '#/components/schemas/ContactChannel'
+    ContactChannel:
+      type: object
+      additionalProperties: false
+      required: [id, kind, address, verified, enabled, createdAt]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [email, sms]
+        address:
+          type: string
+        verified:
+          type: boolean
+        enabled:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+    AddChannelRequest:
+      type: object
+      additionalProperties: false
+      required: [kind, address]
+      properties:
+        kind:
+          type: string
+          enum: [email, sms]
+        address:
+          type: string
+    ChannelVerified:
+      type: object
+      additionalProperties: false
+      required: [verified]
+      properties:
+        verified:
+          type: boolean
+    VerifyCodeRequest:
+      type: object
+      additionalProperties: false
+      required: [code]
+      properties:
+        code:
+          type: string
+          maxLength: 6
+    SetChannelEnabledRequest:
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled:
+          type: boolean
+    DevInbox:
+      type: object
+      additionalProperties: false
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/DevInboxMessage'
+    DevInboxMessage:
+      type: object
+      additionalProperties: false
+      required: [address, channel, purpose, code, createdAt]
+      properties:
+        address:
+          type: string
+        channel:
+          type: string
+        purpose:
+          type: string
+        code:
+          type: string
+          maxLength: 6
+        createdAt:
+          type: string
+          format: date-time

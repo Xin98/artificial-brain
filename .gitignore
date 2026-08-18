@@ -11,6 +11,15 @@ dist/
 build/
 *.out
 
+# Go build artifacts
+*.exe
+*.exe~
+*.test
+/api
+/worker
+/migrate
+/bin/
+
 compose.override.yaml
 docker-compose.override.yml
 

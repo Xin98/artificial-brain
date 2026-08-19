@@ -23,6 +23,10 @@ func TestLoadValidRoles(t *testing.T) {
 			cfg, err := Load(tt.role, mapLookup(map[string]string{
 				"DATABASE_URL":    "postgres://user:secret@db/workbench",
 				"SERVICE_VERSION": "abc123",
+				// Fake reminder adapters are forbidden in production and the
+				// API role requires a receipt secret.
+				"APP_ENV":                 "development",
+				"REMINDER_RECEIPT_SECRET": "receipt-secret",
 			}))
 			if err != nil {
 				t.Fatal(err)
@@ -61,6 +65,8 @@ func TestLoadWorkerConfig(t *testing.T) {
 		"SERVICE_VERSION":           "abc123",
 		"WORKER_HEARTBEAT_INTERVAL": "3s",
 		"WORKER_LEASE_TTL":          "9s",
+		// Fake reminder adapters are forbidden in production.
+		"APP_ENV": "development",
 	}
 	cfg, err := Load(RoleWorker, mapLookup(env))
 	if err != nil {
@@ -83,10 +89,10 @@ func TestLoadUsesRoleSpecificHTTPAddressOverrides(t *testing.T) {
 		role          Role
 		env           map[string]string
 	}{
-		{"api", "127.0.0.1:9080", RoleAPI, map[string]string{"DATABASE_URL": "postgres://db/app", "API_HTTP_ADDRESS": "127.0.0.1:9080", "WORKER_HEALTH_ADDRESS": "127.0.0.1:9081"}},
-		{"worker", "127.0.0.1:9081", RoleWorker, map[string]string{"DATABASE_URL": "postgres://db/app", "API_HTTP_ADDRESS": "127.0.0.1:9080", "WORKER_HEALTH_ADDRESS": "127.0.0.1:9081"}},
-		{"migrate ignores addresses", "", RoleMigrate, map[string]string{"DATABASE_URL": "postgres://db/app", "API_HTTP_ADDRESS": "127.0.0.1:9080", "WORKER_HEALTH_ADDRESS": "127.0.0.1:9081"}},
-		{"empty worker retains default", ":8081", RoleWorker, map[string]string{"DATABASE_URL": "postgres://db/app", "WORKER_HEALTH_ADDRESS": ""}},
+		{"api", "127.0.0.1:9080", RoleAPI, map[string]string{"DATABASE_URL": "postgres://db/app", "API_HTTP_ADDRESS": "127.0.0.1:9080", "WORKER_HEALTH_ADDRESS": "127.0.0.1:9081", "APP_ENV": "development", "REMINDER_RECEIPT_SECRET": "receipt-secret"}},
+		{"worker", "127.0.0.1:9081", RoleWorker, map[string]string{"DATABASE_URL": "postgres://db/app", "API_HTTP_ADDRESS": "127.0.0.1:9080", "WORKER_HEALTH_ADDRESS": "127.0.0.1:9081", "APP_ENV": "development", "REMINDER_RECEIPT_SECRET": "receipt-secret"}},
+		{"migrate ignores addresses", "", RoleMigrate, map[string]string{"DATABASE_URL": "postgres://db/app", "API_HTTP_ADDRESS": "127.0.0.1:9080", "WORKER_HEALTH_ADDRESS": "127.0.0.1:9081", "APP_ENV": "development", "REMINDER_RECEIPT_SECRET": "receipt-secret"}},
+		{"empty worker retains default", ":8081", RoleWorker, map[string]string{"DATABASE_URL": "postgres://db/app", "WORKER_HEALTH_ADDRESS": "", "APP_ENV": "development"}},
 	}
 
 	for _, tt := range tests {

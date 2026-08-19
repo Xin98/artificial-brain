@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -35,6 +37,21 @@ const (
 	AppEnvProduction             = "production"
 )
 
+const (
+	defaultReminderEmailAdapter          = "fake"
+	defaultReminderSmsAdapter            = "fake"
+	defaultReminderSmtpTimeout           = 10 * time.Second
+	defaultReminderAliyunEndpoint        = "https://dysmsapi.aliyuncs.com"
+	defaultReminderQueueEmailConcurrency = 5
+	defaultReminderQueueSmsConcurrency   = 5
+	defaultReminderJobMaxAttempts        = 5
+
+	ReminderEmailAdapterFake = "fake"
+	ReminderEmailAdapterSmtp = "smtp"
+	ReminderSmsAdapterFake   = "fake"
+	ReminderSmsAdapterAliyun = "aliyun"
+)
+
 type Role string
 
 type LookupEnv func(string) (string, bool)
@@ -62,6 +79,25 @@ type Config struct {
 	ModelAPIKey  string
 	ModelName    string
 	ModelTimeout time.Duration
+
+	ReminderEmailAdapter          string
+	ReminderSmsAdapter            string
+	ReminderReceiptSecret         string
+	ReminderDevOutboxEnabled      bool
+	ReminderSmtpHost              string
+	ReminderSmtpPort              int
+	ReminderSmtpUsername          string
+	ReminderSmtpPassword          string
+	ReminderSmtpFrom              string
+	ReminderSmtpTimeout           time.Duration
+	ReminderAliyunEndpoint        string
+	ReminderAliyunAccessKeyID     string
+	ReminderAliyunAccessKeySecret string
+	ReminderAliyunSignName        string
+	ReminderAliyunTemplateCode    string
+	ReminderQueueEmailConcurrency int
+	ReminderQueueSmsConcurrency   int
+	ReminderJobMaxAttempts        int
 }
 
 func Load(role Role, lookup LookupEnv) (Config, error) {
@@ -141,6 +177,108 @@ func Load(role Role, lookup LookupEnv) (Config, error) {
 		return Config{}, fmt.Errorf("config: invalid MODEL_ADAPTER")
 	}
 
+	reminderEmailAdapter := valueOrDefault(lookup, "REMINDER_EMAIL_ADAPTER", defaultReminderEmailAdapter)
+	switch reminderEmailAdapter {
+	case ReminderEmailAdapterFake, ReminderEmailAdapterSmtp:
+	default:
+		return Config{}, fmt.Errorf("config: invalid REMINDER_EMAIL_ADAPTER")
+	}
+	reminderSmsAdapter := valueOrDefault(lookup, "REMINDER_SMS_ADAPTER", defaultReminderSmsAdapter)
+	switch reminderSmsAdapter {
+	case ReminderSmsAdapterFake, ReminderSmsAdapterAliyun:
+	default:
+		return Config{}, fmt.Errorf("config: invalid REMINDER_SMS_ADAPTER")
+	}
+
+	reminderDevOutboxEnabled, err := boolValue(lookup, "REMINDER_DEV_OUTBOX_ENABLED", false)
+	if err != nil {
+		return Config{}, err
+	}
+	if reminderDevOutboxEnabled && appEnv == AppEnvProduction {
+		return Config{}, fmt.Errorf("config: REMINDER_DEV_OUTBOX_ENABLED requires a non-production APP_ENV")
+	}
+	if reminderEmailAdapter == ReminderEmailAdapterFake && appEnv == AppEnvProduction {
+		return Config{}, fmt.Errorf("config: REMINDER_EMAIL_ADAPTER requires a non-production APP_ENV")
+	}
+	if reminderSmsAdapter == ReminderSmsAdapterFake && appEnv == AppEnvProduction {
+		return Config{}, fmt.Errorf("config: REMINDER_SMS_ADAPTER requires a non-production APP_ENV")
+	}
+
+	reminderSmtpHost := valueOrDefault(lookup, "REMINDER_SMTP_HOST", "")
+	reminderSmtpPort, err := intValue(lookup, "REMINDER_SMTP_PORT", 0)
+	if err != nil {
+		return Config{}, err
+	}
+	reminderSmtpUsername := valueOrDefault(lookup, "REMINDER_SMTP_USERNAME", "")
+	reminderSmtpPassword := valueOrDefault(lookup, "REMINDER_SMTP_PASSWORD", "")
+	reminderSmtpFrom := valueOrDefault(lookup, "REMINDER_SMTP_FROM", "")
+	reminderSmtpTimeout, err := duration(lookup, "REMINDER_SMTP_TIMEOUT", defaultReminderSmtpTimeout)
+	if err != nil {
+		return Config{}, err
+	}
+	if reminderEmailAdapter == ReminderEmailAdapterSmtp {
+		if reminderSmtpHost == "" {
+			return Config{}, fmt.Errorf("config: missing REMINDER_SMTP_HOST")
+		}
+		if reminderSmtpPort < 1 {
+			return Config{}, fmt.Errorf("config: invalid REMINDER_SMTP_PORT")
+		}
+		if reminderSmtpFrom == "" {
+			return Config{}, fmt.Errorf("config: missing REMINDER_SMTP_FROM")
+		}
+	}
+
+	reminderAliyunEndpoint := valueOrDefault(lookup, "REMINDER_ALIYUN_ENDPOINT", defaultReminderAliyunEndpoint)
+	reminderAliyunAccessKeyID := valueOrDefault(lookup, "REMINDER_ALIYUN_ACCESS_KEY_ID", "")
+	reminderAliyunAccessKeySecret := valueOrDefault(lookup, "REMINDER_ALIYUN_ACCESS_KEY_SECRET", "")
+	reminderAliyunSignName := valueOrDefault(lookup, "REMINDER_ALIYUN_SIGN_NAME", "")
+	reminderAliyunTemplateCode := valueOrDefault(lookup, "REMINDER_ALIYUN_TEMPLATE_CODE", "")
+	if reminderSmsAdapter == ReminderSmsAdapterAliyun {
+		endpoint, err := url.Parse(reminderAliyunEndpoint)
+		if err != nil || (endpoint.Scheme != "http" && endpoint.Scheme != "https") || endpoint.Host == "" {
+			return Config{}, fmt.Errorf("config: invalid REMINDER_ALIYUN_ENDPOINT")
+		}
+		if reminderAliyunAccessKeyID == "" {
+			return Config{}, fmt.Errorf("config: missing REMINDER_ALIYUN_ACCESS_KEY_ID")
+		}
+		if reminderAliyunAccessKeySecret == "" {
+			return Config{}, fmt.Errorf("config: missing REMINDER_ALIYUN_ACCESS_KEY_SECRET")
+		}
+		if reminderAliyunSignName == "" {
+			return Config{}, fmt.Errorf("config: missing REMINDER_ALIYUN_SIGN_NAME")
+		}
+		if reminderAliyunTemplateCode == "" {
+			return Config{}, fmt.Errorf("config: missing REMINDER_ALIYUN_TEMPLATE_CODE")
+		}
+	}
+
+	reminderReceiptSecret := valueOrDefault(lookup, "REMINDER_RECEIPT_SECRET", "")
+	if role == RoleAPI && reminderReceiptSecret == "" {
+		return Config{}, fmt.Errorf("config: missing REMINDER_RECEIPT_SECRET")
+	}
+
+	reminderQueueEmailConcurrency, err := intValue(lookup, "REMINDER_QUEUE_EMAIL_CONCURRENCY", defaultReminderQueueEmailConcurrency)
+	if err != nil {
+		return Config{}, err
+	}
+	if reminderQueueEmailConcurrency < 1 {
+		return Config{}, fmt.Errorf("config: invalid REMINDER_QUEUE_EMAIL_CONCURRENCY")
+	}
+	reminderQueueSmsConcurrency, err := intValue(lookup, "REMINDER_QUEUE_SMS_CONCURRENCY", defaultReminderQueueSmsConcurrency)
+	if err != nil {
+		return Config{}, err
+	}
+	if reminderQueueSmsConcurrency < 1 {
+		return Config{}, fmt.Errorf("config: invalid REMINDER_QUEUE_SMS_CONCURRENCY")
+	}
+	reminderJobMaxAttempts, err := intValue(lookup, "REMINDER_JOB_MAX_ATTEMPTS", defaultReminderJobMaxAttempts)
+	if err != nil {
+		return Config{}, err
+	}
+	if reminderJobMaxAttempts < 1 {
+		return Config{}, fmt.Errorf("config: invalid REMINDER_JOB_MAX_ATTEMPTS")
+	}
+
 	return Config{
 		Role:              role,
 		ServiceName:       serviceName,
@@ -164,6 +302,25 @@ func Load(role Role, lookup LookupEnv) (Config, error) {
 		ModelAPIKey:  modelAPIKey,
 		ModelName:    modelName,
 		ModelTimeout: modelTimeout,
+
+		ReminderEmailAdapter:          reminderEmailAdapter,
+		ReminderSmsAdapter:            reminderSmsAdapter,
+		ReminderReceiptSecret:         reminderReceiptSecret,
+		ReminderDevOutboxEnabled:      reminderDevOutboxEnabled,
+		ReminderSmtpHost:              reminderSmtpHost,
+		ReminderSmtpPort:              reminderSmtpPort,
+		ReminderSmtpUsername:          reminderSmtpUsername,
+		ReminderSmtpPassword:          reminderSmtpPassword,
+		ReminderSmtpFrom:              reminderSmtpFrom,
+		ReminderSmtpTimeout:           reminderSmtpTimeout,
+		ReminderAliyunEndpoint:        reminderAliyunEndpoint,
+		ReminderAliyunAccessKeyID:     reminderAliyunAccessKeyID,
+		ReminderAliyunAccessKeySecret: reminderAliyunAccessKeySecret,
+		ReminderAliyunSignName:        reminderAliyunSignName,
+		ReminderAliyunTemplateCode:    reminderAliyunTemplateCode,
+		ReminderQueueEmailConcurrency: reminderQueueEmailConcurrency,
+		ReminderQueueSmsConcurrency:   reminderQueueSmsConcurrency,
+		ReminderJobMaxAttempts:        reminderJobMaxAttempts,
 	}, nil
 }
 
@@ -217,6 +374,19 @@ func boolValue(lookup LookupEnv, key string, fallback bool) (bool, error) {
 	default:
 		return false, fmt.Errorf("config: invalid %s", key)
 	}
+}
+
+func intValue(lookup LookupEnv, key string, fallback int) (int, error) {
+	value, ok := lookup(key)
+	if !ok || value == "" {
+		return fallback, nil
+	}
+
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return 0, fmt.Errorf("config: invalid %s", key)
+	}
+	return parsed, nil
 }
 
 func valueOrDefault(lookup LookupEnv, key, fallback string) string {

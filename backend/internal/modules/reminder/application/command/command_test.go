@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
@@ -342,5 +343,491 @@ func TestRevokePlansWithoutPlannedJobsSkipsCancel(t *testing.T) {
 	}
 	if len(scheduler.cancelCalls) != 0 {
 		t.Fatalf("cancel calls = %#v, want none without planned jobs", scheduler.cancelCalls)
+	}
+}
+
+// sendFixture wires a SendReminderHandler against recording fakes with a
+// fixed clock. By default the plan exists and is planned, the todo is active
+// at the plan's reminder version, the channel is usable, and both notifiers
+// succeed — so a test only perturbs the branch it exercises.
+type sendFixture struct {
+	plans      *fakePlanStore
+	deliveries *fakeDeliveryStore
+	todos      *fakeTodoReader
+	channels   *fakeChannelResolver
+	email      *fakeNotifier
+	sms        *fakeNotifier
+	logBuffer  *bytes.Buffer
+	handler    *SendReminderHandler
+}
+
+func newSendFixture() *sendFixture {
+	plans := newFakePlanStore()
+	plans.hasPlan = true
+	plans.plan = plannedReminderPlan()
+	deliveries := newFakeDeliveryStore()
+	todos := newFakeTodoReader()
+	todos.view = activeTodoView()
+	channels := newFakeChannelResolver()
+	channels.endpoint = dto.ChannelEndpoint{Address: "user-1@example.com", Usable: true}
+	email := newFakeNotifier()
+	email.result = dto.SendResult{ProviderMessageID: "prov-email-1"}
+	sms := newFakeNotifier()
+	sms.result = dto.SendResult{ProviderMessageID: "prov-sms-1"}
+	buffer := &bytes.Buffer{}
+	nextID := 0
+	fixture := &sendFixture{
+		plans:      plans,
+		deliveries: deliveries,
+		todos:      todos,
+		channels:   channels,
+		email:      email,
+		sms:        sms,
+		logBuffer:  buffer,
+	}
+	fixture.handler = &SendReminderHandler{
+		Plans:      plans,
+		Deliveries: deliveries,
+		Todos:      todos,
+		Channels:   channels,
+		Email:      email,
+		Sms:        sms,
+		Log:        slog.New(slog.NewTextHandler(buffer, nil)),
+		NewID: func() string {
+			nextID++
+			return fmt.Sprintf("delivery-new-%d", nextID)
+		},
+		Now: func() time.Time { return fixedNow },
+	}
+	return fixture
+}
+
+func plannedReminderPlan() domain.ReminderPlan {
+	return domain.ReminderPlan{
+		ID:                  "plan-1",
+		WorkspaceID:         "ws-1",
+		TodoID:              "todo-1",
+		TodoReminderVersion: 2,
+		ScheduledAtUTC:      fixedNow.Add(-time.Minute),
+		RequestedChannels:   []string{"email"},
+		Status:              domain.StatusPlanned,
+		CreatedAt:           fixedNow.Add(-time.Hour),
+	}
+}
+
+func activeTodoView() dto.TodoView {
+	return dto.TodoView{Title: "提交周报", Status: "pending", ReminderVersion: 2, OwnerUserID: "user-1"}
+}
+
+func scheduledEmailDelivery() domain.ReminderDelivery {
+	delivery, err := domain.NewDelivery("delivery-1", "ws-1", "user-1", "todo-1", 2, "plan-1", "email",
+		"提交周报", fixedNow.Add(-time.Minute), fixedNow.Add(-time.Hour))
+	if err != nil {
+		panic(err)
+	}
+	return delivery
+}
+
+func emailDeliveryKey() string {
+	return domain.IdempotencyKeyFor("ws-1", "todo-1", 2, "email")
+}
+
+func sendRequestFixture() SendRequest {
+	return SendRequest{WorkspaceID: "ws-1", OwnerUserID: "user-1", PlanID: "plan-1", Channel: "email"}
+}
+
+func assertNoNotifierCalls(t *testing.T, fixture *sendFixture) {
+	t.Helper()
+	if len(fixture.email.calls) != 0 || len(fixture.sms.calls) != 0 {
+		t.Fatalf("notifier calls = %d email, %d sms; want none", len(fixture.email.calls), len(fixture.sms.calls))
+	}
+}
+
+func TestSendReminderMissingPlanIsIgnoredAndLogged(t *testing.T) {
+	fixture := newSendFixture()
+	fixture.plans.hasPlan = false
+
+	if err := fixture.handler.Handle(context.Background(), sendRequestFixture()); err != nil {
+		t.Fatalf("Handle() error = %v, want nil for missing plan", err)
+	}
+	if len(fixture.plans.getCalls) != 1 || fixture.plans.getCalls[0].workspaceID != "ws-1" || fixture.plans.getCalls[0].planID != "plan-1" {
+		t.Fatalf("plan get calls = %#v, want one scoped lookup", fixture.plans.getCalls)
+	}
+	if len(fixture.todos.getCalls) != 0 {
+		t.Fatalf("todo get calls = %#v, want none after missing plan", fixture.todos.getCalls)
+	}
+	assertNoNotifierCalls(t, fixture)
+	if len(fixture.deliveries.saved) != 0 || len(fixture.deliveries.updated) != 0 {
+		t.Fatalf("deliveries saved %d updated %d, want none", len(fixture.deliveries.saved), len(fixture.deliveries.updated))
+	}
+	if !bytes.Contains(fixture.logBuffer.Bytes(), []byte("plan not found")) {
+		t.Fatalf("log = %q, want missing plan logged", fixture.logBuffer.String())
+	}
+}
+
+func TestSendReminderRevokedPlanSuppressesPlanRevoked(t *testing.T) {
+	fixture := newSendFixture()
+	revokedAt := fixedNow.Add(-30 * time.Minute)
+	fixture.plans.plan.Status = domain.StatusRevoked
+	fixture.plans.plan.RevokedAt = &revokedAt
+	fixture.deliveries.seed(scheduledEmailDelivery())
+
+	if err := fixture.handler.Handle(context.Background(), sendRequestFixture()); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	delivery := fixture.deliveries.rows[emailDeliveryKey()]
+	if delivery.State != domain.StateSuppressed || delivery.SuppressionReason == nil || *delivery.SuppressionReason != domain.ReasonPlanRevoked {
+		t.Fatalf("delivery = %#v, want suppressed(plan_revoked)", delivery)
+	}
+	if delivery.FinalizedAt == nil || !delivery.FinalizedAt.Equal(fixedNow) {
+		t.Fatalf("delivery.FinalizedAt = %v, want fixed clock", delivery.FinalizedAt)
+	}
+	if len(fixture.todos.getCalls) != 0 {
+		t.Fatalf("todo get calls = %#v, want none for revoked plan", fixture.todos.getCalls)
+	}
+	assertNoNotifierCalls(t, fixture)
+}
+
+func TestSendReminderSuppressesOnExecutionTimeReread(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(fixture *sendFixture)
+		want   domain.SuppressionReason
+	}{
+		{"todo deleted", func(f *sendFixture) { f.todos.view.Status = "deleted" }, domain.ReasonTodoDeleted},
+		{"todo completed", func(f *sendFixture) { f.todos.view.Status = "completed" }, domain.ReasonTodoCompleted},
+		{"version stale", func(f *sendFixture) { f.todos.view.ReminderVersion = 3 }, domain.ReasonVersionStale},
+		{"todo not found", func(f *sendFixture) { f.todos.view = dto.TodoView{}; f.todos.err = ports.ErrTodoNotFound }, domain.ReasonTodoDeleted},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fixture := newSendFixture()
+			tt.mutate(fixture)
+			fixture.deliveries.seed(scheduledEmailDelivery())
+
+			if err := fixture.handler.Handle(context.Background(), sendRequestFixture()); err != nil {
+				t.Fatalf("Handle() error = %v", err)
+			}
+			delivery := fixture.deliveries.rows[emailDeliveryKey()]
+			if delivery.State != domain.StateSuppressed || delivery.SuppressionReason == nil || *delivery.SuppressionReason != tt.want {
+				t.Fatalf("delivery = %#v, want suppressed(%s)", delivery, tt.want)
+			}
+			assertNoNotifierCalls(t, fixture)
+		})
+	}
+}
+
+func TestSendReminderSuppressionCreatesMissingDeliveryRow(t *testing.T) {
+	fixture := newSendFixture()
+	fixture.todos.view = dto.TodoView{}
+	fixture.todos.err = ports.ErrTodoNotFound
+
+	if err := fixture.handler.Handle(context.Background(), sendRequestFixture()); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if len(fixture.deliveries.saved) != 1 {
+		t.Fatalf("saved deliveries = %d, want defensive insert", len(fixture.deliveries.saved))
+	}
+	delivery := fixture.deliveries.saved[0]
+	if delivery.State != domain.StateSuppressed || delivery.SuppressionReason == nil || *delivery.SuppressionReason != domain.ReasonTodoDeleted {
+		t.Fatalf("saved delivery = %#v, want suppressed(todo_deleted)", delivery)
+	}
+	if delivery.OwnerUserID != "user-1" || delivery.IdempotencyKey != emailDeliveryKey() {
+		t.Fatalf("saved delivery identity = %#v", delivery)
+	}
+	if delivery.TodoTitleSnapshot == "" {
+		t.Fatalf("saved delivery title snapshot empty, want a fallback so audit can render it")
+	}
+	assertNoNotifierCalls(t, fixture)
+}
+
+func TestSendReminderFinalDeliveryIsIdempotent(t *testing.T) {
+	fixture := newSendFixture()
+	delivery := scheduledEmailDelivery()
+	if err := delivery.MarkSending(fixedNow.Add(-time.Minute)); err != nil {
+		t.Fatalf("MarkSending() error = %v", err)
+	}
+	if err := delivery.MarkSucceeded("prov-9", fixedNow.Add(-time.Minute)); err != nil {
+		t.Fatalf("MarkSucceeded() error = %v", err)
+	}
+	fixture.deliveries.seed(delivery)
+
+	if err := fixture.handler.Handle(context.Background(), sendRequestFixture()); err != nil {
+		t.Fatalf("Handle() error = %v, want nil for final delivery", err)
+	}
+	assertNoNotifierCalls(t, fixture)
+	if len(fixture.deliveries.saved) != 0 || len(fixture.deliveries.updated) != 0 {
+		t.Fatalf("deliveries saved %d updated %d, want none for idempotent skip",
+			len(fixture.deliveries.saved), len(fixture.deliveries.updated))
+	}
+}
+
+func TestSendReminderMissingDeliveryDefensiveInsertThenNormalFlow(t *testing.T) {
+	fixture := newSendFixture()
+
+	if err := fixture.handler.Handle(context.Background(), sendRequestFixture()); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if len(fixture.deliveries.saved) != 1 {
+		t.Fatalf("saved deliveries = %d, want defensive insert", len(fixture.deliveries.saved))
+	}
+	created := fixture.deliveries.saved[0]
+	if created.State != domain.StateScheduled || created.TodoTitleSnapshot != "提交周报" || created.OwnerUserID != "user-1" {
+		t.Fatalf("defensively created delivery = %#v", created)
+	}
+	if !bytes.Contains(fixture.logBuffer.Bytes(), []byte("defensively")) {
+		t.Fatalf("log = %q, want defensive insert logged", fixture.logBuffer.String())
+	}
+	delivery := fixture.deliveries.rows[emailDeliveryKey()]
+	if delivery.State != domain.StateSucceeded || delivery.ProviderMessageID == nil || *delivery.ProviderMessageID != "prov-email-1" {
+		t.Fatalf("final delivery = %#v, want succeeded with provider message id", delivery)
+	}
+	if len(fixture.email.calls) != 1 {
+		t.Fatalf("email calls = %d, want 1", len(fixture.email.calls))
+	}
+}
+
+func TestSendReminderUnusableChannelSuppresses(t *testing.T) {
+	fixture := newSendFixture()
+	fixture.channels.endpoint = dto.ChannelEndpoint{}
+	fixture.deliveries.seed(scheduledEmailDelivery())
+
+	if err := fixture.handler.Handle(context.Background(), sendRequestFixture()); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	delivery := fixture.deliveries.rows[emailDeliveryKey()]
+	if delivery.State != domain.StateSuppressed || delivery.SuppressionReason == nil || *delivery.SuppressionReason != domain.ReasonChannelUnavailable {
+		t.Fatalf("delivery = %#v, want suppressed(channel_unavailable)", delivery)
+	}
+	assertNoNotifierCalls(t, fixture)
+	if len(fixture.channels.resolveCalls) != 1 || fixture.channels.resolveCalls[0].userID != "user-1" || fixture.channels.resolveCalls[0].channel != "email" {
+		t.Fatalf("resolve calls = %#v, want one owner+channel scoped lookup", fixture.channels.resolveCalls)
+	}
+}
+
+func TestSendReminderNotifierSuccessMarksSucceeded(t *testing.T) {
+	fixture := newSendFixture()
+	fixture.deliveries.seed(scheduledEmailDelivery())
+
+	if err := fixture.handler.Handle(context.Background(), sendRequestFixture()); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	delivery := fixture.deliveries.rows[emailDeliveryKey()]
+	if delivery.State != domain.StateSucceeded {
+		t.Fatalf("delivery.State = %q, want succeeded", delivery.State)
+	}
+	if delivery.ProviderMessageID == nil || *delivery.ProviderMessageID != "prov-email-1" {
+		t.Fatalf("delivery.ProviderMessageID = %v, want prov-email-1", delivery.ProviderMessageID)
+	}
+	if delivery.SubmittedAt == nil || !delivery.SubmittedAt.Equal(fixedNow) || delivery.FinalizedAt == nil || !delivery.FinalizedAt.Equal(fixedNow) {
+		t.Fatalf("delivery submitted/finalized = %v/%v, want fixed clock", delivery.SubmittedAt, delivery.FinalizedAt)
+	}
+	if delivery.AttemptCount != 1 {
+		t.Fatalf("delivery.AttemptCount = %d, want 1", delivery.AttemptCount)
+	}
+	if len(fixture.email.calls) != 1 {
+		t.Fatalf("email calls = %d, want 1", len(fixture.email.calls))
+	}
+	message := fixture.email.calls[0]
+	if message.To != "user-1@example.com" || message.Title != "提交周报" || !message.ScheduledAtUTC.Equal(fixedNow.Add(-time.Minute)) {
+		t.Fatalf("sent message = %#v", message)
+	}
+}
+
+func TestSendReminderRoutesChannelToMatchingNotifier(t *testing.T) {
+	fixture := newSendFixture()
+	delivery, err := domain.NewDelivery("delivery-2", "ws-1", "user-1", "todo-1", 2, "plan-1", "sms",
+		"提交周报", fixedNow.Add(-time.Minute), fixedNow.Add(-time.Hour))
+	if err != nil {
+		t.Fatalf("NewDelivery() error = %v", err)
+	}
+	fixture.deliveries.seed(delivery)
+	request := sendRequestFixture()
+	request.Channel = "sms"
+
+	if err := fixture.handler.Handle(context.Background(), request); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if len(fixture.sms.calls) != 1 || len(fixture.email.calls) != 0 {
+		t.Fatalf("notifier calls = %d sms, %d email; want sms only", len(fixture.sms.calls), len(fixture.email.calls))
+	}
+	smsKey := domain.IdempotencyKeyFor("ws-1", "todo-1", 2, "sms")
+	final := fixture.deliveries.rows[smsKey]
+	if final.State != domain.StateSucceeded || final.ProviderMessageID == nil || *final.ProviderMessageID != "prov-sms-1" {
+		t.Fatalf("sms delivery = %#v, want succeeded via sms notifier", final)
+	}
+}
+
+func TestSendReminderPermanentErrorDeadLetters(t *testing.T) {
+	fixture := newSendFixture()
+	fixture.email.err = fmt.Errorf("smtp: 550 mailbox unavailable: %w", ports.ErrPermanent)
+	fixture.deliveries.seed(scheduledEmailDelivery())
+
+	if err := fixture.handler.Handle(context.Background(), sendRequestFixture()); err != nil {
+		t.Fatalf("Handle() error = %v, want nil after dead letter", err)
+	}
+	delivery := fixture.deliveries.rows[emailDeliveryKey()]
+	if delivery.State != domain.StateFailed || delivery.LastErrorCode == nil || *delivery.LastErrorCode != "permanent_failure" {
+		t.Fatalf("delivery = %#v, want failed(permanent_failure)", delivery)
+	}
+	if !bytes.Contains(fixture.logBuffer.Bytes(), []byte("dead-lettered")) {
+		t.Fatalf("log = %q, want dead-letter event", fixture.logBuffer.String())
+	}
+	if len(fixture.email.calls) != 1 {
+		t.Fatalf("email calls = %d, want 1", len(fixture.email.calls))
+	}
+}
+
+func TestSendReminderTransientErrorReturnsForRetry(t *testing.T) {
+	fixture := newSendFixture()
+	fixture.email.err = errProviderTransient
+	fixture.deliveries.seed(scheduledEmailDelivery())
+
+	err := fixture.handler.Handle(context.Background(), sendRequestFixture())
+	if !errors.Is(err, errProviderTransient) {
+		t.Fatalf("Handle() error = %v, want transient error returned for retry", err)
+	}
+	delivery := fixture.deliveries.rows[emailDeliveryKey()]
+	if delivery.State != domain.StateSending || delivery.AttemptCount != 1 || delivery.FinalizedAt != nil {
+		t.Fatalf("delivery = %#v, want sending with attempt incremented", delivery)
+	}
+}
+
+func TestSendReminderTransientErrorOnFinalAttemptDeadLetters(t *testing.T) {
+	fixture := newSendFixture()
+	fixture.email.err = errProviderTransient
+	fixture.deliveries.seed(scheduledEmailDelivery())
+	request := sendRequestFixture()
+	request.FinalAttempt = true
+
+	if err := fixture.handler.Handle(context.Background(), request); err != nil {
+		t.Fatalf("Handle() error = %v, want nil after retry exhaustion", err)
+	}
+	delivery := fixture.deliveries.rows[emailDeliveryKey()]
+	if delivery.State != domain.StateFailed || delivery.LastErrorCode == nil || *delivery.LastErrorCode != "retry_exhausted" {
+		t.Fatalf("delivery = %#v, want failed(retry_exhausted)", delivery)
+	}
+	if !bytes.Contains(fixture.logBuffer.Bytes(), []byte("dead-lettered")) {
+		t.Fatalf("log = %q, want dead-letter event", fixture.logBuffer.String())
+	}
+}
+
+func TestSendReminderSecondRunAfterSuccessIsNoOp(t *testing.T) {
+	fixture := newSendFixture()
+	fixture.deliveries.seed(scheduledEmailDelivery())
+
+	if err := fixture.handler.Handle(context.Background(), sendRequestFixture()); err != nil {
+		t.Fatalf("Handle() first run error = %v", err)
+	}
+	if err := fixture.handler.Handle(context.Background(), sendRequestFixture()); err != nil {
+		t.Fatalf("Handle() second run error = %v, want idempotent nil", err)
+	}
+	if len(fixture.email.calls) != 1 {
+		t.Fatalf("email calls = %d, want exactly 1 across both runs", len(fixture.email.calls))
+	}
+	if len(fixture.deliveries.updated) != 2 {
+		t.Fatalf("updates = %d, want 2 (sending + succeeded) from the first run only", len(fixture.deliveries.updated))
+	}
+}
+
+func newReceiptHandler(deliveries *fakeDeliveryStore, logger *slog.Logger) *RecordReceiptHandler {
+	return &RecordReceiptHandler{
+		Deliveries: deliveries,
+		Log:        logger,
+		Now:        func() time.Time { return fixedNow },
+	}
+}
+
+func succeededDeliveryWithMessage(providerMessageID string) domain.ReminderDelivery {
+	delivery := scheduledEmailDelivery()
+	if err := delivery.MarkSending(fixedNow.Add(-time.Minute)); err != nil {
+		panic(err)
+	}
+	if err := delivery.MarkSucceeded(providerMessageID, fixedNow.Add(-time.Minute)); err != nil {
+		panic(err)
+	}
+	return delivery
+}
+
+func TestRecordReceiptAppliesOnceToSucceededDelivery(t *testing.T) {
+	deliveries := newFakeDeliveryStore()
+	deliveries.seed(succeededDeliveryWithMessage("prov-1"))
+	handler := newReceiptHandler(deliveries, discardLogger())
+	request := ReceiptRequest{ProviderMessageID: "prov-1", Delivered: true}
+
+	if err := handler.Handle(context.Background(), request); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	delivery := deliveries.rows[emailDeliveryKey()]
+	if delivery.ReceiptState == nil || *delivery.ReceiptState != domain.ReceiptOK {
+		t.Fatalf("delivery.ReceiptState = %v, want received_ok", delivery.ReceiptState)
+	}
+	if delivery.ReceiptAt == nil || !delivery.ReceiptAt.Equal(fixedNow) {
+		t.Fatalf("delivery.ReceiptAt = %v, want fixed clock", delivery.ReceiptAt)
+	}
+	if len(deliveries.updated) != 1 {
+		t.Fatalf("updates = %d, want 1", len(deliveries.updated))
+	}
+
+	if err := handler.Handle(context.Background(), request); err != nil {
+		t.Fatalf("Handle() second call error = %v", err)
+	}
+	if len(deliveries.updated) != 1 {
+		t.Fatalf("updates after duplicate receipt = %d, want still 1", len(deliveries.updated))
+	}
+}
+
+func TestRecordReceiptFailedVerdictRecordsErrorCode(t *testing.T) {
+	deliveries := newFakeDeliveryStore()
+	deliveries.seed(succeededDeliveryWithMessage("prov-2"))
+	handler := newReceiptHandler(deliveries, discardLogger())
+
+	err := handler.Handle(context.Background(), ReceiptRequest{ProviderMessageID: "prov-2", Delivered: false, ErrorCode: "number_unreachable"})
+	if err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	delivery := deliveries.rows[emailDeliveryKey()]
+	if delivery.ReceiptState == nil || *delivery.ReceiptState != domain.ReceiptFailed {
+		t.Fatalf("delivery.ReceiptState = %v, want received_failed", delivery.ReceiptState)
+	}
+	if delivery.ReceiptErrorCode == nil || *delivery.ReceiptErrorCode != "number_unreachable" {
+		t.Fatalf("delivery.ReceiptErrorCode = %v, want number_unreachable", delivery.ReceiptErrorCode)
+	}
+}
+
+func TestRecordReceiptIgnoresNonSucceededDelivery(t *testing.T) {
+	deliveries := newFakeDeliveryStore()
+	delivery := scheduledEmailDelivery()
+	providerMessageID := "prov-3"
+	delivery.ProviderMessageID = &providerMessageID
+	deliveries.seed(delivery)
+	handler := newReceiptHandler(deliveries, discardLogger())
+
+	if err := handler.Handle(context.Background(), ReceiptRequest{ProviderMessageID: "prov-3", Delivered: true}); err != nil {
+		t.Fatalf("Handle() error = %v, want nil for non-succeeded delivery", err)
+	}
+	final := deliveries.rows[emailDeliveryKey()]
+	if final.ReceiptState != nil {
+		t.Fatalf("delivery.ReceiptState = %v, want nil for non-succeeded delivery", final.ReceiptState)
+	}
+	if len(deliveries.updated) != 0 {
+		t.Fatalf("updates = %d, want none", len(deliveries.updated))
+	}
+}
+
+func TestRecordReceiptUnknownProviderIDIsIgnored(t *testing.T) {
+	deliveries := newFakeDeliveryStore()
+	buffer := &bytes.Buffer{}
+	handler := newReceiptHandler(deliveries, slog.New(slog.NewTextHandler(buffer, nil)))
+
+	err := handler.Handle(context.Background(), ReceiptRequest{ProviderMessageID: "ghost", Delivered: true})
+	if err != nil {
+		t.Fatalf("Handle() error = %v, want safe ignore", err)
+	}
+	if len(deliveries.updated) != 0 {
+		t.Fatalf("updates = %d, want none", len(deliveries.updated))
+	}
+	if !bytes.Contains(buffer.Bytes(), []byte("unknown")) {
+		t.Fatalf("log = %q, want unknown provider id logged", buffer.String())
 	}
 }

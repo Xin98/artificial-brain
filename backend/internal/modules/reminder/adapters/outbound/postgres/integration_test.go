@@ -115,6 +115,46 @@ func TestPlanStoreSaveAndDuplicateIdempotency(t *testing.T) {
 	}
 }
 
+func TestPlanStoreGetScopesByWorkspace(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	store := NewPlanStore(pool)
+	workspaceID, todoID := randomID(t), randomID(t)
+
+	plan := newPlan(t, workspaceID, todoID, 1)
+	if err := store.Save(ctx, plan); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+
+	// Found: every persisted field round-trips.
+	got, err := store.Get(ctx, workspaceID, plan.ID)
+	if err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if got.ID != plan.ID || got.WorkspaceID != plan.WorkspaceID || got.TodoID != plan.TodoID {
+		t.Fatalf("Get() identity = %#v, want %#v", got, plan)
+	}
+	if got.TodoReminderVersion != plan.TodoReminderVersion || !got.ScheduledAtUTC.Equal(plan.ScheduledAtUTC) {
+		t.Fatalf("Get() schedule = %#v, want %#v", got, plan)
+	}
+	if len(got.RequestedChannels) != len(plan.RequestedChannels) || got.RequestedChannels[0] != plan.RequestedChannels[0] {
+		t.Fatalf("Get() channels = %#v, want %#v", got.RequestedChannels, plan.RequestedChannels)
+	}
+	if got.Status != plan.Status || !got.CreatedAt.Equal(plan.CreatedAt) || got.RevokedAt != nil {
+		t.Fatalf("Get() status/created/revoked = %#v, want %#v", got, plan)
+	}
+
+	// Not found: an unknown plan id maps to ErrPlanNotFound.
+	if _, err := store.Get(ctx, workspaceID, randomID(t)); !errors.Is(err, domain.ErrPlanNotFound) {
+		t.Fatalf("Get(unknown id) error = %v, want ErrPlanNotFound", err)
+	}
+
+	// Wrong workspace: the same plan id in another workspace is not visible.
+	if _, err := store.Get(ctx, randomID(t), plan.ID); !errors.Is(err, domain.ErrPlanNotFound) {
+		t.Fatalf("Get(wrong workspace) error = %v, want ErrPlanNotFound", err)
+	}
+}
+
 func TestPlanStoreRevokePlannedCutoff(t *testing.T) {
 	pool := setupTestDB(t)
 	ctx := context.Background()

@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net/http"
 	"time"
@@ -30,6 +31,7 @@ import (
 	remindercommand "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/application/command"
 	reminderdto "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/application/dto"
 	reminderports "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/application/ports"
+	reminderdomain "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/domain"
 	todohttp "github.com/Xin98/artificial-brain/backend/internal/modules/todo/adapters/inbound/http"
 	todopostgres "github.com/Xin98/artificial-brain/backend/internal/modules/todo/adapters/outbound/postgres"
 	todocommand "github.com/Xin98/artificial-brain/backend/internal/modules/todo/application/command"
@@ -158,9 +160,12 @@ func buildTodoHandlers(pool *pgxpool.Pool, scheduler reminderports.JobScheduler,
 	uow := &joinableUoW{runner: database.NewTxRunner(pool)}
 	todos := todopostgres.NewStore(pool)
 	plans := reminderpostgres.NewPlanStore(pool)
+	// INTERIM: Task 12 replaces noopDeliveryStore with the real postgres
+	// DeliveryStore (Task 7) once it exists.
+	deliveries := noopDeliveryStore{}
 	planner := &reminderPlannerShim{
-		plan:   &remindercommand.PlanReminderHandler{Plans: plans, Scheduler: scheduler, NewID: newID, Now: now},
-		revoke: &remindercommand.RevokePlansHandler{Plans: plans, Now: now},
+		plan:   &remindercommand.PlanReminderHandler{Plans: plans, Deliveries: deliveries, Scheduler: scheduler, NewID: newID, Now: now},
+		revoke: &remindercommand.RevokePlansHandler{Plans: plans, Deliveries: deliveries, Scheduler: scheduler, Log: slog.Default(), Now: now},
 	}
 	return todoHandlers{
 		Store:    todos,
@@ -300,6 +305,38 @@ func registerConversationRoutes(cfg config.Config, pool *pgxpool.Pool, mux *http
 		CreateConfirmation: createConfirmation,
 		ConfirmAction:      confirmAction,
 	})
+}
+
+// noopDeliveryStore is the INTERIM DeliveryStore keeping the API compiling
+// until Task 7 lands the real postgres implementation and Task 12 rewires it.
+// Writes are inert and every read reports "not found"/empty, which preserves
+// the ITER-0002 behavior: plans are persisted, no deliveries are tracked yet.
+type noopDeliveryStore struct{}
+
+func (noopDeliveryStore) Save(context.Context, reminderdomain.ReminderDelivery) error { return nil }
+
+func (noopDeliveryStore) Update(context.Context, reminderdomain.ReminderDelivery) error { return nil }
+
+func (noopDeliveryStore) ByIdempotencyKey(context.Context, string, string) (reminderdomain.ReminderDelivery, error) {
+	return reminderdomain.ReminderDelivery{}, reminderdomain.ErrDeliveryNotFound
+}
+
+func (noopDeliveryStore) ByProviderMessageID(context.Context, string) (reminderdomain.ReminderDelivery, error) {
+	return reminderdomain.ReminderDelivery{}, reminderdomain.ErrDeliveryNotFound
+}
+
+func (noopDeliveryStore) SetProviderJobID(context.Context, string, string, int64) error { return nil }
+
+func (noopDeliveryStore) PlannedJobIDs(context.Context, string, string, int) ([]int64, error) {
+	return nil, nil
+}
+
+func (noopDeliveryStore) Stats(context.Context, string) (reminderdto.DeliveryCounts, error) {
+	return reminderdto.DeliveryCounts{}, nil
+}
+
+func (noopDeliveryStore) List(context.Context, string, reminderdto.DeliveryFilter) ([]reminderdomain.ReminderDelivery, error) {
+	return nil, nil
 }
 
 // reminderPlannerShim adapts Reminder's public application handlers to Todo's

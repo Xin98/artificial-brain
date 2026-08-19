@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"log/slog"
 	"time"
 
 	"github.com/Xin98/artificial-brain/backend/internal/modules/reminder/application/dto"
@@ -9,14 +10,38 @@ import (
 )
 
 // RevokePlansHandler revokes planned reminders up to a todo reminder version
-// cutoff. Like PlanReminderHandler it owns no transaction and joins the
-// caller's ambient transaction.
+// cutoff and cancels their scheduled provider jobs best-effort. Like
+// PlanReminderHandler it owns no transaction and joins the caller's ambient
+// transaction. Correctness does not depend on the cancels succeeding: a job
+// that still runs re-reads the latest facts at execution time and suppresses.
 type RevokePlansHandler struct {
-	Plans ports.PlanStore
-	Now   func() time.Time
+	Plans      ports.PlanStore
+	Deliveries ports.DeliveryStore
+	Scheduler  ports.JobScheduler
+	Log        *slog.Logger
+	Now        func() time.Time
 }
 
-// Handle revokes every planned plan for the todo within the cutoff.
+// Handle revokes every planned plan for the todo within the cutoff and
+// cancels each planned provider job. Cancel errors are logged and never fail
+// the revoke.
 func (h *RevokePlansHandler) Handle(ctx context.Context, request dto.RevokeRequest) error {
-	return h.Plans.RevokePlanned(ctx, request.WorkspaceID, request.TodoID, request.UpToReminderVersion, h.Now())
+	if err := h.Plans.RevokePlanned(ctx, request.WorkspaceID, request.TodoID, request.UpToReminderVersion, h.Now()); err != nil {
+		return err
+	}
+	jobIDs, err := h.Deliveries.PlannedJobIDs(ctx, request.WorkspaceID, request.TodoID, request.UpToReminderVersion)
+	if err != nil {
+		return err
+	}
+	for _, jobID := range jobIDs {
+		if err := h.Scheduler.Cancel(ctx, jobID); err != nil {
+			h.Log.Warn("reminder: cancel planned delivery job failed",
+				slog.String("workspaceId", request.WorkspaceID),
+				slog.String("todoId", request.TodoID),
+				slog.Int64("jobId", jobID),
+				slog.String("error", err.Error()),
+			)
+		}
+	}
+	return nil
 }

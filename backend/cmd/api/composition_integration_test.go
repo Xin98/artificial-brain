@@ -223,7 +223,11 @@ func setupTodoPool(t *testing.T) *pgxpool.Pool {
 
 type failingScheduler struct{ err error }
 
-func (s failingScheduler) Schedule(context.Context, reminderports.ReminderJob) error { return s.err }
+func (s failingScheduler) Schedule(context.Context, reminderports.ReminderJob) ([]reminderports.ScheduledChannel, error) {
+	return nil, s.err
+}
+
+func (s failingScheduler) Cancel(context.Context, int64) error { return nil }
 
 type planRow struct {
 	version     int

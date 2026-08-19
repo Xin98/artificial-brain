@@ -3,9 +3,14 @@ package dto
 import "time"
 
 // PlanRequest asks the reminder seam to plan a delivery for a todo revision.
+// OwnerUserID and Title snapshot the todo's owner and title at plan time so
+// every delivery row stays workspace+user scoped and display-ready without
+// re-reading the todo.
 type PlanRequest struct {
 	WorkspaceID         string
 	TodoID              string
+	OwnerUserID         string
+	Title               string
 	TodoReminderVersion int
 	ScheduledAtUTC      time.Time
 	Channels            []string

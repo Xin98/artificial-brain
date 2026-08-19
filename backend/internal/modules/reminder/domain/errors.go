@@ -6,6 +6,7 @@ var (
 	ErrMissingSchedule    = errors.New("reminder: scheduled time is required")
 	ErrPlanAlreadyRevoked = errors.New("reminder: plan already revoked")
 	ErrPlanExists         = errors.New("reminder: plan already exists for todo reminder version")
+	ErrPlanNotFound       = errors.New("reminder: plan not found")
 
 	ErrMissingDeliveryFields  = errors.New("reminder: delivery requires id, workspace, owner, todo, plan, and title")
 	ErrInvalidDeliveryChannel = errors.New("reminder: delivery channel must be email or sms")

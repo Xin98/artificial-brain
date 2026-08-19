@@ -1,4 +1,6 @@
-// Package postgres implements the reminder PlanStore on PostgreSQL.
+// Package postgres implements the reminder module's outbound stores on
+// PostgreSQL: plans, deliveries, the instance-wide ops snapshot, and the fake
+// outbox reader behind the gated dev inbox.
 package postgres
 
 import (

@@ -52,30 +52,37 @@ func (s *DeliveryStore) Save(ctx context.Context, delivery domain.ReminderDelive
 
 // Update replaces a delivery's mutable fields, keyed by (workspace_id, id).
 // Identity and planning fields (todo, plan, channel, idempotency key, title
-// snapshot, created_at) are immutable once planned.
+// snapshot, created_at) are immutable once planned; provider_job_id is owned
+// exclusively by SetProviderJobID and scheduled_at is fixed at planning, so
+// neither can be clobbered by an Update carrying a stale in-memory struct. A
+// missing row maps to domain.ErrDeliveryNotFound, matching the read paths.
 func (s *DeliveryStore) Update(ctx context.Context, delivery domain.ReminderDelivery) error {
 	exec := database.ExecutorFromContextOr(ctx, s.pool)
-	_, err := exec.Exec(ctx, `
+	tag, err := exec.Exec(ctx, `
 		update reminder.reminder_deliveries
 		set state = $3,
 			suppression_reason = $4,
 			attempt_count = $5,
-			provider_job_id = $6,
-			provider_message_id = $7,
-			last_error_code = $8,
-			scheduled_at = $9,
-			submitted_at = $10,
-			finalized_at = $11,
-			receipt_state = $12,
-			receipt_at = $13,
-			receipt_error_code = $14
+			provider_message_id = $6,
+			last_error_code = $7,
+			submitted_at = $8,
+			finalized_at = $9,
+			receipt_state = $10,
+			receipt_at = $11,
+			receipt_error_code = $12
 		where workspace_id = $1 and id = $2
 	`, delivery.WorkspaceID, delivery.ID, string(delivery.State),
 		suppressionReasonArg(delivery.SuppressionReason), delivery.AttemptCount,
-		delivery.ProviderJobID, delivery.ProviderMessageID, delivery.LastErrorCode,
-		delivery.ScheduledAt, delivery.SubmittedAt, delivery.FinalizedAt,
+		delivery.ProviderMessageID, delivery.LastErrorCode,
+		delivery.SubmittedAt, delivery.FinalizedAt,
 		receiptStateArg(delivery.ReceiptState), delivery.ReceiptAt, delivery.ReceiptErrorCode)
-	return err
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return domain.ErrDeliveryNotFound
+	}
+	return nil
 }
 
 // ByIdempotencyKey loads one delivery scoped by workspace; a missing row maps

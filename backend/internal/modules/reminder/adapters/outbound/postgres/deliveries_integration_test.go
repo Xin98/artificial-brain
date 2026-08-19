@@ -217,20 +217,20 @@ func TestDeliveryStoreSetProviderJobIDAndPlannedJobIDs(t *testing.T) {
 	}
 
 	// v1 sms: job set, sending (non-final) -> included. The job ID is written
-	// last so the state-transition Update (which replaces every mutable field
-	// from the in-memory struct) cannot overwrite it.
+	// before the state-transition Update to prove the two writes can happen in
+	// any order: Update no longer touches provider_job_id.
 	v1Sms := newDeliveryFixture(t, workspaceID, ownerUserID, todoID, 1, planV1.ID, "sms", testNow.Add(time.Hour))
 	if err := store.Save(ctx, v1Sms); err != nil {
 		t.Fatalf("Save(v1 sms) error = %v", err)
+	}
+	if err := store.SetProviderJobID(ctx, workspaceID, v1Sms.ID, 104); err != nil {
+		t.Fatalf("SetProviderJobID(v1 sms) error = %v", err)
 	}
 	if err := v1Sms.MarkSending(testNow); err != nil {
 		t.Fatalf("MarkSending(v1 sms) error = %v", err)
 	}
 	if err := store.Update(ctx, v1Sms); err != nil {
 		t.Fatalf("Update(v1 sms) error = %v", err)
-	}
-	if err := store.SetProviderJobID(ctx, workspaceID, v1Sms.ID, 104); err != nil {
-		t.Fatalf("SetProviderJobID(v1 sms) error = %v", err)
 	}
 
 	// v2 email: job set but succeeded (final) -> excluded.
@@ -297,6 +297,78 @@ func TestDeliveryStoreSetProviderJobIDAndPlannedJobIDs(t *testing.T) {
 	}
 	if len(ids) != 0 {
 		t.Fatalf("PlannedJobIDs(other workspace) = %v, want none", ids)
+	}
+}
+
+func TestDeliveryStoreUpdateCannotClobberJobIDOrSchedule(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	store := NewDeliveryStore(pool)
+	plans := NewPlanStore(pool)
+	workspaceID, ownerUserID, todoID := randomID(t), randomID(t), randomID(t)
+	plan := seedPlanFixture(t, ctx, plans, workspaceID, todoID, 1)
+
+	scheduledAt := testNow.Add(time.Hour)
+	delivery := newDeliveryFixture(t, workspaceID, ownerUserID, todoID, 1, plan.ID, "email", scheduledAt)
+	if err := store.Save(ctx, delivery); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	if err := store.SetProviderJobID(ctx, workspaceID, delivery.ID, 42); err != nil {
+		t.Fatalf("SetProviderJobID() error = %v", err)
+	}
+
+	// Regression: a stale struct read before the job-ID write carries no job ID
+	// (and here a drifted schedule); the transition Update must not NULL the job
+	// ID nor move the schedule, or the job could never be cancelled via
+	// PlannedJobIDs.
+	stale := delivery
+	stale.ProviderJobID = nil
+	stale.ScheduledAt = testNow.Add(99 * time.Hour)
+	if err := stale.MarkSending(testNow.Add(time.Minute)); err != nil {
+		t.Fatalf("MarkSending() error = %v", err)
+	}
+	if err := store.Update(ctx, stale); err != nil {
+		t.Fatalf("Update() error = %v", err)
+	}
+
+	got, err := store.ByIdempotencyKey(ctx, workspaceID, delivery.IdempotencyKey)
+	if err != nil {
+		t.Fatalf("ByIdempotencyKey() error = %v", err)
+	}
+	if got.ProviderJobID == nil || *got.ProviderJobID != 42 {
+		t.Fatalf("ProviderJobID = %v, want 42", got.ProviderJobID)
+	}
+	if !got.ScheduledAt.Equal(scheduledAt) {
+		t.Fatalf("ScheduledAt = %v, want %v", got.ScheduledAt, scheduledAt)
+	}
+	// The mutable fields the stale struct did carry still round-trip.
+	if got.State != domain.StateSending || got.AttemptCount != 1 {
+		t.Fatalf("state/attempt = %v/%d, want sending/1", got.State, got.AttemptCount)
+	}
+}
+
+func TestDeliveryStoreUpdateUnknownDelivery(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	store := NewDeliveryStore(pool)
+	plans := NewPlanStore(pool)
+	workspaceID, ownerUserID, todoID := randomID(t), randomID(t), randomID(t)
+	plan := seedPlanFixture(t, ctx, plans, workspaceID, todoID, 1)
+
+	// A delivery that was never saved: Update surfaces the missing row.
+	missing := newDeliveryFixture(t, workspaceID, ownerUserID, todoID, 1, plan.ID, "email", testNow.Add(time.Hour))
+	if err := store.Update(ctx, missing); !errors.Is(err, domain.ErrDeliveryNotFound) {
+		t.Fatalf("Update(unknown id) error = %v, want ErrDeliveryNotFound", err)
+	}
+
+	// A saved delivery is invisible under another workspace's key.
+	delivery := newDeliveryFixture(t, workspaceID, ownerUserID, todoID, 1, plan.ID, "sms", testNow.Add(time.Hour))
+	if err := store.Save(ctx, delivery); err != nil {
+		t.Fatalf("Save() error = %v", err)
+	}
+	delivery.WorkspaceID = randomID(t)
+	if err := store.Update(ctx, delivery); !errors.Is(err, domain.ErrDeliveryNotFound) {
+		t.Fatalf("Update(wrong workspace) error = %v, want ErrDeliveryNotFound", err)
 	}
 }
 
@@ -538,20 +610,20 @@ func TestDeliveryStoreJoinsAmbientTransaction(t *testing.T) {
 		t.Fatalf("ByIdempotencyKey() after rollback error = %v, want ErrDeliveryNotFound", err)
 	}
 
-	// A successful unit of work commits Save, Update, and SetProviderJobID
-	// together. The job ID is written last so the Update (which replaces every
-	// mutable field from the in-memory struct) cannot overwrite it.
+	// A successful unit of work commits Save, SetProviderJobID, and Update
+	// together. The job ID is written before the Update (whose in-memory struct
+	// still carries no job ID) to prove the Update cannot overwrite it.
 	if err := runner.Run(ctx, func(txCtx context.Context) error {
 		if err := store.Save(txCtx, delivery); err != nil {
+			return err
+		}
+		if err := store.SetProviderJobID(txCtx, workspaceID, delivery.ID, 777); err != nil {
 			return err
 		}
 		if err := delivery.MarkSending(testNow.Add(time.Minute)); err != nil {
 			return err
 		}
-		if err := store.Update(txCtx, delivery); err != nil {
-			return err
-		}
-		return store.SetProviderJobID(txCtx, workspaceID, delivery.ID, 777)
+		return store.Update(txCtx, delivery)
 	}); err != nil {
 		t.Fatalf("Run(commit) error = %v", err)
 	}

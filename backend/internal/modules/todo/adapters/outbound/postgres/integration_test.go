@@ -35,7 +35,7 @@ func setupTestDB(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("OpenPool() error = %v", err)
 	}
 	t.Cleanup(pool.Close)
-	if _, err := pool.Exec(ctx, `truncate todo.todos, reminder.reminder_plans`); err != nil {
+	if _, err := pool.Exec(ctx, `truncate todo.todos, reminder.reminder_plans cascade`); err != nil {
 		t.Fatalf("truncate error = %v", err)
 	}
 	return pool

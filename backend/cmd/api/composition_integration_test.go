@@ -53,7 +53,7 @@ func setupAPIHandlerWithPool(t *testing.T, devInbox bool) (http.Handler, *pgxpoo
 		truncate identity.login_challenges, identity.sessions, identity.contact_channels,
 			identity.users, identity.workspaces, identity.message_outbox,
 			todo.todos, reminder.reminder_plans,
-			conversation.confirmation_requests, conversation.messages restart identity
+			conversation.confirmation_requests, conversation.messages restart identity cascade
 	`); err != nil {
 		t.Fatalf("truncate error = %v", err)
 	}
@@ -215,7 +215,7 @@ func setupTodoPool(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("OpenPool() error = %v", err)
 	}
 	t.Cleanup(pool.Close)
-	if _, err := pool.Exec(ctx, `truncate todo.todos, reminder.reminder_plans`); err != nil {
+	if _, err := pool.Exec(ctx, `truncate todo.todos, reminder.reminder_plans cascade`); err != nil {
 		t.Fatalf("truncate error = %v", err)
 	}
 	return pool

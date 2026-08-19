@@ -625,8 +625,14 @@ func TestSendReminderNotifierSuccessMarksSucceeded(t *testing.T) {
 	if delivery.AttemptCount != 1 {
 		t.Fatalf("delivery.AttemptCount = %d, want 1", delivery.AttemptCount)
 	}
+	if len(fixture.todos.getCalls) != 1 || fixture.todos.getCalls[0] != (todoGetCall{workspaceID: "ws-1", ownerUserID: "user-1", todoID: "todo-1"}) {
+		t.Fatalf("todo get calls = %#v, want one owner-scoped re-read", fixture.todos.getCalls)
+	}
 	if len(fixture.email.calls) != 1 {
 		t.Fatalf("email calls = %d, want 1", len(fixture.email.calls))
+	}
+	if len(fixture.sms.calls) != 0 {
+		t.Fatalf("sms calls = %d, want 0 for an email delivery", len(fixture.sms.calls))
 	}
 	message := fixture.email.calls[0]
 	if message.To != "user-1@example.com" || message.Title != "提交周报" || !message.ScheduledAtUTC.Equal(fixedNow.Add(-time.Minute)) {
@@ -660,6 +666,26 @@ func TestSendReminderRoutesChannelToMatchingNotifier(t *testing.T) {
 
 func TestSendReminderPermanentErrorDeadLetters(t *testing.T) {
 	fixture := newSendFixture()
+	fixture.email.err = &ports.PermanentError{Code: "isv.MOBILE_NUMBER_ILLEGAL"}
+	fixture.deliveries.seed(scheduledEmailDelivery())
+
+	if err := fixture.handler.Handle(context.Background(), sendRequestFixture()); err != nil {
+		t.Fatalf("Handle() error = %v, want nil after dead letter", err)
+	}
+	delivery := fixture.deliveries.rows[emailDeliveryKey()]
+	if delivery.State != domain.StateFailed || delivery.LastErrorCode == nil || *delivery.LastErrorCode != "isv.MOBILE_NUMBER_ILLEGAL" {
+		t.Fatalf("delivery = %#v, want failed(isv.MOBILE_NUMBER_ILLEGAL)", delivery)
+	}
+	if !bytes.Contains(fixture.logBuffer.Bytes(), []byte("dead-lettered")) {
+		t.Fatalf("log = %q, want dead-letter event", fixture.logBuffer.String())
+	}
+	if len(fixture.email.calls) != 1 {
+		t.Fatalf("email calls = %d, want 1", len(fixture.email.calls))
+	}
+}
+
+func TestSendReminderBarePermanentErrorFallsBackToGenericCode(t *testing.T) {
+	fixture := newSendFixture()
 	fixture.email.err = fmt.Errorf("smtp: 550 mailbox unavailable: %w", ports.ErrPermanent)
 	fixture.deliveries.seed(scheduledEmailDelivery())
 
@@ -668,13 +694,24 @@ func TestSendReminderPermanentErrorDeadLetters(t *testing.T) {
 	}
 	delivery := fixture.deliveries.rows[emailDeliveryKey()]
 	if delivery.State != domain.StateFailed || delivery.LastErrorCode == nil || *delivery.LastErrorCode != "permanent_failure" {
-		t.Fatalf("delivery = %#v, want failed(permanent_failure)", delivery)
+		t.Fatalf("delivery = %#v, want failed(permanent_failure) fallback", delivery)
 	}
 	if !bytes.Contains(fixture.logBuffer.Bytes(), []byte("dead-lettered")) {
 		t.Fatalf("log = %q, want dead-letter event", fixture.logBuffer.String())
 	}
-	if len(fixture.email.calls) != 1 {
-		t.Fatalf("email calls = %d, want 1", len(fixture.email.calls))
+}
+
+func TestSendReminderWrappedPermanentErrorExtractsProviderCode(t *testing.T) {
+	fixture := newSendFixture()
+	fixture.email.err = fmt.Errorf("wrap: %w", &ports.PermanentError{Code: "SignatureDoesNotMatch"})
+	fixture.deliveries.seed(scheduledEmailDelivery())
+
+	if err := fixture.handler.Handle(context.Background(), sendRequestFixture()); err != nil {
+		t.Fatalf("Handle() error = %v, want nil after dead letter", err)
+	}
+	delivery := fixture.deliveries.rows[emailDeliveryKey()]
+	if delivery.State != domain.StateFailed || delivery.LastErrorCode == nil || *delivery.LastErrorCode != "SignatureDoesNotMatch" {
+		t.Fatalf("delivery = %#v, want failed(SignatureDoesNotMatch) extracted through wrap", delivery)
 	}
 }
 

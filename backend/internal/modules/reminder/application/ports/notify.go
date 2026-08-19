@@ -14,6 +14,23 @@ import (
 // is transient and retried by the queue.
 var ErrPermanent = errors.New("reminder: permanent provider failure")
 
+// PermanentError marks a provider refusal that must never be retried. It
+// unwraps to ErrPermanent so errors.Is checks keep working, and carries the
+// provider's reason code for the delivery's LastErrorCode.
+type PermanentError struct {
+	Code  string
+	Cause error
+}
+
+func (e *PermanentError) Error() string {
+	if e.Cause != nil {
+		return "reminder: permanent provider failure: " + e.Code + ": " + e.Cause.Error()
+	}
+	return "reminder: permanent provider failure: " + e.Code
+}
+
+func (e *PermanentError) Unwrap() error { return ErrPermanent }
+
 // EmailNotifier submits one reminder over email.
 type EmailNotifier interface {
 	Send(ctx context.Context, message dto.ReminderMessage) (dto.SendResult, error)

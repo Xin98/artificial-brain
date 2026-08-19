@@ -142,7 +142,12 @@ func (h *SendReminderHandler) Handle(ctx context.Context, request SendRequest) e
 	})
 	if err != nil {
 		if errors.Is(err, ports.ErrPermanent) {
-			return h.deadLetter(ctx, delivery, reasonPermanentFailure, err)
+			code := reasonPermanentFailure
+			var permanent *ports.PermanentError
+			if errors.As(err, &permanent) && permanent.Code != "" {
+				code = permanent.Code
+			}
+			return h.deadLetter(ctx, delivery, code, err)
 		}
 		if request.FinalAttempt {
 			return h.deadLetter(ctx, delivery, reasonRetryExhausted, err)

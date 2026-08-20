@@ -97,6 +97,9 @@ func TestCreateTodoWithDuePlansAtDueWithChannelSnapshot(t *testing.T) {
 	if len(plan.Channels) != 2 || plan.Channels[0] != "sms" || plan.Channels[1] != "email" {
 		t.Fatalf("plan.Channels = %#v, want provider snapshot", plan.Channels)
 	}
+	if plan.Title != "提交周报" || plan.OwnerUserID != "user-1" {
+		t.Fatalf("plan.Title/OwnerUserID = %q/%q, want todo title and owner", plan.Title, plan.OwnerUserID)
+	}
 }
 
 func TestCreateTodoWithNilChannelsProviderPlansEmptySnapshot(t *testing.T) {
@@ -318,6 +321,9 @@ func TestUpdateDueReschedulesWithRevokeThenPlan(t *testing.T) {
 	}
 	if len(plan.Channels) != 1 || plan.Channels[0] != "email" {
 		t.Fatalf("plan.Channels = %#v, want provider snapshot", plan.Channels)
+	}
+	if plan.Title != "提交周报" || plan.OwnerUserID != "user-1" {
+		t.Fatalf("plan.Title/OwnerUserID = %q/%q, want loaded todo title and owner", plan.Title, plan.OwnerUserID)
 	}
 }
 

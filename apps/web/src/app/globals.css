@@ -211,6 +211,48 @@ main[data-page="login"] {
   grid-column: 1 / -1;
   margin: 0;
 }
+.dashboard-records-note {
+  color: #8a5a00;
+  font-size: 0.875rem;
+  margin: 0.5rem 0 0;
+}
+.reminder-records {
+  margin-top: 1.5rem;
+}
+.reminder-records h2 {
+  color: #40506b;
+  font-size: 1rem;
+  margin: 0 0 0.75rem;
+}
+.reminder-records ul {
+  display: grid;
+  gap: 0.5rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.reminder-records-empty {
+  color: #40506b;
+  margin: 0;
+}
+.reminder-record {
+  background: #fff;
+  border: 1px solid #c6d1e2;
+  border-radius: 0.5rem;
+  padding: 0.625rem 0.875rem;
+}
+.reminder-record-title {
+  font-weight: 600;
+}
+.reminder-record-channel {
+  color: #40506b;
+}
+.reminder-record-state {
+  color: #40506b;
+}
+.reminder-record-receipt {
+  color: #40506b;
+}
 
 /* Todos */
 .todos-panel {

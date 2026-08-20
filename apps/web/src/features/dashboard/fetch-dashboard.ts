@@ -12,8 +12,10 @@ export interface DashboardSummary {
   overdue: number;
   noDue: number;
   completedLast7Days: number;
+  reminderSucceeded: number;
   reminderRetrying: number;
   reminderFailed: number;
+  reminderSuppressed: number;
   checkedAt: string;
 }
 
@@ -49,8 +51,10 @@ function isDashboardSummary(value: unknown): value is DashboardSummary {
       "overdue",
       "noDue",
       "completedLast7Days",
+      "reminderSucceeded",
       "reminderRetrying",
       "reminderFailed",
+      "reminderSuppressed",
       "checkedAt",
     ])
   ) {
@@ -62,8 +66,10 @@ function isDashboardSummary(value: unknown): value is DashboardSummary {
     isInteger(value.overdue) &&
     isInteger(value.noDue) &&
     isInteger(value.completedLast7Days) &&
+    isInteger(value.reminderSucceeded) &&
     isInteger(value.reminderRetrying) &&
     isInteger(value.reminderFailed) &&
+    isInteger(value.reminderSuppressed) &&
     isRFC3339(value.checkedAt)
   );
 }

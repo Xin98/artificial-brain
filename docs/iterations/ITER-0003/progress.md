@@ -4,21 +4,21 @@ Links: [design](../../superpowers/specs/2026-08-19-iter-0003-reliable-reminder-d
 
 | Task | Status | Evidence |
 | --- | --- | --- |
-| 1 — Iteration Ledger, Policy Refresh, and Branch | Pending | |
-| 2 — River Dependency, Migrations 006–007, Schema 5→7 (yellow) | Pending | |
-| 3 — Platform Config Reminder Fields (yellow) | Pending | |
-| 4 — Reminder Domain — Delivery Aggregate | Pending | |
-| 5 — Reminder Application — Port Evolution, Plan/Revoke With Deliveries | Pending | |
-| 6 — Reminder Application — SendReminder, RecordReceipt, Queries | Pending | |
-| 7 — Reminder Postgres Adapters — Deliveries, Ops, Fake-Outbox Reader | Pending | |
-| 8 — River Adapters — Scheduler and Worker (contract tests) | Pending | |
-| 9 — Provider Adapters — Fake, SMTP, Aliyun | Pending | |
-| 10 — Reminder HTTP Inbound — List, Ops, Receipts, Dev Outbox | Pending | |
-| 11 — Todo Module — Title Seam and Real Dashboard Reminder Counters (green) | Pending | |
-| 12 — Composition Roots — API and Worker Wiring (yellow) | Pending | |
-| 13 — OpenAPI Contracts + Contract Tests (yellow) | Pending | |
-| 14 — Web — Real Reminder Tiles and Records (green) | Pending | |
-| 15 — Integration Gates — Migration Pin, Compose Env, Smoke E2E (yellow) | Pending | |
-| 16 — Unified Verification, Docs, Handoff, and Clean-Context Regression Gate | Pending | |
+| 1 — Iteration Ledger, Policy Refresh, and Branch | Complete | Ledger + AGENTS.md zone refresh committed (`76559f9`); branch `iter-0003-reliable-reminder-delivery` cut from `master` after ITER-0002's passing regression. |
+| 2 — River Dependency, Migrations 006–007, Schema 5→7 (yellow) | Complete | `006_river_v1.sql` (River v0.44.0 SQL inlined with version header) and `007_create_reminder_deliveries.sql` (`reminder.reminder_deliveries` + `reminder.fake_outbox`) appended; `database.CurrentSchemaVersion` 5→7; River modules pinned in go.mod (`2e8916c`). |
+| 3 — Platform Config Reminder Fields (yellow) | Complete | Seven reminder variables plus SMTP/Aliyun detail fields; fail-closed rules (fake adapters and dev outbox rejected in production, receipt secret required for the API role) (`5c4a5c5`). |
+| 4 — Reminder Domain — Delivery Aggregate | Complete | `go test ./backend/internal/modules/reminder/domain -race` green: state machine, business idempotency key, terminal immutability, receipt-once (`1eae4a4`). |
+| 5 — Reminder Application — Port Evolution, Plan/Revoke With Deliveries | Complete | `JobScheduler` evolves to fan-out `Schedule` + `Cancel`; plan creates one `scheduled` delivery per channel in the same transaction; revoke best-effort cancels and marks deliveries (`a577b4d`). |
+| 6 — Reminder Application — SendReminder, RecordReceipt, Queries | Complete | Execution-time suppression re-reads Todo/Plan/Channel; provider-code classification for permanent failures; receipt dedup by provider message ID; stats and list queries (`64e0823`, `5713b72`). |
+| 7 — Reminder Postgres Adapters — Deliveries, Ops, Fake-Outbox Reader | Complete | `TEST_DATABASE_URL=… go test ./backend/internal/modules/reminder/adapters/outbound/postgres -race` green: delivery store transitions and job-ID writeback stay out of delivery updates, ops deterministic SQL, fake-outbox reader (`237ea58`, `736ad7d`). |
+| 8 — River Adapters — Scheduler and Worker (contract tests) | Complete | `TEST_DATABASE_URL=… go test ./backend/internal/modules/reminder/adapters/outbound/river ./backend/internal/modules/reminder/adapters/inbound/worker -race -p=1` green: atomic `InsertTx` into the ambient transaction, `JobCancel`, capped exponential `NextRetry`, duplicate execution, and stop/restart recovery (`1c7877c`). |
+| 9 — Provider Adapters — Fake, SMTP, Aliyun | Complete | `go test ./backend/internal/modules/reminder/adapters/outbound/fake ./backend/internal/modules/reminder/adapters/outbound/smtp ./backend/internal/modules/reminder/adapters/outbound/aliyun -race` green: fake outbox writer, stdlib SMTP with greeting-refusal classification, Aliyun HMAC-SHA1 RPC with verdict normalization, SMS receipt report parser (`9d2823b`, `63e4863`). |
+| 10 — Reminder HTTP Inbound — List, Ops, Receipts, Dev Outbox | Complete | `go test ./backend/internal/modules/reminder/adapters/inbound/http -race` green: `GET /api/v1/reminders`, `GET /api/v1/ops/reminder`, HMAC-verified `POST /api/v1/webhooks/receipts/sms`, double-gated `GET /api/v1/dev/reminder-outbox` (`6c4ada6`). |
+| 11 — Todo Module — Title Seam and Real Dashboard Reminder Counters (green) | Complete | `go test ./backend/internal/modules/todo/... -race` green: todo title carried into plans, dashboard summary returns real reminder counters from delivery rows (`db10841`). |
+| 12 — Composition Roots — API and Worker Wiring (yellow) | Complete | `cmd/api` wires the River insert-only client, real `ChannelsProvider`, reminder routes, and delivery-aware dashboard stats; `cmd/worker` starts the River reminder client with the two queues and a ready flag; composition tests green (`278eca7`). |
+| 13 — OpenAPI Contracts + Contract Tests (yellow) | Complete | `contracts/openapi/reminder.yaml` added and `dashboard.yaml` extended with reminder counters; `go test ./tests/contract -race` green (`bee019a`). |
+| 14 — Web — Real Reminder Tiles and Records (green) | Complete | `corepack pnpm --filter @artificial-brain/web test` green: four real reminder tiles (提醒成功/重试中/失败/被抑制) plus the 提醒记录 list on the dashboard, with an unavailable fallback when the reminder fetch fails (`f5a336f`). |
+| 15 — Integration Gates — Migration Pin, Compose Env, Smoke E2E (yellow) | Complete | `migration_test.sh` pinned to schema v7; compose api/worker env + `.env.example` carry the reminder variables with static assertions; smoke E2E gains the reminder block (delivery through the fake adapters into the dev outbox, completion suppression, signed receipt, ops snapshot, worker-restart recovery); `make migration-test` and `make smoke-test` exit 0 (`2ee849e`). |
+| 16 — Unified Verification, Docs, Handoff, and Clean-Context Regression Gate | Complete (regression pending) | Full CI sequence green at the final tree: `corepack pnpm install --frozen-lockfile`, `make verify`, `make migration-test`, `make smoke-test` all exit 0; README routes/config and the ledger refreshed in this commit. The independent clean-context regression is the only remaining gate. |
 
-`regression-report.md` is intentionally absent until the independent clean-context regression runs.
+All implementation tasks are complete. The independent clean-context regression (task 16 steps 3–5) runs after this commit and is the remaining pending gate; `regression-report.md` is intentionally absent until it runs.

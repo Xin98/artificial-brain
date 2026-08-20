@@ -1,6 +1,6 @@
 # Artificial Brain
 
-ITER-0002 delivers the first business closed loop on the ITER-0001 skeleton: phone + SMS-code cloud login (fake SMS outbox with a gated dev inbox), personal workspaces with enforced isolation, the full Todo lifecycle with optimistic concurrency, a deterministic dashboard, and a conversation path that turns natural language into strictly validated intents — creating todos, listing them, and deleting them only through candidate matching plus a one-time confirmation. A minimal Reminder seam (plans + a no-op scheduler) is pre-wired for ITER-0003; no delivery, no River, and no real model calls happen in this iteration.
+ITER-0003 turns the ITER-0002 reminder seam into a reliable delivery closed loop on the existing identity/todo/conversation stack: reminder plans fan out into one delivery row per enabled channel at plan time, and the Worker now runs a River reminder worker that delivers due reminders exactly once per channel through the configured provider adapters (a fake outbox by default, with real SMTP and Aliyun SMS adapters behind configuration). Suppression is decided at execution time — a todo completed or cleared before its due instant never delivers — failed attempts retry with capped exponential backoff, and jobs past their attempt budget become business dead letters. Provider receipts are informational: a single shared-secret HMAC-SHA256 webhook records delivery evidence without ever flipping terminal delivery states. The dashboard shows four real reminder counters and a reminder records list. No real model calls happen in this iteration, and CI and Compose never talk to a real provider.
 
 ## Prerequisites
 
@@ -19,7 +19,7 @@ Start the complete stack in the foreground:
 make dev
 ```
 
-Compose waits for PostgreSQL, runs the migration process to completion, then starts API and Worker, and finally starts Web after API readiness succeeds. The default host URLs are:
+Compose waits for PostgreSQL, runs the migration process to completion, then starts API and Worker — the Worker also runs the River reminder worker that delivers due reminders through the configured provider adapters — and finally starts Web after API readiness succeeds. The default host URLs are:
 
 - Web workbench (session-gated dashboard): `http://localhost:3000/`
 - Web todos / conversation / settings: `http://localhost:3000/todos`, `/conversation`, `/settings`
@@ -36,6 +36,8 @@ Web proxies `/api/v1/:path*` to the API, so the browser only ever talks to the W
 
 Compose runs in cloud mode with a fake SMS outbox. Login is a two-step flow: request a code for a phone number, then read the code from the double-gated dev inbox (`GET /api/v1/dev/sms-inbox?address=<phone>` — present only when `APP_ENV` is not `production` **and** `DEV_INBOX_ENABLED=true`), and verify it to receive the `ab_session` cookie. Every workbench route redirects to `/login` without a validated session.
 
+Reminder delivery has its own double-gated dev outbox: messages sent by the fake reminder adapters land in `GET /api/v1/dev/reminder-outbox?address=<email-or-phone>` (present only when `APP_ENV` is not `production` **and** `REMINDER_DEV_OUTBOX_ENABLED=true`). It returns the latest rendered message bodies for that address — plaintext, dev-only, same exception class as the login dev inbox.
+
 ### Business API routes
 
 All business routes return stable `{code, message, correlationId}` error envelopes and live behind the session cookie except where noted:
@@ -45,7 +47,10 @@ All business routes return stable `{code, message, correlationId}` error envelop
 - `GET|POST /api/v1/todos`, `GET|PATCH /api/v1/todos/{todoId}`, `POST /api/v1/todos/{todoId}/complete`
 - `GET /api/v1/dashboard/summary?timezone=<IANA>`
 - `POST /api/v1/conversation/messages`, `POST /api/v1/confirmations`, `POST /api/v1/confirmations/{confirmationId}/confirm`
+- `GET /api/v1/reminders` (delivery records), `GET /api/v1/ops/reminder` (queue and delivery ops snapshot)
+- `POST /api/v1/webhooks/receipts/sms` (no session cookie; authenticated by the shared `REMINDER_RECEIPT_SECRET` HMAC-SHA256 signature)
 - `GET /api/v1/dev/sms-inbox?address=<phone>` (unauthenticated, double-gated, dev only)
+- `GET /api/v1/dev/reminder-outbox?address=<email-or-phone>` (unauthenticated, double-gated, dev only)
 
 There is deliberately no raw `DELETE /api/v1/todos/{id}`: manual and smart deletes both require a one-time, TTL-bounded confirmation bound to the user, workspace, todo, and todo version.
 
@@ -76,6 +81,13 @@ Copy `.env.example` to an ignored `.env` only when local overrides are needed. N
 | `LOGIN_CHALLENGE_TTL` | `5m` | Login code lifetime |
 | `CHANNEL_CODE_TTL` | `10m` | Contact-channel verification code lifetime |
 | `CONFIRMATION_TTL` | `5m` | Delete-confirmation lifetime |
+| `REMINDER_EMAIL_ADAPTER` | `fake` | Reminder email provider adapter: `fake` (dev outbox) or `smtp`; `config.Load` fails on `fake` with `APP_ENV=production` |
+| `REMINDER_SMS_ADAPTER` | `fake` | Reminder SMS provider adapter: `fake` or `aliyun`; `config.Load` fails on `fake` with `APP_ENV=production` |
+| `REMINDER_RECEIPT_SECRET` | `local-development-only` | Shared HMAC-SHA256 secret signing the receipt webhook; required for the API role |
+| `REMINDER_DEV_OUTBOX_ENABLED` | `true` | Enables the reminder dev outbox route; `config.Load` fails if `true` with `APP_ENV=production` |
+| `REMINDER_QUEUE_EMAIL_CONCURRENCY` | `2` | Worker River email queue concurrency |
+| `REMINDER_QUEUE_SMS_CONCURRENCY` | `2` | Worker River SMS queue concurrency |
+| `REMINDER_JOB_MAX_ATTEMPTS` | `5` | Reminder job attempts before the delivery dead-letters |
 
 Integration tests for the PostgreSQL adapters additionally use `TEST_DATABASE_URL` (skipped when unset).
 
@@ -103,8 +115,8 @@ make architecture-test
 make test             # Go race tests plus Web tests
 make build            # production Go and Web builds
 make verify           # all Docker-free, read-only pre-commit gates
-make migration-test   # isolated empty-schema, migration ownership, and adapter DB proof (schema v5)
-make smoke-test       # complete healthy/degraded/recovered Compose proof plus the authenticated end-to-end loop
+make migration-test   # isolated empty-schema, migration ownership, and adapter DB proof (schema v7)
+make smoke-test       # complete healthy/degraded/recovered Compose proof plus the authenticated end-to-end loop, including the reminder delivery, suppression, receipt, ops, and worker-restart recovery block
 ```
 
 `make verify` never calls `make format`, Docker, migration tests, or smoke tests. Run the complete local acceptance sequence as CI does:

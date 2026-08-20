@@ -49,3 +49,17 @@ The plan's accepted assumptions register:
 - **A9** `provider_job_id bigint` matches `river_job.id`; job IDs travel as int64 through the port.
 - **A10** `reminder.fake_outbox` stores rendered message bodies in plaintext (dev-only table; same exception class as identity's fake outbox).
 - **A11** Receipt lookup by `provider_message_id` is the single documented unscoped read (D6).
+
+## Outcomes
+
+D1–D8 all held without revision, and every accepted assumption (A1–A11) survived implementation. Two adaptations were needed where the plan met the pinned River release and the smoke harness:
+
+### O1 — River v0.44.0 module layout and API shape (Tasks 2, 8)
+
+The plan assumed a standalone `github.com/riverqueue/riverpgxv5` module and a `JobCancelByID` call. River v0.44.0 nests the pgx v5 driver inside the main repository, so the direct dependencies recorded in go.mod are `github.com/riverqueue/river`, `github.com/riverqueue/river/riverdriver/riverpgxv5`, and `github.com/riverqueue/river/rivertype` — three module paths from the two sanctioned upstream repositories (still exactly the ADR-0002 dependency surface, `riverpgxv5` included). Cancellation uses the v0.44.0 `client.JobCancel(ctx, jobID)` call, and the capped exponential backoff is wired through the worker's `NextRetry(job *river.Job[dto.ReminderSendArgs]) time.Time` hook built on the tested `NextRetryDelay(attempt)` series. Migration 006 inlines the v0.44.0 `rivermigrate/main` SQL with the version in its header, so the queue version is pinned in the schema too.
+
+### O2 — Smoke step-7 suppression assertion (Task 15)
+
+Plan step 7 of the reminder smoke block asserted that the completed todo's delivery rows all reach `suppressed`. In practice revoke's best-effort `JobCancel` cancels the scheduled River jobs before they run, and a cancelled job never executes — so its delivery row legitimately remains `scheduled` forever; `suppressed` is only written when a job does run and the execution-time re-read suppresses it. The smoke step therefore asserts the business contract instead: after the due instant, no row for the completed todo is outside `{scheduled, suppressed}`, and no fake-outbox message containing the suppression todo's text ever appears for either address. Kill-mid-flight semantics remain covered by the River adapter's stop/restart integration case (A7).
+
+The unified verification sequence (`corepack pnpm install --frozen-lockfile`, `make verify`, `make migration-test`, `make smoke-test`) was green at the branch tip when the ledger was finalized; the independent clean-context regression is the remaining gate.

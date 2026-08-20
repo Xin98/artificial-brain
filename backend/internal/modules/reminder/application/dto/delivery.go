@@ -42,8 +42,12 @@ type ChannelEndpoint struct {
 }
 
 // ReminderMessage is the provider-agnostic payload handed to a notifier.
+// TodoID identifies the todo the reminder belongs to: the fake outbox records
+// it so the gated dev inbox can join back to the todo; real providers ignore
+// it.
 type ReminderMessage struct {
 	To             string
+	TodoID         string
 	Title          string
 	ScheduledAtUTC time.Time
 }

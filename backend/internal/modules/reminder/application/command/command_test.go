@@ -635,7 +635,7 @@ func TestSendReminderNotifierSuccessMarksSucceeded(t *testing.T) {
 		t.Fatalf("sms calls = %d, want 0 for an email delivery", len(fixture.sms.calls))
 	}
 	message := fixture.email.calls[0]
-	if message.To != "user-1@example.com" || message.Title != "提交周报" || !message.ScheduledAtUTC.Equal(fixedNow.Add(-time.Minute)) {
+	if message.To != "user-1@example.com" || message.TodoID != "todo-1" || message.Title != "提交周报" || !message.ScheduledAtUTC.Equal(fixedNow.Add(-time.Minute)) {
 		t.Fatalf("sent message = %#v", message)
 	}
 }

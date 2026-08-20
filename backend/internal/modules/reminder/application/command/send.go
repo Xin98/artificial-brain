@@ -137,6 +137,7 @@ func (h *SendReminderHandler) Handle(ctx context.Context, request SendRequest) e
 	}
 	result, err := h.notify(ctx, request.Channel, dto.ReminderMessage{
 		To:             endpoint.Address,
+		TodoID:         delivery.TodoID,
 		Title:          delivery.TodoTitleSnapshot,
 		ScheduledAtUTC: delivery.ScheduledAt,
 	})

@@ -37,6 +37,9 @@ const (
 	timestampFormat = "2006-01-02T15:04:05Z"
 )
 
+// fallbackTimeout bounds a send when the config carries no timeout.
+const fallbackTimeout = 10 * time.Second
+
 // Config carries the Aliyun SMS credentials and template.
 type Config struct {
 	Endpoint        string
@@ -50,6 +53,9 @@ type Config struct {
 // Notifier submits reminder SMS through Aliyun's SendSms RPC.
 type Notifier struct {
 	cfg Config
+	// client is the timeout-bounded HTTP client behind do; kept so the
+	// effective timeout stays inspectable even when cfg.Timeout is zero.
+	client *http.Client
 	// do, nonce, and now are injectable so tests run against httptest with a
 	// deterministic signature; the defaults are a timeout-bounded HTTP client,
 	// a random nonce, and the wall clock.
@@ -62,12 +68,17 @@ var _ ports.SmsNotifier = (*Notifier)(nil)
 
 // New returns an Aliyun SMS notifier for cfg.
 func New(cfg Config) *Notifier {
-	client := &http.Client{Timeout: cfg.Timeout}
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = fallbackTimeout
+	}
+	client := &http.Client{Timeout: timeout}
 	return &Notifier{
-		cfg:   cfg,
-		do:    client.Do,
-		nonce: randomNonce,
-		now:   time.Now,
+		cfg:    cfg,
+		client: client,
+		do:     client.Do,
+		nonce:  randomNonce,
+		now:    time.Now,
 	}
 }
 
@@ -80,9 +91,9 @@ type sendSmsResponse struct {
 }
 
 // Send submits one reminder SMS. OK returns the provider BizId as the
-// message id; throttling, HTTP 5xx, timeouts, and malformed replies are
-// transient; every other refusal code is a *ports.PermanentError carrying
-// Aliyun's code.
+// message id; throttling, HTTP 5xx, timeouts, OK replies missing the BizId,
+// replies without a verdict code, and malformed bodies are transient; every
+// other refusal code is a *ports.PermanentError carrying Aliyun's code.
 func (n *Notifier) Send(ctx context.Context, message dto.ReminderMessage) (dto.SendResult, error) {
 	params := n.signedParams(message)
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, n.cfg.Endpoint, strings.NewReader(encode(params)))
@@ -108,9 +119,17 @@ func (n *Notifier) Send(ctx context.Context, message dto.ReminderMessage) (dto.S
 	}
 	switch payload.Code {
 	case codeOK:
+		// An OK without a BizId means the provider did not identifiably accept
+		// the message; retry rather than report an empty provider id.
+		if payload.BizID == "" {
+			return dto.SendResult{}, fmt.Errorf("aliyun: SendSms accepted without a BizId")
+		}
 		return dto.SendResult{ProviderMessageID: payload.BizID}, nil
 	case codeThrottled:
 		return dto.SendResult{}, fmt.Errorf("aliyun: SendSms throttled: %s", payload.Message)
+	case "":
+		// A 200 reply without a verdict code is malformed; retry it.
+		return dto.SendResult{}, fmt.Errorf("aliyun: SendSms reply missing verdict code")
 	default:
 		return dto.SendResult{}, &ports.PermanentError{
 			Code:  payload.Code,

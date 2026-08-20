@@ -224,6 +224,45 @@ func TestSendData554IsPermanent(t *testing.T) {
 	}
 }
 
+func TestSendGreeting554IsPermanentWithCode(t *testing.T) {
+	// A server that refuses the connection in its greeting must classify as a
+	// permanent 554, not a retried transport failure.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	defer ln.Close()
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		fmt.Fprintf(conn, "554 service unavailable\r\n")
+	}()
+	host, port, err := net.SplitHostPort(ln.Addr().String())
+	if err != nil {
+		t.Fatalf("SplitHostPort() error = %v", err)
+	}
+	portNumber, err := strconv.Atoi(port)
+	if err != nil {
+		t.Fatalf("Atoi(%q) error = %v", port, err)
+	}
+	notifier := New(Config{Host: host, Port: portNumber, From: "brain@example.com", Timeout: 5 * time.Second})
+
+	_, err = notifier.Send(context.Background(), emailMessage())
+	if err == nil {
+		t.Fatal("Send() error = nil, want permanent greeting refusal")
+	}
+	if !errors.Is(err, ports.ErrPermanent) {
+		t.Fatalf("Send() error = %v, want errors.Is(err, ports.ErrPermanent)", err)
+	}
+	var permanent *ports.PermanentError
+	if !errors.As(err, &permanent) || permanent.Code != "554" {
+		t.Fatalf("Send() error = %v, want PermanentError with code 554", err)
+	}
+}
+
 func TestSendDialRefusedIsTransient(t *testing.T) {
 	// Grab a port and immediately free it: dialing it refuses the connection.
 	ln, err := net.Listen("tcp", "127.0.0.1:0")

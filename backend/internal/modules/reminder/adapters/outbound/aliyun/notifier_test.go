@@ -267,6 +267,45 @@ func TestSendMalformedResponseIsTransient(t *testing.T) {
 	}
 }
 
+func TestSendEmptyCodeIsTransient(t *testing.T) {
+	// A 200 reply without a verdict code is malformed and must be retried,
+	// not refused as permanent with an empty code.
+	_, server := startAliyunServer(t, http.StatusOK, `{}`)
+	notifier := newTestNotifier(testConfig(server.URL))
+
+	_, err := notifier.Send(context.Background(), smsMessage())
+	if err == nil {
+		t.Fatal("Send() error = nil, want missing-verdict failure")
+	}
+	if errors.Is(err, ports.ErrPermanent) {
+		t.Fatalf("Send() error = %v, want transient missing-verdict failure", err)
+	}
+}
+
+func TestSendOKWithoutBizIDIsTransient(t *testing.T) {
+	// An OK without a BizId is no identifiably accepted message; retry it.
+	_, server := startAliyunServer(t, http.StatusOK, `{"RequestId":"req-5","Code":"OK","Message":"OK","BizId":""}`)
+	notifier := newTestNotifier(testConfig(server.URL))
+
+	_, err := notifier.Send(context.Background(), smsMessage())
+	if err == nil {
+		t.Fatal("Send() error = nil, want missing-BizId failure")
+	}
+	if errors.Is(err, ports.ErrPermanent) {
+		t.Fatalf("Send() error = %v, want transient missing-BizId failure", err)
+	}
+}
+
+func TestNewDefaultsClientTimeout(t *testing.T) {
+	notifier := New(Config{})
+	if notifier.client == nil {
+		t.Fatal("client = nil, want a timeout-bounded HTTP client")
+	}
+	if got, want := notifier.client.Timeout, fallbackTimeout; got != want {
+		t.Fatalf("client timeout = %v, want the %v fallback", got, want)
+	}
+}
+
 func TestSendContextTimeoutIsTransient(t *testing.T) {
 	stalled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(500 * time.Millisecond)

@@ -78,7 +78,7 @@ func (n *Notifier) Send(ctx context.Context, message dto.ReminderMessage) (dto.S
 
 	client, err := smtp.NewClient(conn, n.cfg.Host)
 	if err != nil {
-		return dto.SendResult{}, fmt.Errorf("smtp: handshake %s: %w", addr, err)
+		return dto.SendResult{}, classify(fmt.Errorf("smtp: handshake %s: %w", addr, err))
 	}
 	defer client.Close()
 	if n.cfg.Username != "" {

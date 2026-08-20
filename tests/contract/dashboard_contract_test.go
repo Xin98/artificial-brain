@@ -4,7 +4,8 @@ import "testing"
 
 var dashboardCounters = []string{
 	"pendingTotal", "dueToday", "overdue", "noDue",
-	"completedLast7Days", "reminderRetrying", "reminderFailed",
+	"completedLast7Days", "reminderSucceeded", "reminderRetrying",
+	"reminderFailed", "reminderSuppressed",
 }
 
 func TestDashboardContractRoutesCodesAndSchemas(t *testing.T) {
@@ -48,18 +49,20 @@ func TestDashboardContractRejectsMutation(t *testing.T) {
 	if !dashboardContractValid(document) {
 		t.Fatal("shipped dashboard contract failed its own validator")
 	}
-	// Dropping the deterministic reminder-failed counter must fail.
+	// Dropping the deterministic reminder-suppressed counter from the
+	// required set must fail.
 	mutated := loadDoc(t, "dashboard.yaml")
 	summary := mutated.Components.Schemas["DashboardSummary"]
-	summary.Required = dashboardCounters
-	summary.Properties = map[string]docSchema{}
-	for _, counter := range dashboardCounters {
-		summary.Properties[counter] = docSchema{Type: "integer"}
+	required := make([]string, 0, len(summary.Required)-1)
+	for _, name := range summary.Required {
+		if name != "reminderSuppressed" {
+			required = append(required, name)
+		}
 	}
-	summary.Properties["checkedAt"] = docSchema{Type: "string", Format: "date-time"}
+	summary.Required = required
 	mutated.Components.Schemas["DashboardSummary"] = summary
 	if dashboardContractValid(mutated) {
-		t.Fatal("mutation (missing reminderFailed) unexpectedly passed validation")
+		t.Fatal("mutation (reminderSuppressed no longer required) unexpectedly passed validation")
 	}
 }
 

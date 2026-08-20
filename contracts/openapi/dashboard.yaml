@@ -47,8 +47,10 @@ components:
         - overdue
         - noDue
         - completedLast7Days
+        - reminderSucceeded
         - reminderRetrying
         - reminderFailed
+        - reminderSuppressed
         - checkedAt
       properties:
         pendingTotal:
@@ -61,9 +63,13 @@ components:
           type: integer
         completedLast7Days:
           type: integer
+        reminderSucceeded:
+          type: integer
         reminderRetrying:
           type: integer
         reminderFailed:
+          type: integer
+        reminderSuppressed:
           type: integer
         checkedAt:
           type: string

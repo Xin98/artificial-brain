@@ -93,6 +93,13 @@ expected_env = {
   "APP_ENV" => "development",
   "DEV_INBOX_ENABLED" => "true",
   "MODEL_ADAPTER" => "deterministic",
+  "REMINDER_EMAIL_ADAPTER" => "fake",
+  "REMINDER_SMS_ADAPTER" => "fake",
+  "REMINDER_RECEIPT_SECRET" => "local-development-only",
+  "REMINDER_DEV_OUTBOX_ENABLED" => "true",
+  "REMINDER_QUEUE_EMAIL_CONCURRENCY" => "2",
+  "REMINDER_QUEUE_SMS_CONCURRENCY" => "2",
+  "REMINDER_JOB_MAX_ATTEMPTS" => "5",
 }
 actual_env = File.readlines(File.join(root, ".env.example"), chomp: true).to_h do |line|
   line.split("=", 2)
@@ -161,6 +168,37 @@ assert_page() {
 		printf '%s\n' "$page" | grep -F ">${label}<" >/dev/null || \
 			fail "Web page ${page_path} did not render the ${label} label"
 	done
+}
+
+# verify_contact_channel registers a contact channel for the authenticated
+# user, reads the verification code from the gated dev inbox, and verifies
+# the channel. It reuses the session cookie and ports set by full_stack_test.
+verify_contact_channel() {
+	channel_kind=$1
+	channel_address=$2
+	channel_address_uri=$3
+	channel_response=$(curl --silent --show-error --max-time 5 \
+		--write-out '\n%{http_code}' \
+		--header "$e2e_auth" --header 'Content-Type: application/json' \
+		--data "{\"kind\":\"${channel_kind}\",\"address\":\"${channel_address}\"}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/settings/contact-channels")
+	channel_status=$(printf '%s\n' "$channel_response" | tail -n 1)
+	channel_body=$(printf '%s\n' "$channel_response" | sed '$d')
+	[ "$channel_status" = 201 ] || \
+		fail "contact channel create (${channel_kind}) status ${channel_status}, want 201: ${channel_body}"
+	channel_id=$(printf '%s\n' "$channel_body" | jq -r '.id')
+	[ -n "$channel_id" ] && [ "$channel_id" != null ] || \
+		fail "contact channel create (${channel_kind}) did not return an id: ${channel_body}"
+	channel_inbox=$(curl --fail --silent --show-error --max-time 5 \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/dev/sms-inbox?address=${channel_address_uri}")
+	channel_code=$(printf '%s\n' "$channel_inbox" | jq -r '.messages[0].code')
+	case "$channel_code" in '' | *[!0-9]*) fail "dev inbox (${channel_kind}) did not return a numeric code" ;; esac
+	channel_verified=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" --header 'Content-Type: application/json' \
+		--data "{\"code\":\"${channel_code}\"}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/settings/contact-channels/${channel_id}/verify")
+	printf '%s\n' "$channel_verified" | jq -e '.verified == true' >/dev/null || \
+		fail "contact channel verify (${channel_kind}) did not verify: ${channel_verified}"
 }
 
 full_stack_test() {
@@ -304,6 +342,182 @@ full_stack_test() {
 	compose start worker
 	wait_for_system_state healthy healthy "$degradation_deadline"
 	assert_page healthy /status
+
+	# ITER-0003 reminder delivery end-to-end loop, reusing the authenticated
+	# session from the ITER-0002 block: verified channels deliver a due todo
+	# through the fake adapters into the gated dev outbox, a todo completed
+	# before its due instant never delivers, a signed provider receipt is
+	# recorded, the ops snapshot reflects both queues, and delivery recovers
+	# after a worker restart.
+	e2e_email="smoke@example.com"
+	e2e_sms="+8613800137002"
+	e2e_email_uri=$(printf '%s' "$e2e_email" | jq -sRr @uri)
+	e2e_sms_uri=$(printf '%s' "$e2e_sms" | jq -sRr @uri)
+
+	verify_contact_channel email "$e2e_email" "$e2e_email_uri"
+	verify_contact_channel sms "$e2e_sms" "$e2e_sms_uri"
+
+	e2e_rem_due=$(date -u -d '+5 seconds' +%Y-%m-%dT%H:%M:%SZ)
+	e2e_rem_response=$(curl --silent --show-error --max-time 5 \
+		--write-out '\n%{http_code}' \
+		--header "$e2e_auth" --header 'Content-Type: application/json' \
+		--data "{\"title\":\"冒烟提醒\",\"dueAtUtc\":\"${e2e_rem_due}\"}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/todos")
+	e2e_rem_status=$(printf '%s\n' "$e2e_rem_response" | tail -n 1)
+	e2e_rem_create=$(printf '%s\n' "$e2e_rem_response" | sed '$d')
+	[ "$e2e_rem_status" = 201 ] || \
+		fail "reminder todo create status ${e2e_rem_status}, want 201: ${e2e_rem_create}"
+	e2e_rem_todo_id=$(printf '%s\n' "$e2e_rem_create" | jq -r '.id')
+	[ -n "$e2e_rem_todo_id" ] && [ "$e2e_rem_todo_id" != null ] || \
+		fail "reminder todo create did not return an id: ${e2e_rem_create}"
+
+	e2e_deadline=$(( $(date +%s) + 30 ))
+	while :; do
+		e2e_rem_outbox=$(curl --fail --silent --show-error --max-time 5 \
+			"http://127.0.0.1:${WEB_PORT}/api/v1/dev/reminder-outbox?address=${e2e_email_uri}")
+		if printf '%s\n' "$e2e_rem_outbox" | jq -e --arg todoId "$e2e_rem_todo_id" \
+			'.messages[] | select(.todoId == $todoId and (.body | contains("冒烟提醒")))' \
+			>/dev/null 2>&1; then
+			break
+		fi
+		[ "$(date +%s)" -lt "$e2e_deadline" ] || \
+			fail "fake outbox did not receive 冒烟提醒 within 30s"
+		sleep 1
+	done
+
+	e2e_deadline=$(( $(date +%s) + 30 ))
+	while :; do
+		e2e_rem_list=$(curl --fail --silent --show-error --max-time 5 \
+			--header "$e2e_auth" "http://127.0.0.1:${WEB_PORT}/api/v1/reminders")
+		if printf '%s\n' "$e2e_rem_list" | jq -e --arg todoId "$e2e_rem_todo_id" '
+			[.deliveries[] | select(.todoId == $todoId)] as $rows |
+			($rows | length == 2) and
+			([$rows[] | select(.state == "succeeded")] | length == 2) and
+			(([$rows[] | .channel] | sort) == ["email", "sms"])
+		' >/dev/null 2>&1; then
+			break
+		fi
+		[ "$(date +%s)" -lt "$e2e_deadline" ] || \
+			fail "reminder deliveries did not reach two succeeded rows within 30s: ${e2e_rem_list}"
+		sleep 1
+	done
+	e2e_rem_provider_id=$(printf '%s\n' "$e2e_rem_list" | jq -r --arg todoId "$e2e_rem_todo_id" \
+		'.deliveries[] | select(.todoId == $todoId and .channel == "sms") | .providerMessageId')
+	[ -n "$e2e_rem_provider_id" ] && [ "$e2e_rem_provider_id" != null ] || \
+		fail "succeeded sms delivery has no providerMessageId: ${e2e_rem_list}"
+
+	e2e_suppress_due_epoch=$(( $(date +%s) + 10 ))
+	e2e_suppress_due=$(date -u -d "@${e2e_suppress_due_epoch}" +%Y-%m-%dT%H:%M:%SZ)
+	e2e_suppress_response=$(curl --silent --show-error --max-time 5 \
+		--write-out '\n%{http_code}' \
+		--header "$e2e_auth" --header 'Content-Type: application/json' \
+		--data "{\"title\":\"冒烟抑制\",\"dueAtUtc\":\"${e2e_suppress_due}\"}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/todos")
+	e2e_suppress_status=$(printf '%s\n' "$e2e_suppress_response" | tail -n 1)
+	e2e_suppress_create=$(printf '%s\n' "$e2e_suppress_response" | sed '$d')
+	[ "$e2e_suppress_status" = 201 ] || \
+		fail "suppression todo create status ${e2e_suppress_status}, want 201: ${e2e_suppress_create}"
+	e2e_suppress_id=$(printf '%s\n' "$e2e_suppress_create" | jq -r '.id')
+	[ -n "$e2e_suppress_id" ] && [ "$e2e_suppress_id" != null ] || \
+		fail "suppression todo create did not return an id: ${e2e_suppress_create}"
+	e2e_suppress_complete=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" --header 'Content-Type: application/json' \
+		--data '{"version":1}' \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/todos/${e2e_suppress_id}/complete")
+	printf '%s\n' "$e2e_suppress_complete" | jq -e '.status == "completed"' >/dev/null || \
+		fail "suppression todo complete did not report completed: ${e2e_suppress_complete}"
+
+	# A todo completed before its due instant must never deliver. Revoke marks
+	# the plan revoked and best-effort cancels the scheduled River jobs;
+	# suppression itself is an execution-time state, and a cancelled job never
+	# runs, so the rows settle at scheduled-or-suppressed. Assert no row is
+	# ever sent or finalized, and that the due instant passes without any fake
+	# outbox message.
+	e2e_deadline=$(( $(date +%s) + 30 ))
+	while :; do
+		e2e_suppress_unsettled=$(compose exec -T postgres psql \
+			--username "${POSTGRES_USER:-artificial_brain}" \
+			--dbname "${POSTGRES_DB:-artificial_brain}" \
+			--tuples-only --no-align \
+			--command "select count(*) from reminder.reminder_deliveries where todo_id='${e2e_suppress_id}' and state not in ('scheduled','suppressed')")
+		if [ "$e2e_suppress_unsettled" = 0 ] && [ "$(date +%s)" -ge $((e2e_suppress_due_epoch + 3)) ]; then
+			break
+		fi
+		[ "$(date +%s)" -lt "$e2e_deadline" ] || \
+			fail "completed todo 冒烟抑制 left unsettled delivery rows: ${e2e_suppress_unsettled}"
+		sleep 1
+	done
+	e2e_suppress_rows=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select count(*) from reminder.reminder_deliveries where todo_id='${e2e_suppress_id}'")
+	[ "$e2e_suppress_rows" = 2 ] || \
+		fail "expected two delivery rows for the completed todo, got ${e2e_suppress_rows}"
+	for e2e_address_uri in "$e2e_email_uri" "$e2e_sms_uri"; do
+		e2e_rem_outbox=$(curl --fail --silent --show-error --max-time 5 \
+			"http://127.0.0.1:${WEB_PORT}/api/v1/dev/reminder-outbox?address=${e2e_address_uri}")
+		if printf '%s\n' "$e2e_rem_outbox" | jq -e \
+			'.messages[] | select(.body | contains("冒烟抑制"))' >/dev/null 2>&1; then
+			fail "completed todo 冒烟抑制 reached the fake outbox"
+		fi
+	done
+
+	e2e_receipt_body="{\"providerMessageId\":\"${e2e_rem_provider_id}\",\"delivered\":true}"
+	e2e_receipt_signature=$(printf '%s' "$e2e_receipt_body" | \
+		openssl dgst -sha256 -hmac 'local-development-only' | awk '{print $NF}')
+	e2e_receipt_status=$(curl --silent --show-error --max-time 5 \
+		--output /dev/null --write-out '%{http_code}' \
+		--header "X-Receipt-Signature: ${e2e_receipt_signature}" \
+		--header 'Content-Type: application/json' \
+		--data "$e2e_receipt_body" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/webhooks/receipts/sms")
+	[ "$e2e_receipt_status" = 200 ] || fail "receipt webhook status ${e2e_receipt_status}, want 200"
+	e2e_rem_list=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" "http://127.0.0.1:${WEB_PORT}/api/v1/reminders")
+	printf '%s\n' "$e2e_rem_list" | jq -e --arg todoId "$e2e_rem_todo_id" '
+		.deliveries[] | select(.todoId == $todoId and .channel == "sms") |
+		.receiptState == "received_ok"
+	' >/dev/null || fail "sms delivery receipt was not recorded: ${e2e_rem_list}"
+
+	e2e_rem_ops=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" "http://127.0.0.1:${WEB_PORT}/api/v1/ops/reminder")
+	printf '%s\n' "$e2e_rem_ops" | jq -e '.queues | length == 2' >/dev/null || \
+		fail "reminder ops does not list two queues: ${e2e_rem_ops}"
+	printf '%s\n' "$e2e_rem_ops" | jq -e '.deliveries.succeeded >= 2' >/dev/null || \
+		fail "reminder ops succeeded count is below 2: ${e2e_rem_ops}"
+
+	compose restart worker
+	wait_for_system_state healthy healthy 30
+	assert_page healthy /status
+
+	e2e_recovery_due=$(date -u -d '+5 seconds' +%Y-%m-%dT%H:%M:%SZ)
+	e2e_recovery_response=$(curl --silent --show-error --max-time 5 \
+		--write-out '\n%{http_code}' \
+		--header "$e2e_auth" --header 'Content-Type: application/json' \
+		--data "{\"title\":\"冒烟恢复\",\"dueAtUtc\":\"${e2e_recovery_due}\"}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/todos")
+	e2e_recovery_status=$(printf '%s\n' "$e2e_recovery_response" | tail -n 1)
+	e2e_recovery_create=$(printf '%s\n' "$e2e_recovery_response" | sed '$d')
+	[ "$e2e_recovery_status" = 201 ] || \
+		fail "recovery todo create status ${e2e_recovery_status}, want 201: ${e2e_recovery_create}"
+	e2e_recovery_id=$(printf '%s\n' "$e2e_recovery_create" | jq -r '.id')
+	[ -n "$e2e_recovery_id" ] && [ "$e2e_recovery_id" != null ] || \
+		fail "recovery todo create did not return an id: ${e2e_recovery_create}"
+
+	e2e_deadline=$(( $(date +%s) + 30 ))
+	while :; do
+		e2e_rem_outbox=$(curl --fail --silent --show-error --max-time 5 \
+			"http://127.0.0.1:${WEB_PORT}/api/v1/dev/reminder-outbox?address=${e2e_email_uri}")
+		if printf '%s\n' "$e2e_rem_outbox" | jq -e --arg todoId "$e2e_recovery_id" \
+			'.messages[] | select(.todoId == $todoId and (.body | contains("冒烟恢复")))' \
+			>/dev/null 2>&1; then
+			break
+		fi
+		[ "$(date +%s)" -lt "$e2e_deadline" ] || \
+			fail "fake outbox did not receive 冒烟恢复 within 30s after the worker restart"
+		sleep 1
+	done
 }
 
 case "${1:-}" in

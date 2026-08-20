@@ -11,10 +11,12 @@ import (
 
 // DashboardSummaryHandler computes the deterministic dashboard. The local
 // "today" window travels per request as an IANA timezone; the reminder
-// counters stay zero until ITER-0003 (D7).
+// counters come from ReminderStats and stay zero when it is nil (reminders
+// not wired).
 type DashboardSummaryHandler struct {
-	Store ports.TodoStore
-	Now   func() time.Time
+	Store         ports.TodoStore
+	Now           func() time.Time
+	ReminderStats ports.ReminderStats
 }
 
 // Handle returns the summary for the caller's workspace.
@@ -35,8 +37,23 @@ func (h *DashboardSummaryHandler) Handle(ctx context.Context, workspaceID, owner
 	if err != nil {
 		return dto.DashboardSummary{}, err
 	}
-	summary.ReminderRetrying = 0
-	summary.ReminderFailed = 0
+	counts, err := h.reminderCounts(ctx, workspaceID)
+	if err != nil {
+		return dto.DashboardSummary{}, err
+	}
+	summary.ReminderSucceeded = counts.Succeeded
+	summary.ReminderRetrying = counts.Retrying
+	summary.ReminderFailed = counts.Failed
+	summary.ReminderSuppressed = counts.Suppressed
 	summary.CheckedAt = now
 	return summary, nil
+}
+
+// reminderCounts resolves the workspace's reminder delivery counts, treating
+// a nil ReminderStats as all-zero counts (reminders not wired).
+func (h *DashboardSummaryHandler) reminderCounts(ctx context.Context, workspaceID string) (ports.ReminderCounts, error) {
+	if h.ReminderStats == nil {
+		return ports.ReminderCounts{}, nil
+	}
+	return h.ReminderStats(ctx, workspaceID)
 }

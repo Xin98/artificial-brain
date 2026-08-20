@@ -1,4 +1,6 @@
-// Package postgres implements the reminder PlanStore on PostgreSQL.
+// Package postgres implements the reminder module's outbound stores on
+// PostgreSQL: plans, deliveries, the instance-wide ops snapshot, and the fake
+// outbox reader behind the gated dev inbox.
 package postgres
 
 import (
@@ -6,6 +8,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -40,6 +43,30 @@ func (s *PlanStore) Save(ctx context.Context, plan domain.ReminderPlan) error {
 		return domain.ErrPlanExists
 	}
 	return err
+}
+
+// Get loads one plan scoped by workspace; a missing row or a plan owned by
+// another workspace maps to domain.ErrPlanNotFound.
+func (s *PlanStore) Get(ctx context.Context, workspaceID, planID string) (domain.ReminderPlan, error) {
+	exec := database.ExecutorFromContextOr(ctx, s.pool)
+	row := exec.QueryRow(ctx, `
+		select id, workspace_id, todo_id, todo_reminder_version, scheduled_at_utc,
+			requested_channels, status, created_at, revoked_at
+		from reminder.reminder_plans
+		where workspace_id = $1 and id = $2
+	`, workspaceID, planID)
+	var plan domain.ReminderPlan
+	var status string
+	err := row.Scan(&plan.ID, &plan.WorkspaceID, &plan.TodoID, &plan.TodoReminderVersion,
+		&plan.ScheduledAtUTC, &plan.RequestedChannels, &status, &plan.CreatedAt, &plan.RevokedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ReminderPlan{}, domain.ErrPlanNotFound
+	}
+	if err != nil {
+		return domain.ReminderPlan{}, err
+	}
+	plan.Status = domain.PlanStatus(status)
+	return plan, nil
 }
 
 // RevokePlanned conditionally revokes planned plans at or below the version

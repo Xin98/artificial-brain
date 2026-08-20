@@ -39,6 +39,7 @@ func (h *DeleteTodoHandler) Handle(ctx context.Context, request dto.DeleteTodoRe
 			WorkspaceID:         request.WorkspaceID,
 			TodoID:              request.TodoID,
 			UpToReminderVersion: loaded.ReminderVersion,
+			Reason:              "todo_deleted",
 		})
 	})
 	if err != nil {

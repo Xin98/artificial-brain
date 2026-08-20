@@ -51,6 +51,7 @@ func (h *UpdateTodoHandler) Handle(ctx context.Context, request dto.UpdateTodoRe
 			WorkspaceID:         request.WorkspaceID,
 			TodoID:              request.TodoID,
 			UpToReminderVersion: previousReminderVersion,
+			Reason:              "version_stale",
 		}); err != nil {
 			return err
 		}
@@ -67,6 +68,8 @@ func (h *UpdateTodoHandler) Handle(ctx context.Context, request dto.UpdateTodoRe
 			TodoReminderVersion: loaded.ReminderVersion,
 			ScheduledAtUTC:      *loaded.DueAtUTC,
 			Channels:            channels,
+			Title:               loaded.Title,
+			OwnerUserID:         loaded.OwnerUserID,
 		})
 	})
 	if err != nil {

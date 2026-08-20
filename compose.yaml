@@ -24,6 +24,7 @@ services:
       args:
         BINARY: migrate
     environment:
+      APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: postgresql://${POSTGRES_USER:-artificial_brain}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-artificial_brain}?sslmode=disable
       MIGRATIONS_DIR: /migrations
       SERVICE_VERSION: ${SERVICE_VERSION:-dev}
@@ -50,6 +51,10 @@ services:
       APP_ENV: ${APP_ENV:-development}
       DEV_INBOX_ENABLED: ${DEV_INBOX_ENABLED:-true}
       MODEL_ADAPTER: ${MODEL_ADAPTER:-deterministic}
+      REMINDER_EMAIL_ADAPTER: ${REMINDER_EMAIL_ADAPTER:-fake}
+      REMINDER_SMS_ADAPTER: ${REMINDER_SMS_ADAPTER:-fake}
+      REMINDER_RECEIPT_SECRET: ${REMINDER_RECEIPT_SECRET:-local-development-only}
+      REMINDER_DEV_OUTBOX_ENABLED: ${REMINDER_DEV_OUTBOX_ENABLED:-true}
       SERVICE_VERSION: ${SERVICE_VERSION:-dev}
       SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-10s}
       WORKER_HEARTBEAT_INTERVAL: ${WORKER_HEARTBEAT_INTERVAL:-2s}
@@ -83,7 +88,15 @@ services:
       args:
         BINARY: worker
     environment:
+      APP_ENV: ${APP_ENV:-development}
       DATABASE_URL: postgresql://${POSTGRES_USER:-artificial_brain}:${POSTGRES_PASSWORD:-local-development-only}@postgres:5432/${POSTGRES_DB:-artificial_brain}?sslmode=disable
+      REMINDER_EMAIL_ADAPTER: ${REMINDER_EMAIL_ADAPTER:-fake}
+      REMINDER_SMS_ADAPTER: ${REMINDER_SMS_ADAPTER:-fake}
+      REMINDER_RECEIPT_SECRET: ${REMINDER_RECEIPT_SECRET:-local-development-only}
+      REMINDER_DEV_OUTBOX_ENABLED: ${REMINDER_DEV_OUTBOX_ENABLED:-true}
+      REMINDER_QUEUE_EMAIL_CONCURRENCY: ${REMINDER_QUEUE_EMAIL_CONCURRENCY:-2}
+      REMINDER_QUEUE_SMS_CONCURRENCY: ${REMINDER_QUEUE_SMS_CONCURRENCY:-2}
+      REMINDER_JOB_MAX_ATTEMPTS: ${REMINDER_JOB_MAX_ATTEMPTS:-5}
       SERVICE_VERSION: ${SERVICE_VERSION:-dev}
       SHUTDOWN_TIMEOUT: ${SHUTDOWN_TIMEOUT:-10s}
       WORKER_HEALTH_ADDRESS: ${WORKER_HEALTH_ADDRESS:-:8081}

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/Xin98/artificial-brain/backend/internal/modules/todo/application/dto"
+	"github.com/Xin98/artificial-brain/backend/internal/modules/todo/application/ports"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/todo/domain"
 )
 
@@ -165,11 +166,48 @@ func TestDashboardComputesTodayWindowInTimezone(t *testing.T) {
 	if got.PendingTotal != 3 || got.DueToday != 1 || got.Overdue != 1 || got.NoDue != 1 || got.CompletedLast7Days != 2 {
 		t.Fatalf("summary = %#v", got)
 	}
-	if got.ReminderRetrying != 0 || got.ReminderFailed != 0 {
-		t.Fatalf("reminder counters = %d/%d, want deterministic zeros", got.ReminderRetrying, got.ReminderFailed)
+	if got.ReminderRetrying != 0 || got.ReminderFailed != 0 || got.ReminderSucceeded != 0 || got.ReminderSuppressed != 0 {
+		t.Fatalf("reminder counters = %d/%d/%d/%d, want four zeros without ReminderStats",
+			got.ReminderSucceeded, got.ReminderRetrying, got.ReminderFailed, got.ReminderSuppressed)
 	}
 	if !got.CheckedAt.Equal(fixedNow) {
 		t.Fatalf("CheckedAt = %v, want injected now", got.CheckedAt)
+	}
+}
+
+func TestDashboardMapsReminderStatsCounts(t *testing.T) {
+	store := newFakeStore()
+	var statsWorkspaceID string
+	stats := func(_ context.Context, workspaceID string) (ports.ReminderCounts, error) {
+		statsWorkspaceID = workspaceID
+		return ports.ReminderCounts{Succeeded: 7, Retrying: 2, Failed: 3, Suppressed: 5}, nil
+	}
+	handler := &DashboardSummaryHandler{Store: store, Now: func() time.Time { return fixedNow }, ReminderStats: stats}
+
+	got, err := handler.Handle(context.Background(), "ws-1", "user-1", "Asia/Shanghai")
+	if err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if statsWorkspaceID != "ws-1" {
+		t.Fatalf("ReminderStats workspaceID = %q, want caller workspace", statsWorkspaceID)
+	}
+	if got.ReminderSucceeded != 7 || got.ReminderRetrying != 2 || got.ReminderFailed != 3 || got.ReminderSuppressed != 5 {
+		t.Fatalf("reminder counters = %d/%d/%d/%d, want 7/2/3/5",
+			got.ReminderSucceeded, got.ReminderRetrying, got.ReminderFailed, got.ReminderSuppressed)
+	}
+}
+
+func TestDashboardReminderStatsErrorPropagates(t *testing.T) {
+	store := newFakeStore()
+	statsErr := errors.New("reminder stats down")
+	handler := &DashboardSummaryHandler{Store: store, Now: func() time.Time { return fixedNow },
+		ReminderStats: func(context.Context, string) (ports.ReminderCounts, error) {
+			return ports.ReminderCounts{}, statsErr
+		}}
+
+	_, err := handler.Handle(context.Background(), "ws-1", "user-1", "Asia/Shanghai")
+	if !errors.Is(err, statsErr) {
+		t.Fatalf("Handle() error = %v, want stats failure propagated", err)
 	}
 }
 

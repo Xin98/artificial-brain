@@ -7,7 +7,22 @@ import (
 )
 
 func baseEnv() map[string]string {
-	return map[string]string{"DATABASE_URL": "postgres://user:secret@db/workbench"}
+	// Real adapters (plus an API receipt secret) keep this base loadable
+	// under the production APP_ENV default: fake reminder adapters are
+	// forbidden in production.
+	return map[string]string{
+		"DATABASE_URL":                      "postgres://user:secret@db/workbench",
+		"REMINDER_EMAIL_ADAPTER":            "smtp",
+		"REMINDER_SMTP_HOST":                "smtp.example.com",
+		"REMINDER_SMTP_PORT":                "587",
+		"REMINDER_SMTP_FROM":                "reminders@example.com",
+		"REMINDER_SMS_ADAPTER":              "aliyun",
+		"REMINDER_ALIYUN_ACCESS_KEY_ID":     "ak-test",
+		"REMINDER_ALIYUN_ACCESS_KEY_SECRET": "sk-test",
+		"REMINDER_ALIYUN_SIGN_NAME":         "workbench",
+		"REMINDER_ALIYUN_TEMPLATE_CODE":     "SMS_123456",
+		"REMINDER_RECEIPT_SECRET":           "receipt-secret",
+	}
 }
 
 func TestLoadDefaultsIdentityAndModelFields(t *testing.T) {

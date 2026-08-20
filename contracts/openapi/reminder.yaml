@@ -1,0 +1,258 @@
+openapi: 3.1.1
+info:
+  title: Artificial Brain Reminder API
+  version: 0.1.0
+paths:
+  /api/v1/reminders:
+    get:
+      operationId: listReminderDeliveries
+      description: >-
+        The workspace's reminder deliveries with optional status filter and
+        limit/offset pagination.
+      responses:
+        '200':
+          description: Matching deliveries, capped at 200.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DeliveryList'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Invalid status, limit, or offset.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/ops/reminder:
+    get:
+      operationId: getReminderOps
+      description: >-
+        Instance-wide reminder operations snapshot; operational data that is
+        deliberately not workspace-scoped.
+      responses:
+        '200':
+          description: Queue depths, delivery lifecycle counts, retry rate, and p95 latency.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReminderOps'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/webhooks/receipts/sms:
+    post:
+      operationId: recordSmsReceipt
+      description: >-
+        Provider delivery receipt. Carries no session: the raw request body
+        must be signed with the shared secret and its hex HMAC-SHA256 digest
+        provided in the X-Receipt-Signature header. Receipts are
+        informational; unknown provider ids are acknowledged so providers
+        never retry them.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ReceiptRequest'
+      responses:
+        '200':
+          description: Receipt acknowledged.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReceiptAccepted'
+        '401':
+          description: Missing or invalid X-Receipt-Signature.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Body too large or malformed receipt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/dev/reminder-outbox:
+    get:
+      operationId: getReminderDevOutbox
+      description: >-
+        Fake reminder outbox for local development, newest first. Double
+        gated: the route is registered only when APP_ENV is not production
+        and REMINDER_DEV_OUTBOX_ENABLED is set; otherwise the route is absent
+        and requests receive the JSON 404 envelope.
+      responses:
+        '200':
+          description: The latest outbox messages for the address, capped at 5.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DevOutboxMessageList'
+        '422':
+          description: Missing address.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+components:
+  schemas:
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [code, message, correlationId]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        correlationId:
+          type: string
+    DeliveryView:
+      type: object
+      additionalProperties: false
+      required: [id, todoId, todoTitle, channel, state, attemptCount, scheduledAt, createdAt]
+      properties:
+        id:
+          type: string
+        todoId:
+          type: string
+        todoTitle:
+          type: string
+        channel:
+          type: string
+          enum: [email, sms]
+        state:
+          type: string
+          enum: [scheduled, sending, succeeded, failed, suppressed]
+        suppressionReason:
+          type: string
+          enum: [todo_completed, todo_deleted, version_stale, channel_unavailable, plan_revoked]
+        attemptCount:
+          type: integer
+        providerMessageId:
+          type: string
+        lastErrorCode:
+          type: string
+        scheduledAt:
+          type: string
+          format: date-time
+        createdAt:
+          type: string
+          format: date-time
+        submittedAt:
+          type: string
+          format: date-time
+        finalizedAt:
+          type: string
+          format: date-time
+        receiptState:
+          type: string
+          enum: [received_ok, received_failed]
+        receiptAt:
+          type: string
+          format: date-time
+        receiptErrorCode:
+          type: string
+    DeliveryList:
+      type: object
+      additionalProperties: false
+      required: [deliveries]
+      properties:
+        deliveries:
+          type: array
+          items:
+            $ref: '#/components/schemas/DeliveryView'
+    ReminderOps:
+      type: object
+      additionalProperties: false
+      required: [queues, deliveries, retryRate, latencyP95Ms, checkedAt]
+      properties:
+        queues:
+          type: array
+          items:
+            $ref: '#/components/schemas/QueueDepth'
+        deliveries:
+          $ref: '#/components/schemas/DeliveryCounts'
+        retryRate:
+          type: number
+        latencyP95Ms:
+          type: integer
+        checkedAt:
+          type: string
+          format: date-time
+    QueueDepth:
+      type: object
+      additionalProperties: false
+      required: [queue, depth, oldestWaitSeconds]
+      properties:
+        queue:
+          type: string
+        depth:
+          type: integer
+        oldestWaitSeconds:
+          type: integer
+    DeliveryCounts:
+      type: object
+      additionalProperties: false
+      required: [scheduled, sending, retrying, succeeded, failed, suppressed]
+      properties:
+        scheduled:
+          type: integer
+        sending:
+          type: integer
+        retrying:
+          type: integer
+        succeeded:
+          type: integer
+        failed:
+          type: integer
+        suppressed:
+          type: integer
+    ReceiptRequest:
+      type: object
+      additionalProperties: false
+      required: [providerMessageId, delivered]
+      properties:
+        providerMessageId:
+          type: string
+        delivered:
+          type: boolean
+        errorCode:
+          type: string
+    ReceiptAccepted:
+      type: object
+      additionalProperties: false
+      required: []
+      properties: {}
+    DevOutboxMessage:
+      type: object
+      additionalProperties: false
+      required: [address, channel, todoId, body, createdAt]
+      properties:
+        address:
+          type: string
+        channel:
+          type: string
+        todoId:
+          type: string
+        body:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+    DevOutboxMessageList:
+      type: object
+      additionalProperties: false
+      required: [messages]
+      properties:
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/DevOutboxMessage'

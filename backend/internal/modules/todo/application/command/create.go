@@ -48,6 +48,8 @@ func (h *CreateTodoHandler) Handle(ctx context.Context, request dto.CreateTodoRe
 			TodoReminderVersion: todo.ReminderVersion,
 			ScheduledAtUTC:      *todo.DueAtUTC,
 			Channels:            channels,
+			Title:               todo.Title,
+			OwnerUserID:         todo.OwnerUserID,
 		})
 	})
 	if err != nil {

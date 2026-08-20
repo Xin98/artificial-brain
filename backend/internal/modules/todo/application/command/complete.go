@@ -38,6 +38,7 @@ func (h *CompleteTodoHandler) Handle(ctx context.Context, request dto.CompleteTo
 			WorkspaceID:         request.WorkspaceID,
 			TodoID:              request.TodoID,
 			UpToReminderVersion: loaded.ReminderVersion,
+			Reason:              "todo_completed",
 		})
 	})
 	if err != nil {

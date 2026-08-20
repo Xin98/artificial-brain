@@ -9,7 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-func TestRunMigrationsTwice(t *testing.T) {
+func TestMigrate(t *testing.T) {
 	url, ok := os.LookupEnv("TEST_DATABASE_URL")
 	if !ok {
 		t.Skip("TEST_DATABASE_URL is not set")
@@ -36,6 +36,9 @@ func TestRunMigrationsTwice(t *testing.T) {
 	if version != CurrentSchemaVersion {
 		t.Fatalf("schema version = %d, want %d", version, CurrentSchemaVersion)
 	}
+	if version != 7 {
+		t.Fatalf("schema version = %d, want 7", version)
+	}
 
 	var workerTableCount int
 	if err := conn.QueryRow(ctx, `
@@ -58,8 +61,11 @@ func TestRunMigrationsTwice(t *testing.T) {
 		{"identity", "message_outbox"},
 		{"todo", "todos"},
 		{"reminder", "reminder_plans"},
+		{"reminder", "reminder_deliveries"},
+		{"reminder", "fake_outbox"},
 		{"conversation", "confirmation_requests"},
 		{"conversation", "messages"},
+		{"public", "river_job"},
 	}
 	for _, schemaTable := range expectedTables {
 		var count int

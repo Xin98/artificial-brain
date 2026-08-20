@@ -268,6 +268,7 @@ func TestRevokePlansDelegatesCutoffWithInjectedClock(t *testing.T) {
 		WorkspaceID:         "ws-1",
 		TodoID:              "todo-1",
 		UpToReminderVersion: 2,
+		Reason:              "todo_completed",
 	})
 	if err != nil {
 		t.Fatalf("Handle() error = %v", err)
@@ -289,7 +290,7 @@ func TestRevokePlansPropagatesStoreError(t *testing.T) {
 	store.revokeErr = errSaveFailed
 	handler := newRevokeHandler(store, newFakeDeliveryStore(), newFakeScheduler(), discardLogger())
 
-	if err := handler.Handle(context.Background(), dto.RevokeRequest{WorkspaceID: "ws-1", TodoID: "todo-1", UpToReminderVersion: 1}); !errors.Is(err, errSaveFailed) {
+	if err := handler.Handle(context.Background(), dto.RevokeRequest{WorkspaceID: "ws-1", TodoID: "todo-1", UpToReminderVersion: 1, Reason: "todo_completed"}); !errors.Is(err, errSaveFailed) {
 		t.Fatalf("Handle() error = %v, want errSaveFailed", err)
 	}
 }
@@ -301,7 +302,7 @@ func TestRevokePlansCancelsEveryPlannedJobID(t *testing.T) {
 	scheduler := newFakeScheduler()
 	handler := newRevokeHandler(store, deliveries, scheduler, discardLogger())
 
-	err := handler.Handle(context.Background(), dto.RevokeRequest{WorkspaceID: "ws-1", TodoID: "todo-1", UpToReminderVersion: 3})
+	err := handler.Handle(context.Background(), dto.RevokeRequest{WorkspaceID: "ws-1", TodoID: "todo-1", UpToReminderVersion: 3, Reason: "todo_completed"})
 	if err != nil {
 		t.Fatalf("Handle() error = %v", err)
 	}
@@ -314,13 +315,14 @@ func TestRevokePlansSurvivesCancelErrorAndLogsIt(t *testing.T) {
 	store := newFakePlanStore()
 	deliveries := newFakeDeliveryStore()
 	deliveries.plannedJobIDs = []int64{10, 11}
+	deliveries.seed(scheduledEmailDelivery())
 	scheduler := newFakeScheduler()
 	scheduler.cancelErr = errCancelFailed
 	buffer := &bytes.Buffer{}
 	logger := slog.New(slog.NewTextHandler(buffer, nil))
 	handler := newRevokeHandler(store, deliveries, scheduler, logger)
 
-	err := handler.Handle(context.Background(), dto.RevokeRequest{WorkspaceID: "ws-1", TodoID: "todo-1", UpToReminderVersion: 3})
+	err := handler.Handle(context.Background(), dto.RevokeRequest{WorkspaceID: "ws-1", TodoID: "todo-1", UpToReminderVersion: 3, Reason: "todo_completed"})
 	if err != nil {
 		t.Fatalf("Handle() error = %v, want nil despite cancel failures", err)
 	}
@@ -331,6 +333,11 @@ func TestRevokePlansSurvivesCancelErrorAndLogsIt(t *testing.T) {
 	if !bytes.Contains([]byte(logged), []byte("cancel")) || !bytes.Contains([]byte(logged), []byte("cancel failed")) {
 		t.Fatalf("log output = %q, want cancel failure logged", logged)
 	}
+	// Suppression must not be skipped because a cancel errored.
+	delivery := deliveries.rows[emailDeliveryKey()]
+	if delivery.State != domain.StateSuppressed || delivery.SuppressionReason == nil || *delivery.SuppressionReason != domain.ReasonTodoCompleted {
+		t.Fatalf("delivery = %#v, want suppressed(todo_completed) despite cancel failures", delivery)
+	}
 }
 
 func TestRevokePlansWithoutPlannedJobsSkipsCancel(t *testing.T) {
@@ -338,7 +345,7 @@ func TestRevokePlansWithoutPlannedJobsSkipsCancel(t *testing.T) {
 	scheduler := newFakeScheduler()
 	handler := newRevokeHandler(store, newFakeDeliveryStore(), scheduler, discardLogger())
 
-	if err := handler.Handle(context.Background(), dto.RevokeRequest{WorkspaceID: "ws-1", TodoID: "todo-1", UpToReminderVersion: 1}); err != nil {
+	if err := handler.Handle(context.Background(), dto.RevokeRequest{WorkspaceID: "ws-1", TodoID: "todo-1", UpToReminderVersion: 1, Reason: "todo_deleted"}); err != nil {
 		t.Fatalf("Handle() error = %v", err)
 	}
 	if len(scheduler.cancelCalls) != 0 {
@@ -866,5 +873,136 @@ func TestRecordReceiptUnknownProviderIDIsIgnored(t *testing.T) {
 	}
 	if !bytes.Contains(buffer.Bytes(), []byte("unknown")) {
 		t.Fatalf("log = %q, want unknown provider id logged", buffer.String())
+	}
+}
+
+func sendingSmsDelivery() domain.ReminderDelivery {
+	delivery, err := domain.NewDelivery("delivery-sending", "ws-1", "user-1", "todo-1", 2, "plan-1", "sms",
+		"提交周报", fixedNow.Add(-time.Minute), fixedNow.Add(-time.Hour))
+	if err != nil {
+		panic(err)
+	}
+	if err := delivery.MarkSending(fixedNow.Add(-time.Minute)); err != nil {
+		panic(err)
+	}
+	return delivery
+}
+
+func succeededV1EmailDelivery() domain.ReminderDelivery {
+	delivery, err := domain.NewDelivery("delivery-final", "ws-1", "user-1", "todo-1", 1, "plan-0", "email",
+		"提交周报", fixedNow.Add(-time.Minute), fixedNow.Add(-time.Hour))
+	if err != nil {
+		panic(err)
+	}
+	if err := delivery.MarkSending(fixedNow.Add(-time.Minute)); err != nil {
+		panic(err)
+	}
+	if err := delivery.MarkSucceeded("prov-old", fixedNow.Add(-time.Minute)); err != nil {
+		panic(err)
+	}
+	return delivery
+}
+
+func TestRevokePlansSuppressesScheduledDeliveriesWithReason(t *testing.T) {
+	store := newFakePlanStore()
+	deliveries := newFakeDeliveryStore()
+	deliveries.seed(scheduledEmailDelivery())
+	deliveries.seed(sendingSmsDelivery())
+	deliveries.seed(succeededV1EmailDelivery())
+	scheduler := newFakeScheduler()
+	handler := newRevokeHandler(store, deliveries, scheduler, discardLogger())
+
+	err := handler.Handle(context.Background(), dto.RevokeRequest{
+		WorkspaceID:         "ws-1",
+		TodoID:              "todo-1",
+		UpToReminderVersion: 2,
+		Reason:              "todo_completed",
+	})
+	if err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	// The scheduled row is finalized as suppressed with the exact reason.
+	suppressed := deliveries.rows[emailDeliveryKey()]
+	if suppressed.State != domain.StateSuppressed || suppressed.SuppressionReason == nil || *suppressed.SuppressionReason != domain.ReasonTodoCompleted {
+		t.Fatalf("scheduled delivery = %#v, want suppressed(todo_completed)", suppressed)
+	}
+	if suppressed.FinalizedAt == nil || !suppressed.FinalizedAt.Equal(fixedNow) {
+		t.Fatalf("suppressed delivery FinalizedAt = %v, want injected clock %v", suppressed.FinalizedAt, fixedNow)
+	}
+	// The sending row is untouched: an in-flight send keeps the
+	// execution-time re-read as its correctness boundary.
+	sending := deliveries.rows[domain.IdempotencyKeyFor("ws-1", "todo-1", 2, "sms")]
+	if sending.State != domain.StateSending || sending.SuppressionReason != nil {
+		t.Fatalf("sending delivery = %#v, want untouched", sending)
+	}
+	// Final rows never transition again.
+	final := deliveries.rows[domain.IdempotencyKeyFor("ws-1", "todo-1", 1, "email")]
+	if final.State != domain.StateSucceeded || final.SuppressionReason != nil {
+		t.Fatalf("final delivery = %#v, want untouched", final)
+	}
+	if len(deliveries.updated) != 1 {
+		t.Fatalf("delivery updates = %d, want exactly the one scheduled row", len(deliveries.updated))
+	}
+	if len(deliveries.scheduledForSuppressionArgs) != 1 {
+		t.Fatalf("ScheduledForSuppression calls = %#v, want one scoped read", deliveries.scheduledForSuppressionArgs)
+	}
+	scope := deliveries.scheduledForSuppressionArgs[0]
+	if scope.workspaceID != "ws-1" || scope.todoID != "todo-1" || scope.upToReminderVersion != 2 {
+		t.Fatalf("ScheduledForSuppression scope = %#v", scope)
+	}
+}
+
+func TestRevokePlansRejectsInvalidReasonBeforeAnyMutation(t *testing.T) {
+	for _, reason := range []string{"", "bogus"} {
+		t.Run("reason="+reason, func(t *testing.T) {
+			store := newFakePlanStore()
+			deliveries := newFakeDeliveryStore()
+			deliveries.seed(scheduledEmailDelivery())
+			scheduler := newFakeScheduler()
+			handler := newRevokeHandler(store, deliveries, scheduler, discardLogger())
+
+			err := handler.Handle(context.Background(), dto.RevokeRequest{
+				WorkspaceID:         "ws-1",
+				TodoID:              "todo-1",
+				UpToReminderVersion: 2,
+				Reason:              reason,
+			})
+			if !errors.Is(err, domain.ErrInvalidSuppressionReason) {
+				t.Fatalf("Handle() error = %v, want ErrInvalidSuppressionReason", err)
+			}
+			if len(store.revokeCalls) != 0 || len(scheduler.cancelCalls) != 0 || len(deliveries.updated) != 0 {
+				t.Fatalf("invalid reason mutated state: %d plan revokes, %d cancels, %d delivery updates",
+					len(store.revokeCalls), len(scheduler.cancelCalls), len(deliveries.updated))
+			}
+			seeded := deliveries.rows[emailDeliveryKey()]
+			if seeded.State != domain.StateScheduled {
+				t.Fatalf("seeded delivery = %#v, want still scheduled", seeded)
+			}
+		})
+	}
+}
+
+func TestRevokePlansPropagatesSuppressionReadError(t *testing.T) {
+	store := newFakePlanStore()
+	deliveries := newFakeDeliveryStore()
+	deliveries.scheduledForSuppressionErr = errSaveFailed
+	handler := newRevokeHandler(store, deliveries, newFakeScheduler(), discardLogger())
+
+	err := handler.Handle(context.Background(), dto.RevokeRequest{WorkspaceID: "ws-1", TodoID: "todo-1", UpToReminderVersion: 1, Reason: "todo_deleted"})
+	if !errors.Is(err, errSaveFailed) {
+		t.Fatalf("Handle() error = %v, want the delivery-store read error propagated for rollback", err)
+	}
+}
+
+func TestRevokePlansPropagatesSuppressionUpdateError(t *testing.T) {
+	store := newFakePlanStore()
+	deliveries := newFakeDeliveryStore()
+	deliveries.seed(scheduledEmailDelivery())
+	deliveries.updateErr = errSaveFailed
+	handler := newRevokeHandler(store, deliveries, newFakeScheduler(), discardLogger())
+
+	err := handler.Handle(context.Background(), dto.RevokeRequest{WorkspaceID: "ws-1", TodoID: "todo-1", UpToReminderVersion: 2, Reason: "todo_completed"})
+	if !errors.Is(err, errSaveFailed) {
+		t.Fatalf("Handle() error = %v, want the delivery-store update error propagated for rollback", err)
 	}
 }

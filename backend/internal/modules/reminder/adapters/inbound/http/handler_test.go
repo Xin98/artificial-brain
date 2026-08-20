@@ -107,6 +107,10 @@ func (s *fakeDeliveryStore) PlannedJobIDs(context.Context, string, string, int) 
 	return nil, nil
 }
 
+func (s *fakeDeliveryStore) ScheduledForSuppression(context.Context, string, string, int) ([]reminderdomain.ReminderDelivery, error) {
+	return nil, nil
+}
+
 func (s *fakeDeliveryStore) Stats(context.Context, string) (reminderdto.DeliveryCounts, error) {
 	return reminderdto.DeliveryCounts{}, nil
 }

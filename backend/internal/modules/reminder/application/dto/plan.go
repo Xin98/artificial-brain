@@ -17,9 +17,13 @@ type PlanRequest struct {
 }
 
 // RevokeRequest asks the reminder seam to revoke every planned plan for a
-// todo up to and including a reminder version.
+// todo up to and including a reminder version. Reason carries the caller's
+// suppression reason for the still-scheduled deliveries ("todo_completed",
+// "todo_deleted", or "version_stale"); the handler validates it against the
+// domain's known reasons before touching any store.
 type RevokeRequest struct {
 	WorkspaceID         string
 	TodoID              string
 	UpToReminderVersion int
+	Reason              string
 }

@@ -433,5 +433,6 @@ func (s *reminderPlannerShim) Revoke(ctx context.Context, request todoports.Revo
 		WorkspaceID:         request.WorkspaceID,
 		TodoID:              request.TodoID,
 		UpToReminderVersion: request.UpToReminderVersion,
+		Reason:              request.Reason,
 	})
 }

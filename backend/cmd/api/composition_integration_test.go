@@ -1212,3 +1212,118 @@ func todosContain(body map[string]any, title string) bool {
 	}
 	return false
 }
+
+// deliveryFinalizationByTodo returns the state and suppression reason of every
+// delivery row for the todo, ordered by channel.
+func deliveryFinalizationByTodo(t *testing.T, pool *pgxpool.Pool, todoID string) [][3]string {
+	t.Helper()
+	rows, err := pool.Query(context.Background(), `
+		select channel, state, coalesce(suppression_reason, '')
+		from reminder.reminder_deliveries
+		where todo_id = $1
+		order by channel
+	`, todoID)
+	if err != nil {
+		t.Fatalf("deliveries query error = %v", err)
+	}
+	defer rows.Close()
+	var result [][3]string
+	for rows.Next() {
+		var channel, state, reason string
+		if err := rows.Scan(&channel, &state, &reason); err != nil {
+			t.Fatalf("scan delivery error = %v", err)
+		}
+		result = append(result, [3]string{channel, state, reason})
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("delivery rows error = %v", err)
+	}
+	return result
+}
+
+// TestRevokeSuppressesScheduledDeliveriesOnComplete proves the revoke-time
+// finalization: completing a due todo flips its planned delivery rows to
+// suppressed with the todo_completed reason inside the caller's transaction,
+// atomically with the plan revoke.
+func TestRevokeSuppressesScheduledDeliveriesOnComplete(t *testing.T) {
+	pool := setupTodoPool(t)
+	ctx := context.Background()
+	fixed := time.Date(2026, 8, 20, 12, 0, 0, 0, time.UTC)
+	now := func() time.Time { return fixed }
+	due := fixed.Add(24 * time.Hour)
+
+	handlers := buildTodoHandlers(pool, noopjob.New(), bothChannelsProvider(), now)
+	workspaceID, ownerUserID := newID(), newID()
+	created, err := handlers.Create.Handle(ctx, tododto.CreateTodoRequest{
+		WorkspaceID: workspaceID, UserID: ownerUserID, Title: "抑制待办", DueAtUTC: &due,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	// Two scheduled delivery rows exist at plan time.
+	before := deliveryFinalizationByTodo(t, pool, created.ID)
+	if len(before) != 2 {
+		t.Fatalf("deliveries before complete = %#v, want one per channel", before)
+	}
+	for _, row := range before {
+		if row[1] != "scheduled" || row[2] != "" {
+			t.Fatalf("delivery before complete = %#v, want scheduled without reason", row)
+		}
+	}
+
+	// Completing the todo suppresses both rows with todo_completed in the same
+	// transaction that revokes the plan.
+	if _, err := handlers.Complete.Handle(ctx, tododto.CompleteTodoRequest{
+		WorkspaceID: workspaceID, UserID: ownerUserID, TodoID: created.ID, Version: created.Version,
+	}); err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	after := deliveryFinalizationByTodo(t, pool, created.ID)
+	if len(after) != 2 {
+		t.Fatalf("deliveries after complete = %#v, want one per channel", after)
+	}
+	for _, row := range after {
+		if row[1] != "suppressed" || row[2] != "todo_completed" {
+			t.Fatalf("delivery after complete = %#v, want suppressed(todo_completed)", row)
+		}
+	}
+	plans := plansForTodo(t, pool, created.ID)
+	if len(plans) != 1 || plans[0].status != "revoked" {
+		t.Fatalf("plans after complete = %#v, want revoked", plans)
+	}
+}
+
+// TestRevokeSuppressesScheduledDeliveriesOnDelete proves the delete reason
+// reaches the delivery rows through the same revoke seam.
+func TestRevokeSuppressesScheduledDeliveriesOnDelete(t *testing.T) {
+	pool := setupTodoPool(t)
+	ctx := context.Background()
+	fixed := time.Date(2026, 8, 20, 13, 0, 0, 0, time.UTC)
+	now := func() time.Time { return fixed }
+	due := fixed.Add(24 * time.Hour)
+
+	handlers := buildTodoHandlers(pool, noopjob.New(), bothChannelsProvider(), now)
+	workspaceID, ownerUserID := newID(), newID()
+	created, err := handlers.Create.Handle(ctx, tododto.CreateTodoRequest{
+		WorkspaceID: workspaceID, UserID: ownerUserID, Title: "删除待办", DueAtUTC: &due,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	if _, err := handlers.Delete.Handle(ctx, tododto.DeleteTodoRequest{
+		WorkspaceID: workspaceID, UserID: ownerUserID, TodoID: created.ID, Version: created.Version,
+	}); err != nil {
+		t.Fatalf("Delete() error = %v", err)
+	}
+	after := deliveryFinalizationByTodo(t, pool, created.ID)
+	if len(after) != 2 {
+		t.Fatalf("deliveries after delete = %#v, want one per channel", after)
+	}
+	for _, row := range after {
+		if row[1] != "suppressed" || row[2] != "todo_deleted" {
+			t.Fatalf("delivery after delete = %#v, want suppressed(todo_deleted)", row)
+		}
+	}
+}

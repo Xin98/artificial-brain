@@ -43,6 +43,17 @@ const (
 	ReasonPlanRevoked SuppressionReason = "plan_revoked"
 )
 
+// NewSuppressionReason parses a raw suppression reason carried across the
+// module seam, accepting only the five known reasons; anything else returns
+// ErrInvalidSuppressionReason so free-form text can never reach the store.
+func NewSuppressionReason(value string) (SuppressionReason, error) {
+	switch reason := SuppressionReason(value); reason {
+	case ReasonTodoCompleted, ReasonTodoDeleted, ReasonVersionStale, ReasonChannelUnavailable, ReasonPlanRevoked:
+		return reason, nil
+	}
+	return "", ErrInvalidSuppressionReason
+}
+
 // ReceiptState is the provider delivery-receipt verdict. Receipts are
 // informational and never change the delivery's terminal state.
 type ReceiptState string

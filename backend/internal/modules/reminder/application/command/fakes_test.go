@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"errors"
+	"sort"
 	"time"
 
 	"github.com/Xin98/artificial-brain/backend/internal/modules/reminder/application/dto"
@@ -89,17 +90,25 @@ func (s *fakeScheduler) Cancel(_ context.Context, jobID int64) error {
 // resolve against the seeded and written rows. saved and updated keep the
 // full call history for assertions.
 type fakeDeliveryStore struct {
-	saved                 []domain.ReminderDelivery
-	saveErr               error
-	updated               []domain.ReminderDelivery
-	updateErr             error
-	keyErr                error
-	providerErr           error
-	rows                  map[string]domain.ReminderDelivery
-	setProviderJobIDCalls []providerJobIDCall
-	setProviderJobIDErr   error
-	plannedJobIDs         []int64
-	plannedJobIDsErr      error
+	saved                       []domain.ReminderDelivery
+	saveErr                     error
+	updated                     []domain.ReminderDelivery
+	updateErr                   error
+	keyErr                      error
+	providerErr                 error
+	rows                        map[string]domain.ReminderDelivery
+	setProviderJobIDCalls       []providerJobIDCall
+	setProviderJobIDErr         error
+	plannedJobIDs               []int64
+	plannedJobIDsErr            error
+	scheduledForSuppressionErr  error
+	scheduledForSuppressionArgs []suppressionScopeCall
+}
+
+type suppressionScopeCall struct {
+	workspaceID         string
+	todoID              string
+	upToReminderVersion int
 }
 
 type providerJobIDCall struct {
@@ -171,6 +180,31 @@ func (s *fakeDeliveryStore) SetProviderJobID(_ context.Context, workspaceID, del
 
 func (s *fakeDeliveryStore) PlannedJobIDs(context.Context, string, string, int) ([]int64, error) {
 	return s.plannedJobIDs, s.plannedJobIDsErr
+}
+
+// ScheduledForSuppression mirrors the postgres adapter: it returns only the
+// seeded rows that are workspace+todo scoped, at or below the reminder version
+// cutoff, and still scheduled — sending and final rows are never returned.
+func (s *fakeDeliveryStore) ScheduledForSuppression(_ context.Context, workspaceID, todoID string, upToReminderVersion int) ([]domain.ReminderDelivery, error) {
+	s.scheduledForSuppressionArgs = append(s.scheduledForSuppressionArgs, suppressionScopeCall{workspaceID, todoID, upToReminderVersion})
+	if s.scheduledForSuppressionErr != nil {
+		return nil, s.scheduledForSuppressionErr
+	}
+	result := []domain.ReminderDelivery{}
+	for _, delivery := range s.rows {
+		if delivery.WorkspaceID != workspaceID || delivery.TodoID != todoID {
+			continue
+		}
+		if delivery.TodoReminderVersion > upToReminderVersion {
+			continue
+		}
+		if delivery.State != domain.StateScheduled {
+			continue
+		}
+		result = append(result, delivery)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result, nil
 }
 
 func (s *fakeDeliveryStore) Stats(context.Context, string) (dto.DeliveryCounts, error) {

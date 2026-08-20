@@ -99,6 +99,10 @@ func (s *recordingDeliveryStore) PlannedJobIDs(context.Context, string, string, 
 	return nil, nil
 }
 
+func (s *recordingDeliveryStore) ScheduledForSuppression(context.Context, string, string, int) ([]domain.ReminderDelivery, error) {
+	return nil, nil
+}
+
 func (s *recordingDeliveryStore) Stats(context.Context, string) (dto.DeliveryCounts, error) {
 	return dto.DeliveryCounts{}, nil
 }

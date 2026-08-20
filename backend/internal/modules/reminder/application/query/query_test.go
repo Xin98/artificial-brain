@@ -49,6 +49,10 @@ func (s *fakeDeliveryStore) PlannedJobIDs(context.Context, string, string, int) 
 	return nil, nil
 }
 
+func (s *fakeDeliveryStore) ScheduledForSuppression(context.Context, string, string, int) ([]domain.ReminderDelivery, error) {
+	return nil, nil
+}
+
 func (s *fakeDeliveryStore) Stats(_ context.Context, workspaceID string) (dto.DeliveryCounts, error) {
 	s.statsCalls = append(s.statsCalls, workspaceID)
 	return s.stats, s.statsErr

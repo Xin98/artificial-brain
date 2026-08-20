@@ -156,6 +156,8 @@ scheduled ──worker 领取──▶ sending ──供应商受理──▶ su
 
 完成、删除、改期待办时，既有缝 revoke 对应 Plan 并尽力 `Cancel` River Job。但取消不是正确性边界：job 即使被领取，`SendReminder` 也会重读最新事实并抑制（验收场景 9）。
 
+> **勘误（2026-08-20）**：经用户决策（ITER-0003 决策 D9），revoke 同时在调用方事务内把尚未开始投递的 `scheduled` Delivery 就地终态化为 `suppressed`（携带调用方原因），与待办状态变更同事务原子提交；`sending` 行不受 revoke 影响，执行时重读仍是已领取 job 的正确性边界。
+
 ### 6.2 SendReminder 应用命令
 
 输入：job args（PlanID、Channel）与 `FinalAttempt` 标志。步骤：

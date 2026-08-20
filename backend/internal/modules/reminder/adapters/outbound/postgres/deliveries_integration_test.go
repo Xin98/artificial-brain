@@ -638,3 +638,128 @@ func TestDeliveryStoreJoinsAmbientTransaction(t *testing.T) {
 		t.Fatalf("after commit = %#v, want %#v", got, want)
 	}
 }
+
+// TestDeliveryStoreScheduledForSuppressionScopes proves the revoke-time read:
+// only scheduled rows at or below the reminder version cutoff, scoped to the
+// workspace+todo, are returned. Sending and final rows, rows above the cutoff,
+// and other workspaces' rows are all excluded.
+func TestDeliveryStoreScheduledForSuppressionScopes(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	store := NewDeliveryStore(pool)
+	plans := NewPlanStore(pool)
+	workspaceID, ownerUserID, todoID := randomID(t), randomID(t), randomID(t)
+
+	// v1 email: scheduled -> included at or below the cutoff.
+	planV1 := seedPlanFixture(t, ctx, plans, workspaceID, todoID, 1)
+	v1Email := newDeliveryFixture(t, workspaceID, ownerUserID, todoID, 1, planV1.ID, "email", testNow.Add(time.Hour))
+	if err := store.Save(ctx, v1Email); err != nil {
+		t.Fatalf("Save(v1 email) error = %v", err)
+	}
+
+	// v1 sms: sending -> excluded (an in-flight send keeps the execution-time
+	// re-read as its correctness boundary).
+	v1Sms := newDeliveryFixture(t, workspaceID, ownerUserID, todoID, 1, planV1.ID, "sms", testNow.Add(time.Hour))
+	if err := v1Sms.MarkSending(testNow); err != nil {
+		t.Fatalf("MarkSending(v1 sms) error = %v", err)
+	}
+	if err := store.Save(ctx, v1Sms); err != nil {
+		t.Fatalf("Save(v1 sms) error = %v", err)
+	}
+
+	// v2 email: scheduled -> included at or below the cutoff.
+	planV2 := seedPlanFixture(t, ctx, plans, workspaceID, todoID, 2)
+	v2Email := newDeliveryFixture(t, workspaceID, ownerUserID, todoID, 2, planV2.ID, "email", testNow.Add(time.Hour))
+	if err := store.Save(ctx, v2Email); err != nil {
+		t.Fatalf("Save(v2 email) error = %v", err)
+	}
+
+	// v2 sms: succeeded (final) -> excluded.
+	v2Sms := newDeliveryFixture(t, workspaceID, ownerUserID, todoID, 2, planV2.ID, "sms", testNow.Add(time.Hour))
+	if err := v2Sms.MarkSending(testNow); err != nil {
+		t.Fatalf("MarkSending(v2 sms) error = %v", err)
+	}
+	if err := v2Sms.MarkSucceeded("provider-message-final", testNow.Add(time.Minute)); err != nil {
+		t.Fatalf("MarkSucceeded(v2 sms) error = %v", err)
+	}
+	if err := store.Save(ctx, v2Sms); err != nil {
+		t.Fatalf("Save(v2 sms) error = %v", err)
+	}
+
+	// v3 email: scheduled but above the cutoff -> excluded until the cutoff
+	// reaches it.
+	planV3 := seedPlanFixture(t, ctx, plans, workspaceID, todoID, 3)
+	v3Email := newDeliveryFixture(t, workspaceID, ownerUserID, todoID, 3, planV3.ID, "email", testNow.Add(time.Hour))
+	if err := store.Save(ctx, v3Email); err != nil {
+		t.Fatalf("Save(v3 email) error = %v", err)
+	}
+
+	// Another workspace's scheduled row is never visible.
+	otherWorkspace := randomID(t)
+	otherPlan := seedPlanFixture(t, ctx, plans, otherWorkspace, randomID(t), 1)
+	otherDelivery := newDeliveryFixture(t, otherWorkspace, randomID(t), otherPlan.TodoID, 1, otherPlan.ID, "email", testNow.Add(time.Hour))
+	if err := store.Save(ctx, otherDelivery); err != nil {
+		t.Fatalf("Save(other workspace) error = %v", err)
+	}
+
+	collect := func(t *testing.T, rows []domain.ReminderDelivery) []string {
+		t.Helper()
+		ids := make([]string, 0, len(rows))
+		for _, row := range rows {
+			ids = append(ids, row.ID)
+		}
+		return ids
+	}
+
+	// Cutoff 2: only the scheduled v1 and v2 rows, never the sending, final,
+	// above-cutoff, or cross-workspace rows.
+	rows, err := store.ScheduledForSuppression(ctx, workspaceID, todoID, 2)
+	if err != nil {
+		t.Fatalf("ScheduledForSuppression(cutoff 2) error = %v", err)
+	}
+	got := collect(t, rows)
+	want := []string{v1Email.ID, v2Email.ID}
+	if !sameIDSet(got, want) {
+		t.Fatalf("ScheduledForSuppression(cutoff 2) = %v, want %v", got, want)
+	}
+	for _, row := range rows {
+		if row.State != domain.StateScheduled {
+			t.Fatalf("ScheduledForSuppression returned non-scheduled row %#v", row)
+		}
+	}
+
+	// Cutoff 3 adds the v3 scheduled row.
+	rows, err = store.ScheduledForSuppression(ctx, workspaceID, todoID, 3)
+	if err != nil {
+		t.Fatalf("ScheduledForSuppression(cutoff 3) error = %v", err)
+	}
+	if !sameIDSet(collect(t, rows), []string{v1Email.ID, v2Email.ID, v3Email.ID}) {
+		t.Fatalf("ScheduledForSuppression(cutoff 3) = %v, want v1, v2, and v3 scheduled rows", collect(t, rows))
+	}
+
+	// Another workspace sees nothing for this todo.
+	if rows, err = store.ScheduledForSuppression(ctx, randomID(t), todoID, 3); err != nil {
+		t.Fatalf("ScheduledForSuppression(other workspace) error = %v", err)
+	} else if len(rows) != 0 {
+		t.Fatalf("ScheduledForSuppression(other workspace) = %v, want none", collect(t, rows))
+	}
+}
+
+// sameIDSet reports whether two id slices contain exactly the same elements,
+// ignoring order.
+func sameIDSet(got, want []string) bool {
+	if len(got) != len(want) {
+		return false
+	}
+	seen := make(map[string]int, len(want))
+	for _, id := range want {
+		seen[id]++
+	}
+	for _, id := range got {
+		if seen[id] == 0 {
+			return false
+		}
+		seen[id]--
+	}
+	return true
+}

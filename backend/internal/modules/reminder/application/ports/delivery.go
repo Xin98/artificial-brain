@@ -28,6 +28,11 @@ type DeliveryStore interface {
 	// PlannedJobIDs returns the provider job IDs of every scheduled delivery
 	// for the todo at or below the reminder version cutoff.
 	PlannedJobIDs(ctx context.Context, workspaceID, todoID string, upToReminderVersion int) ([]int64, error)
+	// ScheduledForSuppression returns every delivery for the todo at or below
+	// the reminder version cutoff that is still scheduled. Sending and final
+	// rows are never returned: an in-flight send keeps the execution-time
+	// re-read as its correctness boundary, and final rows never transition.
+	ScheduledForSuppression(ctx context.Context, workspaceID, todoID string, upToReminderVersion int) ([]domain.ReminderDelivery, error)
 	// Stats counts deliveries per lifecycle bucket for the workspace.
 	Stats(ctx context.Context, workspaceID string) (dto.DeliveryCounts, error)
 	// List returns deliveries for the workspace matching the filter.

@@ -427,24 +427,23 @@ full_stack_test() {
 	printf '%s\n' "$e2e_suppress_complete" | jq -e '.status == "completed"' >/dev/null || \
 		fail "suppression todo complete did not report completed: ${e2e_suppress_complete}"
 
-	# A todo completed before its due instant must never deliver. Revoke marks
-	# the plan revoked and best-effort cancels the scheduled River jobs;
-	# suppression itself is an execution-time state, and a cancelled job never
-	# runs, so the rows settle at scheduled-or-suppressed. Assert no row is
-	# ever sent or finalized, and that the due instant passes without any fake
-	# outbox message.
+	# A todo completed before its due instant must never deliver. Revoke (D9)
+	# finalizes every still-scheduled delivery as suppressed with the
+	# todo_completed reason inside the caller's transaction, so every row for
+	# the completed todo must settle at suppressed(todo_completed); the due
+	# instant then passes without any fake outbox message.
 	e2e_deadline=$(( $(date +%s) + 30 ))
 	while :; do
-		e2e_suppress_unsettled=$(compose exec -T postgres psql \
+		e2e_suppress_unfinalized=$(compose exec -T postgres psql \
 			--username "${POSTGRES_USER:-artificial_brain}" \
 			--dbname "${POSTGRES_DB:-artificial_brain}" \
 			--tuples-only --no-align \
-			--command "select count(*) from reminder.reminder_deliveries where todo_id='${e2e_suppress_id}' and state not in ('scheduled','suppressed')")
-		if [ "$e2e_suppress_unsettled" = 0 ] && [ "$(date +%s)" -ge $((e2e_suppress_due_epoch + 3)) ]; then
+			--command "select count(*) from reminder.reminder_deliveries where todo_id='${e2e_suppress_id}' and not (state = 'suppressed' and suppression_reason = 'todo_completed')")
+		if [ "$e2e_suppress_unfinalized" = 0 ] && [ "$(date +%s)" -ge $((e2e_suppress_due_epoch + 3)) ]; then
 			break
 		fi
 		[ "$(date +%s)" -lt "$e2e_deadline" ] || \
-			fail "completed todo 冒烟抑制 left unsettled delivery rows: ${e2e_suppress_unsettled}"
+			fail "completed todo 冒烟抑制 did not finalize every delivery as suppressed(todo_completed): ${e2e_suppress_unfinalized}"
 		sleep 1
 	done
 	e2e_suppress_rows=$(compose exec -T postgres psql \

@@ -20,11 +20,15 @@ type PlanReminderRequest struct {
 }
 
 // RevokeReminderRequest is Todo's consumer-owned request to revoke planned
-// reminders up to a reminder version cutoff.
+// reminders up to a reminder version cutoff. Reason names the todo transition
+// driving the revoke ("todo_completed", "todo_deleted", or "version_stale");
+// the Reminder context validates it and finalizes every still-scheduled
+// delivery as suppressed with that reason inside the caller's transaction.
 type RevokeReminderRequest struct {
 	WorkspaceID         string
 	TodoID              string
 	UpToReminderVersion int
+	Reason              string
 }
 
 // ReminderPlanner is the seam to the Reminder context, satisfied in cmd by

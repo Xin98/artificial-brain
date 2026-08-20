@@ -34,6 +34,10 @@ Queue depth and oldest wait come from `river_job`; delivery counts, retry rate, 
 
 Four real reminder tiles plus a "提醒记录" list inside the existing dashboard panel; no new route page, no new web dependencies.
 
+## D9 — Revoke finalizes scheduled deliveries as suppressed (2026-08-20, user decision)
+
+On revoke (complete/delete/reschedule), every delivery that has not started delivering is finalized as `suppressed` with the caller's reason (`todo_completed` / `todo_deleted` / `version_stale`) immediately, inside the caller's ambient transaction — atomic with the todo transition. The reason crosses the seam as a string and is validated by `domain.NewSuppressionReason` before any store mutation. Suppression runs after `RevokePlanned` and the best-effort cancels, so `PlannedJobIDs` still sees the scheduled rows' job IDs to cancel, and a cancel error never skips suppression. **Sending rows are not touched and the execution-time re-read stays the correctness boundary for jobs already in flight.** This supersedes the O2 smoke adaptation: step 7 asserts the literal `state='suppressed' and suppression_reason='todo_completed'` for the completed todo instead of the prior "no row outside (scheduled, suppressed)" adaptation.
+
 ## Working assumptions
 
 The plan's accepted assumptions register:

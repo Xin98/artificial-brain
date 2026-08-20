@@ -495,7 +495,7 @@ e2e_email="smoke@example.com"; e2e_sms="+8613800137002"
 4  poll GET dev/reminder-outbox?address=$e2e_email ⇒ message body contains 冒烟提醒 (≤30s)
 5  GET reminders ⇒ two rows for todoId, both state=succeeded (email + sms)
 6  POST todos {"title":"冒烟抑制","dueAtUTC":<now+10s UTC>} ⇒ 201 id2; POST todos/{id2}/complete {version:1} ⇒ completed
-7  poll psql: select state from reminder.reminder_deliveries where todo_id='<id2>' ⇒ all rows 'suppressed' (≤30s); GET dev/reminder-outbox for both addresses ⇒ no body contains 冒烟抑制
+7  poll psql: select state, suppression_reason from reminder.reminder_deliveries where todo_id='<id2>' ⇒ every row state='suppressed' and suppression_reason='todo_completed' (≤30s); GET dev/reminder-outbox for both addresses ⇒ no body contains 冒烟抑制 (revoke finalizes scheduled deliveries at revoke time — decisions.md D9)
 8  sms providerMessageId from step 5 ⇒ POST webhooks/receipts/sms with valid HMAC-SHA256 body {"providerMessageId":…,"delivered":true} ⇒ 200; GET reminders ⇒ that row receiptState=received_ok
 9  GET ops/reminder ⇒ jq '.queues | length == 2' and '.deliveries.succeeded >= 2'
 10 docker compose restart worker; POST todos {"title":"冒烟恢复","dueAtUTC":<now+5s UTC>}; poll reminder-outbox ⇒ 冒烟恢复 delivered (≤30s)

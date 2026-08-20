@@ -154,6 +154,38 @@ func (s *DeliveryStore) PlannedJobIDs(ctx context.Context, workspaceID, todoID s
 	return jobIDs, rows.Err()
 }
 
+// ScheduledForSuppression returns every delivery for the todo at or below the
+// reminder version cutoff that is still scheduled, ordered by id. Sending rows
+// are excluded — an in-flight send keeps the execution-time re-read as its
+// correctness boundary — and final rows never transition again. Reads resolve
+// the executor from context, so the revoke handler's suppressions join the
+// caller's ambient transaction.
+func (s *DeliveryStore) ScheduledForSuppression(ctx context.Context, workspaceID, todoID string, upToReminderVersion int) ([]domain.ReminderDelivery, error) {
+	exec := database.ExecutorFromContextOr(ctx, s.pool)
+	rows, err := exec.Query(ctx, `
+		select `+deliveryColumns+`
+		from reminder.reminder_deliveries
+		where workspace_id = $1 and todo_id = $2
+		  and todo_reminder_version <= $3
+		  and state = 'scheduled'
+		order by id
+	`, workspaceID, todoID, upToReminderVersion)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	deliveries := []domain.ReminderDelivery{}
+	for rows.Next() {
+		delivery, err := scanDelivery(rows)
+		if err != nil {
+			return nil, err
+		}
+		deliveries = append(deliveries, delivery)
+	}
+	return deliveries, rows.Err()
+}
+
 // Stats counts deliveries per lifecycle bucket for the workspace. Sending is
 // split into first-attempt sending and retrying (attempt_count > 0).
 func (s *DeliveryStore) Stats(ctx context.Context, workspaceID string) (dto.DeliveryCounts, error) {

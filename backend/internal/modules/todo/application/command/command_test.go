@@ -181,6 +181,9 @@ func TestCompleteTodoRevokesAllPlanVersions(t *testing.T) {
 	if revokes[0].WorkspaceID != "ws-1" || revokes[0].TodoID != "todo-1" || revokes[0].UpToReminderVersion != 1 {
 		t.Fatalf("revoke = %#v", revokes[0])
 	}
+	if revokes[0].Reason != "todo_completed" {
+		t.Fatalf("revoke.Reason = %q, want todo_completed", revokes[0].Reason)
+	}
 }
 
 func TestCompleteTodoStaleVersionConflicts(t *testing.T) {
@@ -242,6 +245,9 @@ func TestDeleteTodoRevokesPlansAndReportsDeleted(t *testing.T) {
 	revokes := planner.revokes()
 	if len(revokes) != 1 || revokes[0].UpToReminderVersion != 1 {
 		t.Fatalf("revokes = %#v", revokes)
+	}
+	if revokes[0].Reason != "todo_deleted" {
+		t.Fatalf("revoke.Reason = %q, want todo_deleted", revokes[0].Reason)
 	}
 }
 
@@ -316,6 +322,9 @@ func TestUpdateDueReschedulesWithRevokeThenPlan(t *testing.T) {
 	if revoke.TodoID != "todo-1" || revoke.UpToReminderVersion != 1 {
 		t.Fatalf("revoke = %#v", revoke)
 	}
+	if revoke.Reason != "version_stale" {
+		t.Fatalf("revoke.Reason = %q, want version_stale", revoke.Reason)
+	}
 	if plan.TodoID != "todo-1" || plan.TodoReminderVersion != 2 || !plan.ScheduledAtUTC.Equal(newDue) {
 		t.Fatalf("plan = %#v", plan)
 	}
@@ -343,8 +352,12 @@ func TestUpdateClearDueOnlyRevokes(t *testing.T) {
 	if got.ReminderVersion != 2 || got.DueAtUTC != nil {
 		t.Fatalf("updated dto = %#v", got)
 	}
-	if len(planner.revokes()) != 1 || len(planner.plans()) != 0 {
+	revokes := planner.revokes()
+	if len(revokes) != 1 || len(planner.plans()) != 0 {
 		t.Fatalf("planner calls = %#v, want revoke only", planner.calls)
+	}
+	if revokes[0].Reason != "version_stale" {
+		t.Fatalf("revoke.Reason = %q, want version_stale", revokes[0].Reason)
 	}
 }
 

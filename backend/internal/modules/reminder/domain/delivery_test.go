@@ -379,3 +379,37 @@ func TestApplyReceiptRejectedOutsideSucceeded(t *testing.T) {
 		})
 	}
 }
+
+func TestNewSuppressionReasonAcceptsKnownReasons(t *testing.T) {
+	cases := []struct {
+		input string
+		want  SuppressionReason
+	}{
+		{"todo_completed", ReasonTodoCompleted},
+		{"todo_deleted", ReasonTodoDeleted},
+		{"version_stale", ReasonVersionStale},
+		{"channel_unavailable", ReasonChannelUnavailable},
+		{"plan_revoked", ReasonPlanRevoked},
+	}
+	for _, tc := range cases {
+		t.Run(tc.input, func(t *testing.T) {
+			got, err := NewSuppressionReason(tc.input)
+			if err != nil {
+				t.Fatalf("NewSuppressionReason(%q) error = %v", tc.input, err)
+			}
+			if got != tc.want {
+				t.Fatalf("NewSuppressionReason(%q) = %q, want %q", tc.input, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestNewSuppressionReasonRejectsUnknownValues(t *testing.T) {
+	for _, input := range []string{"", "bogus", "TODO_COMPLETED", "suppressed"} {
+		t.Run("input="+input, func(t *testing.T) {
+			if _, err := NewSuppressionReason(input); !errors.Is(err, ErrInvalidSuppressionReason) {
+				t.Fatalf("NewSuppressionReason(%q) error = %v, want ErrInvalidSuppressionReason", input, err)
+			}
+		})
+	}
+}

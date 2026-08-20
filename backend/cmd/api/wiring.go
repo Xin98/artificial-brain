@@ -9,9 +9,12 @@ import (
 	"log/slog"
 	"math/big"
 	"net/http"
+	"sort"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	riverqueue "github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
 	conversationhttp "github.com/Xin98/artificial-brain/backend/internal/modules/conversation/adapters/inbound/http"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/conversation/adapters/outbound/deterministic"
@@ -26,12 +29,14 @@ import (
 	identitypostgres "github.com/Xin98/artificial-brain/backend/internal/modules/identity/adapters/outbound/postgres"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/identity/application/command"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/identity/application/query"
-	"github.com/Xin98/artificial-brain/backend/internal/modules/reminder/adapters/outbound/noopjob"
+	reminderhttp "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/adapters/inbound/http"
+	aliyunprovider "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/adapters/outbound/aliyun"
 	reminderpostgres "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/adapters/outbound/postgres"
+	riversched "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/adapters/outbound/river"
 	remindercommand "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/application/command"
 	reminderdto "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/application/dto"
 	reminderports "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/application/ports"
-	reminderdomain "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/domain"
+	reminderquery "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/application/query"
 	todohttp "github.com/Xin98/artificial-brain/backend/internal/modules/todo/adapters/inbound/http"
 	todopostgres "github.com/Xin98/artificial-brain/backend/internal/modules/todo/adapters/outbound/postgres"
 	todocommand "github.com/Xin98/artificial-brain/backend/internal/modules/todo/application/command"
@@ -45,20 +50,32 @@ import (
 	"github.com/Xin98/artificial-brain/backend/internal/platform/systemhealth"
 )
 
-// buildHandler composes the API handler: health routes, identity and todo
-// routes behind the session middleware, and the gated dev inbox. It is the
-// single composition seam so the wiring is exercised by the composition
-// integration test.
+// buildHandler composes the API handler: health routes, identity, todo, and
+// reminder routes behind the session middleware, and the gated dev inboxes.
+// It is the single composition seam so the wiring is exercised by the
+// composition integration test.
 func buildHandler(cfg config.Config, pool *pgxpool.Pool, ready server.Readiness, checker *systemhealth.Checker) http.Handler {
 	mux := http.NewServeMux()
 	server.RegisterHealthRoutes(mux, ready, checker)
 	auth := newAuthMiddleware(pool)
 	registerIdentityRoutes(cfg, pool, mux, auth)
-	todos := buildTodoHandlers(pool, noopjob.New(), time.Now)
+	// Insert-only River client: the API only enqueues reminder jobs and never
+	// works them, so the client is never started.
+	riverClient, err := riverqueue.NewClient(riverpgxv5.New(pool), &riverqueue.Config{})
+	if err != nil {
+		panic(fmt.Sprintf("wiring: invalid river client configuration: %v", err))
+	}
+	todos := buildTodoHandlers(pool, riversched.New(riverClient),
+		channelsProvider(identitypostgres.NewChannelStore(pool)), time.Now)
 	registerTodoRoutes(mux, auth, todos)
 	registerConversationRoutes(cfg, pool, mux, auth, todos)
+	registerReminderRoutes(cfg, pool, mux, auth, todos.Deliveries)
 	if cfg.DevInboxEnabled && cfg.AppEnv != config.AppEnvProduction {
 		mux.Handle("GET /api/v1/dev/sms-inbox", identityhttp.NewDevInboxHandler(identitypostgres.NewOutboxReader(pool)))
+	}
+	if cfg.ReminderDevOutboxEnabled && cfg.AppEnv != config.AppEnvProduction {
+		mux.Handle("GET /api/v1/dev/reminder-outbox",
+			reminderhttp.NewDevOutboxHandler(devOutboxStore{reader: reminderpostgres.NewOutboxReader(pool)}))
 	}
 	return server.NewAPIRouter(mux)
 }
@@ -146,33 +163,75 @@ func newSessionToken() (string, error) {
 // todoHandlers groups the Todo command handlers wired against the platform
 // transaction runner and the Reminder seam.
 type todoHandlers struct {
-	Store    todoports.TodoStore
-	Create   *todocommand.CreateTodoHandler
-	Complete *todocommand.CompleteTodoHandler
-	Delete   *todocommand.DeleteTodoHandler
-	Update   *todocommand.UpdateTodoHandler
+	Store      todoports.TodoStore
+	Deliveries reminderports.DeliveryStore
+	Create     *todocommand.CreateTodoHandler
+	Complete   *todocommand.CompleteTodoHandler
+	Delete     *todocommand.DeleteTodoHandler
+	Update     *todocommand.UpdateTodoHandler
 }
 
-// buildTodoHandlers wires the Todo commands. The scheduler is a parameter so
-// the composition test can prove atomic rollback with a failing fake; the
-// channel snapshot stays empty until delivery lands in ITER-0003 (A5).
-func buildTodoHandlers(pool *pgxpool.Pool, scheduler reminderports.JobScheduler, now func() time.Time) todoHandlers {
+// buildTodoHandlers wires the Todo commands. The scheduler and the channels
+// provider are parameters so the composition test can prove atomic rollback
+// with a failing fake and drive the channel snapshot deterministically.
+func buildTodoHandlers(pool *pgxpool.Pool, scheduler reminderports.JobScheduler, channels todoports.ChannelsProvider, now func() time.Time) todoHandlers {
 	uow := &joinableUoW{runner: database.NewTxRunner(pool)}
 	todos := todopostgres.NewStore(pool)
 	plans := reminderpostgres.NewPlanStore(pool)
-	// INTERIM: Task 12 replaces noopDeliveryStore with the real postgres
-	// DeliveryStore (Task 7) once it exists.
-	deliveries := noopDeliveryStore{}
+	deliveries := reminderpostgres.NewDeliveryStore(pool)
 	planner := &reminderPlannerShim{
 		plan:   &remindercommand.PlanReminderHandler{Plans: plans, Deliveries: deliveries, Scheduler: scheduler, NewID: newID, Now: now},
 		revoke: &remindercommand.RevokePlansHandler{Plans: plans, Deliveries: deliveries, Scheduler: scheduler, Log: slog.Default(), Now: now},
 	}
 	return todoHandlers{
-		Store:    todos,
-		Create:   &todocommand.CreateTodoHandler{Store: todos, UoW: uow, Planner: planner, NewID: newID, Now: now},
-		Complete: &todocommand.CompleteTodoHandler{Store: todos, UoW: uow, Planner: planner, Now: now},
-		Delete:   &todocommand.DeleteTodoHandler{Store: todos, UoW: uow, Planner: planner, Now: now},
-		Update:   &todocommand.UpdateTodoHandler{Store: todos, UoW: uow, Planner: planner, Now: now},
+		Store:      todos,
+		Deliveries: deliveries,
+		Create:     &todocommand.CreateTodoHandler{Store: todos, UoW: uow, Planner: planner, Channels: channels, NewID: newID, Now: now},
+		Complete:   &todocommand.CompleteTodoHandler{Store: todos, UoW: uow, Planner: planner, Now: now},
+		Delete:     &todocommand.DeleteTodoHandler{Store: todos, UoW: uow, Planner: planner, Now: now},
+		Update:     &todocommand.UpdateTodoHandler{Store: todos, UoW: uow, Planner: planner, Now: now},
+	}
+}
+
+// channelsProvider snapshots the owner's usable (verified+enabled) contact
+// channel kinds, workspace+user scoped and deterministically sorted, so
+// reminder plans carry a stable requested-channel snapshot.
+func channelsProvider(channels *identitypostgres.ChannelStore) todoports.ChannelsProvider {
+	return func(ctx context.Context, workspaceID, ownerUserID string) ([]string, error) {
+		rows, err := channels.ListByUser(ctx, workspaceID, ownerUserID)
+		if err != nil {
+			return nil, err
+		}
+		usable := make(map[string]bool)
+		for _, row := range rows {
+			if row.Usable() {
+				usable[string(row.Kind)] = true
+			}
+		}
+		snapshot := make([]string, 0, len(usable))
+		for kind := range usable {
+			snapshot = append(snapshot, kind)
+		}
+		sort.Strings(snapshot)
+		return snapshot, nil
+	}
+}
+
+// reminderStats adapts the delivery store's workspace counts to Todo's
+// ReminderStats seam; the dashboard surfaces the four terminal/retrying
+// buckets.
+func reminderStats(deliveries reminderports.DeliveryStore) todoports.ReminderStats {
+	return func(ctx context.Context, workspaceID string) (todoports.ReminderCounts, error) {
+		counts, err := deliveries.Stats(ctx, workspaceID)
+		if err != nil {
+			return todoports.ReminderCounts{}, err
+		}
+		return todoports.ReminderCounts{
+			Succeeded:  counts.Succeeded,
+			Retrying:   counts.Retrying,
+			Failed:     counts.Failed,
+			Suppressed: counts.Suppressed,
+		}, nil
 	}
 }
 
@@ -200,8 +259,50 @@ func registerTodoRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler
 		Update:    handlers.Update,
 		List:      &todoquery.ListTodosHandler{Store: handlers.Store, Now: time.Now},
 		Get:       &todoquery.GetTodoHandler{Store: handlers.Store, Now: time.Now},
-		Dashboard: &todoquery.DashboardSummaryHandler{Store: handlers.Store, Now: time.Now},
+		Dashboard: &todoquery.DashboardSummaryHandler{Store: handlers.Store, Now: time.Now, ReminderStats: reminderStats(handlers.Deliveries)},
 	})
+}
+
+// registerReminderRoutes exposes the reminder delivery list and the ops
+// snapshot behind the auth middleware; the receipt webhook authenticates by
+// HMAC signature instead of a session. The receipt parser follows the
+// configured SMS provider.
+func registerReminderRoutes(cfg config.Config, pool *pgxpool.Pool, mux *http.ServeMux, auth func(http.Handler) http.Handler, deliveries reminderports.DeliveryStore) {
+	parse := reminderhttp.ParseGenericReceipt
+	if cfg.ReminderSmsAdapter == config.ReminderSmsAdapterAliyun {
+		parse = aliyunprovider.ParseSmsReport
+	}
+	reminderhttp.RegisterRoutes(mux, auth, &reminderhttp.Handler{
+		List:    &reminderquery.ListDeliveriesHandler{Deliveries: deliveries},
+		Ops:     &reminderquery.ReminderOpsHandler{Ops: reminderpostgres.NewOpsStore(pool), Now: time.Now},
+		Receipt: &remindercommand.RecordReceiptHandler{Deliveries: deliveries, Log: slog.Default(), Now: time.Now},
+		Parse:   parse,
+		Secret:  cfg.ReminderReceiptSecret,
+	})
+}
+
+// devOutboxStore adapts the postgres outbox reader's rows to the reminder
+// dev outbox's message shape.
+type devOutboxStore struct {
+	reader *reminderpostgres.OutboxReader
+}
+
+func (s devOutboxStore) LatestByAddress(ctx context.Context, address string, limit int) ([]reminderhttp.DevOutboxMessage, error) {
+	rows, err := s.reader.LatestByAddress(ctx, address, limit)
+	if err != nil {
+		return nil, err
+	}
+	messages := make([]reminderhttp.DevOutboxMessage, 0, len(rows))
+	for _, row := range rows {
+		messages = append(messages, reminderhttp.DevOutboxMessage{
+			Address:   row.Address,
+			Channel:   row.Channel,
+			TodoID:    row.TodoID,
+			Body:      row.Body,
+			CreatedAt: row.CreatedAt,
+		})
+	}
+	return messages, nil
 }
 
 // todoGatewayShim adapts Todo's public application handlers to the
@@ -307,38 +408,6 @@ func registerConversationRoutes(cfg config.Config, pool *pgxpool.Pool, mux *http
 	})
 }
 
-// noopDeliveryStore is the INTERIM DeliveryStore keeping the API compiling
-// until Task 7 lands the real postgres implementation and Task 12 rewires it.
-// Writes are inert and every read reports "not found"/empty, which preserves
-// the ITER-0002 behavior: plans are persisted, no deliveries are tracked yet.
-type noopDeliveryStore struct{}
-
-func (noopDeliveryStore) Save(context.Context, reminderdomain.ReminderDelivery) error { return nil }
-
-func (noopDeliveryStore) Update(context.Context, reminderdomain.ReminderDelivery) error { return nil }
-
-func (noopDeliveryStore) ByIdempotencyKey(context.Context, string, string) (reminderdomain.ReminderDelivery, error) {
-	return reminderdomain.ReminderDelivery{}, reminderdomain.ErrDeliveryNotFound
-}
-
-func (noopDeliveryStore) ByProviderMessageID(context.Context, string) (reminderdomain.ReminderDelivery, error) {
-	return reminderdomain.ReminderDelivery{}, reminderdomain.ErrDeliveryNotFound
-}
-
-func (noopDeliveryStore) SetProviderJobID(context.Context, string, string, int64) error { return nil }
-
-func (noopDeliveryStore) PlannedJobIDs(context.Context, string, string, int) ([]int64, error) {
-	return nil, nil
-}
-
-func (noopDeliveryStore) Stats(context.Context, string) (reminderdto.DeliveryCounts, error) {
-	return reminderdto.DeliveryCounts{}, nil
-}
-
-func (noopDeliveryStore) List(context.Context, string, reminderdto.DeliveryFilter) ([]reminderdomain.ReminderDelivery, error) {
-	return nil, nil
-}
-
 // reminderPlannerShim adapts Reminder's public application handlers to Todo's
 // consumer-owned ReminderPlanner port (D1). It exists only in cmd: neither
 // context imports the other.
@@ -354,6 +423,8 @@ func (s *reminderPlannerShim) Plan(ctx context.Context, request todoports.PlanRe
 		TodoReminderVersion: request.TodoReminderVersion,
 		ScheduledAtUTC:      request.ScheduledAtUTC,
 		Channels:            request.Channels,
+		Title:               request.Title,
+		OwnerUserID:         request.OwnerUserID,
 	})
 }
 

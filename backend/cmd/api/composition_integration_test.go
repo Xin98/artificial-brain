@@ -2,6 +2,9 @@ package main
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -17,15 +20,24 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	riverqueue "github.com/riverqueue/river"
+	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
 	"github.com/Xin98/artificial-brain/backend/internal/modules/reminder/adapters/outbound/noopjob"
+	reminderpostgres "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/adapters/outbound/postgres"
+	riversched "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/adapters/outbound/river"
 	reminderports "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/application/ports"
+	reminderdomain "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/domain"
 	tododto "github.com/Xin98/artificial-brain/backend/internal/modules/todo/application/dto"
 	"github.com/Xin98/artificial-brain/backend/internal/platform/config"
 	"github.com/Xin98/artificial-brain/backend/internal/platform/database"
 	"github.com/Xin98/artificial-brain/backend/internal/platform/systemhealth"
 	"github.com/Xin98/artificial-brain/backend/internal/platform/workerstatus"
 )
+
+// receiptSecret is the shared receipt-webhook key the composition wiring is
+// built with; test (d) signs its callback with it.
+const receiptSecret = "composition-receipt-secret"
 
 func setupAPIHandler(t *testing.T, devInbox bool) http.Handler {
 	t.Helper()
@@ -52,18 +64,21 @@ func setupAPIHandlerWithPool(t *testing.T, devInbox bool) (http.Handler, *pgxpoo
 	if _, err := pool.Exec(ctx, `
 		truncate identity.login_challenges, identity.sessions, identity.contact_channels,
 			identity.users, identity.workspaces, identity.message_outbox,
-			todo.todos, reminder.reminder_plans,
-			conversation.confirmation_requests, conversation.messages restart identity cascade
+			todo.todos, reminder.reminder_plans, reminder.fake_outbox,
+			conversation.confirmation_requests, conversation.messages,
+			river_job restart identity cascade
 	`); err != nil {
 		t.Fatalf("truncate error = %v", err)
 	}
 	cfg := config.Config{
-		AppEnv:            "development",
-		DevInboxEnabled:   devInbox,
-		SessionTTL:        time.Hour,
-		LoginChallengeTTL: 5 * time.Minute,
-		ChannelCodeTTL:    10 * time.Minute,
-		ConfirmationTTL:   5 * time.Minute,
+		AppEnv:                   "development",
+		DevInboxEnabled:          devInbox,
+		ReminderDevOutboxEnabled: devInbox,
+		ReminderReceiptSecret:    receiptSecret,
+		SessionTTL:               time.Hour,
+		LoginChallengeTTL:        5 * time.Minute,
+		ChannelCodeTTL:           10 * time.Minute,
+		ConfirmationTTL:          5 * time.Minute,
 	}
 	ready := func(context.Context) error { return nil }
 	checker := systemhealth.NewChecker(pool, workerstatus.NewRegistry(pool, time.Now), time.Now, 6*time.Second)
@@ -82,6 +97,72 @@ func doJSON(t *testing.T, client *http.Client, method, target, body string) *htt
 		t.Fatal(err)
 	}
 	return resp
+}
+
+// sessionIDs carries the authenticated session's scope.
+type sessionIDs struct {
+	UserID      string
+	WorkspaceID string
+}
+
+// loginViaDevInbox logs a fresh user in over the phone login-code flow and
+// returns an authenticated cookie client plus the session's workspace and
+// user ids.
+func loginViaDevInbox(t *testing.T, srv *httptest.Server, phone string) (*http.Client, sessionIDs) {
+	t.Helper()
+	jar, err := cookiejar.New(nil)
+	if err != nil {
+		t.Fatalf("cookiejar error = %v", err)
+	}
+	client := &http.Client{Jar: jar}
+
+	resp := doJSON(t, client, http.MethodPost, srv.URL+"/api/v1/auth/login/request", `{"phone":"`+phone+`"}`)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("login request status = %d, want 202", resp.StatusCode)
+	}
+	resp.Body.Close()
+
+	inboxResp, err := client.Get(srv.URL + "/api/v1/dev/sms-inbox?address=" + url.QueryEscape(phone))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inbox struct {
+		Messages []struct {
+			Code string `json:"code"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(inboxResp.Body).Decode(&inbox); err != nil {
+		t.Fatal(err)
+	}
+	inboxResp.Body.Close()
+	if len(inbox.Messages) == 0 || inbox.Messages[0].Code == "" {
+		t.Fatal("dev inbox returned no login code")
+	}
+
+	verifyResp := doJSON(t, client, http.MethodPost, srv.URL+"/api/v1/auth/login/verify",
+		`{"phone":"`+phone+`","code":"`+inbox.Messages[0].Code+`"}`)
+	if verifyResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(verifyResp.Body)
+		t.Fatalf("verify status = %d, want 200, body=%s", verifyResp.StatusCode, body)
+	}
+	verifyResp.Body.Close()
+
+	sessionResp, err := client.Get(srv.URL + "/api/v1/auth/session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var session struct {
+		UserID      string `json:"userId"`
+		WorkspaceID string `json:"workspaceId"`
+	}
+	if err := json.NewDecoder(sessionResp.Body).Decode(&session); err != nil {
+		t.Fatal(err)
+	}
+	sessionResp.Body.Close()
+	if session.UserID == "" || session.WorkspaceID == "" {
+		t.Fatalf("session = %#v, want userId and workspaceId", session)
+	}
+	return client, sessionIDs{UserID: session.UserID, WorkspaceID: session.WorkspaceID}
 }
 
 func TestLoginRoundTripAndLogout(t *testing.T) {
@@ -182,6 +263,15 @@ func TestDevInboxAbsentWhenDisabled(t *testing.T) {
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("disabled dev inbox status = %d, want 404", resp.StatusCode)
 	}
+
+	outboxResp, err := srv.Client().Get(srv.URL + "/api/v1/dev/reminder-outbox?address=user%40example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer outboxResp.Body.Close()
+	if outboxResp.StatusCode != http.StatusNotFound {
+		t.Fatalf("disabled reminder dev outbox status = %d, want 404", outboxResp.StatusCode)
+	}
 }
 
 func TestHealthRoutesStillServed(t *testing.T) {
@@ -215,7 +305,10 @@ func setupTodoPool(t *testing.T) *pgxpool.Pool {
 		t.Fatalf("OpenPool() error = %v", err)
 	}
 	t.Cleanup(pool.Close)
-	if _, err := pool.Exec(ctx, `truncate todo.todos, reminder.reminder_plans cascade`); err != nil {
+	if _, err := pool.Exec(ctx, `
+		truncate todo.todos, reminder.reminder_plans, reminder.fake_outbox,
+			river_job restart identity cascade
+	`); err != nil {
 		t.Fatalf("truncate error = %v", err)
 	}
 	return pool
@@ -280,8 +373,10 @@ func TestTodoReminderAtomicComposition(t *testing.T) {
 	workspaceID, ownerUserID := newID(), newID()
 	due := fixed.Add(24 * time.Hour)
 
-	// A failing scheduler rolls back both the todo and the reminder plan.
-	failing := buildTodoHandlers(pool, failingScheduler{errors.New("scheduler down")}, now)
+	// A failing scheduler rolls back the todo, the reminder plan, and the
+	// delivery rows together.
+	failing := buildTodoHandlers(pool, failingScheduler{errors.New("scheduler down")},
+		bothChannelsProvider(), now)
 	_, err := failing.Create.Handle(ctx, tododto.CreateTodoRequest{
 		WorkspaceID: workspaceID, UserID: ownerUserID, Title: "原子待办", DueAtUTC: &due,
 	})
@@ -298,9 +393,16 @@ func TestTodoReminderAtomicComposition(t *testing.T) {
 	if planCount != 0 {
 		t.Fatalf("plans after rollback = %d, want 0", planCount)
 	}
+	var deliveryCount int
+	if err := pool.QueryRow(ctx, `select count(*) from reminder.reminder_deliveries`).Scan(&deliveryCount); err != nil {
+		t.Fatalf("count deliveries error = %v", err)
+	}
+	if deliveryCount != 0 {
+		t.Fatalf("deliveries after rollback = %d, want 0", deliveryCount)
+	}
 
 	// With the noop scheduler both rows commit and the plan fires at the due.
-	handlers := buildTodoHandlers(pool, noopjob.New(), now)
+	handlers := buildTodoHandlers(pool, noopjob.New(), nil, now)
 	created, err := handlers.Create.Handle(ctx, tododto.CreateTodoRequest{
 		WorkspaceID: workspaceID, UserID: ownerUserID, Title: "原子待办", DueAtUTC: &due,
 	})
@@ -685,6 +787,412 @@ func TestConversationEndToEndIntentPath(t *testing.T) {
 		if intents[index] != wantIntents[index] {
 			t.Fatalf("audit intents = %#v, want %#v", intents, wantIntents)
 		}
+	}
+}
+
+// bothChannelsProvider snapshots both channel kinds for every owner; it lets
+// the composition tests drive the delivery fan-out without identity rows.
+func bothChannelsProvider() func(context.Context, string, string) ([]string, error) {
+	return func(context.Context, string, string) ([]string, error) {
+		return []string{"email", "sms"}, nil
+	}
+}
+
+// TestRiverSchedulerCommitsJobsAtomically is the River-backed atomicity
+// variant of the failing-scheduler proof: the todo, the plan, the delivery
+// rows, and the river_job rows all commit together, and the delivery rows
+// carry the real provider job IDs.
+func TestRiverSchedulerCommitsJobsAtomically(t *testing.T) {
+	pool := setupTodoPool(t)
+	ctx := context.Background()
+	fixed := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	now := func() time.Time { return fixed }
+	due := fixed.Add(24 * time.Hour)
+
+	riverClient, err := riverqueue.NewClient(riverpgxv5.New(pool), &riverqueue.Config{})
+	if err != nil {
+		t.Fatalf("river NewClient() error = %v", err)
+	}
+	handlers := buildTodoHandlers(pool, riversched.New(riverClient), bothChannelsProvider(), now)
+
+	workspaceID, ownerUserID := newID(), newID()
+	created, err := handlers.Create.Handle(ctx, tododto.CreateTodoRequest{
+		WorkspaceID: workspaceID, UserID: ownerUserID, Title: "River 原子待办", DueAtUTC: &due,
+	})
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	plans := plansForTodo(t, pool, created.ID)
+	if len(plans) != 1 || plans[0].status != "planned" || plans[0].version != 1 {
+		t.Fatalf("plans after create = %#v, want one planned at v1", plans)
+	}
+	var requested []string
+	if err := pool.QueryRow(ctx,
+		`select requested_channels from reminder.reminder_plans where todo_id = $1`, created.ID).
+		Scan(&requested); err != nil {
+		t.Fatalf("requested channels error = %v", err)
+	}
+	if len(requested) != 2 || requested[0] != "email" || requested[1] != "sms" {
+		t.Fatalf("requested_channels = %#v, want {email sms}", requested)
+	}
+
+	rows, err := pool.Query(ctx, `
+		select channel, provider_job_id
+		from reminder.reminder_deliveries
+		where todo_id = $1
+		order by channel
+	`, created.ID)
+	if err != nil {
+		t.Fatalf("deliveries query error = %v", err)
+	}
+	defer rows.Close()
+	type deliveryRow struct {
+		channel string
+		jobID   *int64
+	}
+	var deliveries []deliveryRow
+	for rows.Next() {
+		var row deliveryRow
+		if err := rows.Scan(&row.channel, &row.jobID); err != nil {
+			t.Fatalf("scan delivery error = %v", err)
+		}
+		deliveries = append(deliveries, row)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("delivery rows error = %v", err)
+	}
+	if len(deliveries) != 2 {
+		t.Fatalf("deliveries = %#v, want one per channel", deliveries)
+	}
+	for _, delivery := range deliveries {
+		if delivery.jobID == nil {
+			t.Fatalf("delivery %s provider_job_id = NULL, want a real river job id", delivery.channel)
+		}
+		var queue, state string
+		var scheduledAt time.Time
+		if err := pool.QueryRow(ctx,
+			`select queue, state, scheduled_at from river_job where id = $1`, *delivery.jobID).
+			Scan(&queue, &state, &scheduledAt); err != nil {
+			t.Fatalf("river_job %d error = %v", *delivery.jobID, err)
+		}
+		if queue != "reminder_"+delivery.channel {
+			t.Fatalf("river_job %d queue = %q, want reminder_%s", *delivery.jobID, queue, delivery.channel)
+		}
+		if state != "scheduled" {
+			t.Fatalf("river_job %d state = %q, want scheduled", *delivery.jobID, state)
+		}
+		if !scheduledAt.Equal(due) {
+			t.Fatalf("river_job %d scheduled_at = %v, want due %v", *delivery.jobID, scheduledAt, due)
+		}
+	}
+}
+
+// TestChannelsSnapshotPlansBothChannels proves the channels provider seam:
+// verified+enabled contact channels registered through the public identity
+// handlers land in the plan's requested_channels snapshot and one delivery
+// row per channel.
+func TestChannelsSnapshotPlansBothChannels(t *testing.T) {
+	handler, pool := setupAPIHandlerWithPool(t, true)
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+	ctx := context.Background()
+
+	client, _ := loginViaDevInbox(t, srv, "+8613900005555")
+
+	addChannel := func(kind, address string) string {
+		t.Helper()
+		resp := doJSON(t, client, http.MethodPost, srv.URL+"/api/v1/settings/contact-channels",
+			`{"kind":"`+kind+`","address":"`+address+`"}`)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusCreated {
+			t.Fatalf("add %s channel status = %d, want 201, body=%s", kind, resp.StatusCode, body)
+		}
+		var view struct {
+			ID string `json:"id"`
+		}
+		if err := json.Unmarshal(body, &view); err != nil {
+			t.Fatal(err)
+		}
+		if view.ID == "" {
+			t.Fatalf("add %s channel returned no id: %s", kind, body)
+		}
+		return view.ID
+	}
+	latestCode := func(address string) string {
+		t.Helper()
+		resp, err := client.Get(srv.URL + "/api/v1/dev/sms-inbox?address=" + url.QueryEscape(address))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var inbox struct {
+			Messages []struct {
+				Code string `json:"code"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&inbox); err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if len(inbox.Messages) == 0 || inbox.Messages[0].Code == "" {
+			t.Fatalf("no verification code in dev inbox for %s", address)
+		}
+		return inbox.Messages[0].Code
+	}
+	verifyChannel := func(channelID, code string) {
+		t.Helper()
+		resp := doJSON(t, client, http.MethodPost,
+			srv.URL+"/api/v1/settings/contact-channels/"+channelID+"/verify",
+			`{"code":"`+code+`"}`)
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("verify channel status = %d, want 200, body=%s", resp.StatusCode, body)
+		}
+	}
+
+	emailAddress := "owner@example.com"
+	smsAddress := "+8613900006666"
+	verifyChannel(addChannel("email", emailAddress), latestCode(emailAddress))
+	verifyChannel(addChannel("sms", smsAddress), latestCode(smsAddress))
+
+	// The gated reminder dev outbox route is present alongside the dev inbox.
+	outboxResp, err := client.Get(srv.URL + "/api/v1/dev/reminder-outbox?address=" + url.QueryEscape(emailAddress))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outboxResp.Body.Close()
+	if outboxResp.StatusCode != http.StatusOK {
+		t.Fatalf("reminder dev outbox status = %d, want 200", outboxResp.StatusCode)
+	}
+
+	// A due todo plans both channels: snapshot on the plan, one delivery each.
+	createResp := doJSON(t, client, http.MethodPost, srv.URL+"/api/v1/todos",
+		`{"title":"渠道待办","dueAtUtc":"2026-08-21T12:00:00Z","timezoneAtInput":"UTC"}`)
+	createBody, _ := io.ReadAll(createResp.Body)
+	createResp.Body.Close()
+	if createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201, body=%s", createResp.StatusCode, createBody)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(createBody, &created); err != nil {
+		t.Fatal(err)
+	}
+
+	var requested []string
+	if err := pool.QueryRow(ctx,
+		`select requested_channels from reminder.reminder_plans where todo_id = $1`, created.ID).
+		Scan(&requested); err != nil {
+		t.Fatalf("requested channels error = %v", err)
+	}
+	if len(requested) != 2 || requested[0] != "email" || requested[1] != "sms" {
+		t.Fatalf("requested_channels = %#v, want {email sms}", requested)
+	}
+
+	rows, err := pool.Query(ctx, `
+		select channel, todo_title_snapshot, provider_job_id is not null
+		from reminder.reminder_deliveries
+		where todo_id = $1
+		order by channel
+	`, created.ID)
+	if err != nil {
+		t.Fatalf("deliveries query error = %v", err)
+	}
+	defer rows.Close()
+	type deliveryRow struct {
+		channel  string
+		title    string
+		hasJobID bool
+	}
+	var deliveries []deliveryRow
+	for rows.Next() {
+		var row deliveryRow
+		if err := rows.Scan(&row.channel, &row.title, &row.hasJobID); err != nil {
+			t.Fatalf("scan delivery error = %v", err)
+		}
+		deliveries = append(deliveries, row)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("delivery rows error = %v", err)
+	}
+	if len(deliveries) != 2 {
+		t.Fatalf("deliveries = %#v, want one per channel", deliveries)
+	}
+	for _, delivery := range deliveries {
+		if delivery.title != "渠道待办" {
+			t.Fatalf("delivery %s title snapshot = %q, want 渠道待办", delivery.channel, delivery.title)
+		}
+		if !delivery.hasJobID {
+			t.Fatalf("delivery %s provider_job_id = NULL, want a real river job id", delivery.channel)
+		}
+	}
+	if deliveries[0].channel != "email" || deliveries[1].channel != "sms" {
+		t.Fatalf("delivery channels = %q,%q, want email,sms", deliveries[0].channel, deliveries[1].channel)
+	}
+}
+
+// TestDashboardReminderCounters proves the dashboard seam: deliveries seeded
+// through the real store (one per lifecycle bucket, including
+// sending∧attempt>0) surface as the four reminder counters.
+func TestDashboardReminderCounters(t *testing.T) {
+	handler, pool := setupAPIHandlerWithPool(t, true)
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+	ctx := context.Background()
+
+	client, session := loginViaDevInbox(t, srv, "+8613900007777")
+
+	plans := reminderpostgres.NewPlanStore(pool)
+	deliveries := reminderpostgres.NewDeliveryStore(pool)
+	now := time.Now().UTC()
+	plan, err := reminderdomain.NewReminderPlan(newID(), session.WorkspaceID, newID(), 1,
+		now.Add(time.Hour), []string{"email"}, now)
+	if err != nil {
+		t.Fatalf("NewReminderPlan() error = %v", err)
+	}
+	if err := plans.Save(ctx, plan); err != nil {
+		t.Fatalf("plans.Save() error = %v", err)
+	}
+
+	seed := func(channel string, mutate func(*reminderdomain.ReminderDelivery) error) {
+		t.Helper()
+		delivery, err := reminderdomain.NewDelivery(newID(), session.WorkspaceID, session.UserID,
+			newID(), 1, plan.ID, channel, "仪表盘提醒", now.Add(time.Hour), now)
+		if err != nil {
+			t.Fatalf("NewDelivery() error = %v", err)
+		}
+		if mutate != nil {
+			if err := mutate(&delivery); err != nil {
+				t.Fatalf("mutate delivery error = %v", err)
+			}
+		}
+		if err := deliveries.Save(ctx, delivery); err != nil {
+			t.Fatalf("deliveries.Save() error = %v", err)
+		}
+	}
+	seed("email", nil) // scheduled: no dashboard counter
+	seed("email", func(d *reminderdomain.ReminderDelivery) error {
+		return d.MarkSending(now) // sending ∧ attempt>0 ⇒ retrying
+	})
+	seed("sms", func(d *reminderdomain.ReminderDelivery) error {
+		if err := d.MarkSending(now); err != nil {
+			return err
+		}
+		return d.MarkSucceeded("prov-counters-1", now)
+	})
+	seed("email", func(d *reminderdomain.ReminderDelivery) error {
+		return d.MarkFailed("retry_exhausted", now)
+	})
+	seed("sms", func(d *reminderdomain.ReminderDelivery) error {
+		return d.MarkSuppressed(reminderdomain.ReasonTodoCompleted, now)
+	})
+
+	dashboardResp, err := client.Get(srv.URL + "/api/v1/dashboard/summary?timezone=UTC")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var summary struct {
+		ReminderSucceeded  int `json:"reminderSucceeded"`
+		ReminderRetrying   int `json:"reminderRetrying"`
+		ReminderFailed     int `json:"reminderFailed"`
+		ReminderSuppressed int `json:"reminderSuppressed"`
+	}
+	if err := json.NewDecoder(dashboardResp.Body).Decode(&summary); err != nil {
+		t.Fatal(err)
+	}
+	dashboardResp.Body.Close()
+	if dashboardResp.StatusCode != http.StatusOK {
+		t.Fatalf("dashboard status = %d, want 200", dashboardResp.StatusCode)
+	}
+	if summary.ReminderSucceeded != 1 || summary.ReminderRetrying != 1 ||
+		summary.ReminderFailed != 1 || summary.ReminderSuppressed != 1 {
+		t.Fatalf("reminder counters = %#v, want one per terminal/retrying bucket", summary)
+	}
+}
+
+// TestReceiptWebhookFlipsReceiptState proves the receipts route is wired: a
+// valid HMAC-signed callback flips the delivery's receiptState, and a bad
+// signature is rejected.
+func TestReceiptWebhookFlipsReceiptState(t *testing.T) {
+	handler, pool := setupAPIHandlerWithPool(t, true)
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+	ctx := context.Background()
+
+	_, session := loginViaDevInbox(t, srv, "+8613900008888")
+
+	plans := reminderpostgres.NewPlanStore(pool)
+	deliveries := reminderpostgres.NewDeliveryStore(pool)
+	now := time.Now().UTC()
+	plan, err := reminderdomain.NewReminderPlan(newID(), session.WorkspaceID, newID(), 1,
+		now.Add(time.Hour), []string{"sms"}, now)
+	if err != nil {
+		t.Fatalf("NewReminderPlan() error = %v", err)
+	}
+	if err := plans.Save(ctx, plan); err != nil {
+		t.Fatalf("plans.Save() error = %v", err)
+	}
+	delivery, err := reminderdomain.NewDelivery(newID(), session.WorkspaceID, session.UserID,
+		newID(), 1, plan.ID, "sms", "回执提醒", now.Add(time.Hour), now)
+	if err != nil {
+		t.Fatalf("NewDelivery() error = %v", err)
+	}
+	if err := delivery.MarkSending(now); err != nil {
+		t.Fatalf("MarkSending() error = %v", err)
+	}
+	if err := delivery.MarkSucceeded("prov-receipt-1", now); err != nil {
+		t.Fatalf("MarkSucceeded() error = %v", err)
+	}
+	if err := deliveries.Save(ctx, delivery); err != nil {
+		t.Fatalf("deliveries.Save() error = %v", err)
+	}
+
+	body := `{"providerMessageId":"prov-receipt-1","delivered":true}`
+	mac := hmac.New(sha256.New, []byte(receiptSecret))
+	mac.Write([]byte(body))
+	signature := hex.EncodeToString(mac.Sum(nil))
+
+	post := func(signature string) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/webhooks/receipts/sms",
+			strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Receipt-Signature", signature)
+		resp, err := srv.Client().Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return resp
+	}
+
+	// A bad signature is rejected and leaves the delivery untouched.
+	badResp := post("0000")
+	badResp.Body.Close()
+	if badResp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("bad signature status = %d, want 401", badResp.StatusCode)
+	}
+
+	goodResp := post(signature)
+	goodBody, _ := io.ReadAll(goodResp.Body)
+	goodResp.Body.Close()
+	if goodResp.StatusCode != http.StatusOK {
+		t.Fatalf("receipt status = %d, want 200, body=%s", goodResp.StatusCode, goodBody)
+	}
+
+	var receiptState *string
+	if err := pool.QueryRow(ctx,
+		`select receipt_state from reminder.reminder_deliveries where provider_message_id = $1`,
+		"prov-receipt-1").Scan(&receiptState); err != nil {
+		t.Fatalf("receipt_state query error = %v", err)
+	}
+	if receiptState == nil || *receiptState != "received_ok" {
+		t.Fatalf("receipt_state = %v, want received_ok", receiptState)
 	}
 }
 

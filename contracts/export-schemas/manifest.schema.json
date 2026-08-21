@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Export bundle manifest",
+  "description": "The manifest.json entry of an export bundle: the wire shape of the portability module's BundleManifest. The manifest is always the final zip entry and is never listed in its own files map; files maps every other entry name to the sha256 hex digest of its bytes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "sourceInstanceId", "exportedAt", "counts", "files"],
+  "properties": {
+    "schemaVersion": {
+      "const": "1"
+    },
+    "sourceInstanceId": {
+      "type": "string"
+    },
+    "exportedAt": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "counts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["todos", "deliveries", "channels"],
+      "properties": {
+        "todos": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deliveries": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "channels": {
+          "type": "integer",
+          "minimum": 0
+        }
+      }
+    },
+    "files": {
+      "type": "object",
+      "minProperties": 1,
+      "additionalProperties": {
+        "type": "string"
+      }
+    }
+  }
+}

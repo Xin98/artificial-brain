@@ -1,0 +1,26 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Export bundle contact channel preferences",
+  "description": "The preferences.json entry of an export bundle: the workspace's contact channels — identity, kind, address, and preference only, never verification state or code hashes; the wire shape of the portability module's ChannelExportRecord.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["id", "kind", "address", "enabled"],
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "kind": {
+        "type": "string",
+        "enum": ["email", "sms"]
+      },
+      "address": {
+        "type": "string"
+      },
+      "enabled": {
+        "type": "boolean"
+      }
+    }
+  }
+}

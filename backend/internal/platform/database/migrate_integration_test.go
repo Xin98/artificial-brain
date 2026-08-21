@@ -36,8 +36,8 @@ func TestMigrate(t *testing.T) {
 	if version != CurrentSchemaVersion {
 		t.Fatalf("schema version = %d, want %d", version, CurrentSchemaVersion)
 	}
-	if version != 7 {
-		t.Fatalf("schema version = %d, want 7", version)
+	if version != 8 {
+		t.Fatalf("schema version = %d, want 8", version)
 	}
 
 	var workerTableCount int
@@ -66,6 +66,9 @@ func TestMigrate(t *testing.T) {
 		{"conversation", "confirmation_requests"},
 		{"conversation", "messages"},
 		{"public", "river_job"},
+		{"public", "instance_meta"},
+		{"portability", "portability_imports"},
+		{"portability", "portability_source_records"},
 	}
 	for _, schemaTable := range expectedTables {
 		var count int
@@ -79,5 +82,31 @@ func TestMigrate(t *testing.T) {
 		if count != 1 {
 			t.Fatalf("%s.%s count = %d, want 1", schemaTable[0], schemaTable[1], count)
 		}
+	}
+
+	var originColumnCount int
+	if err := conn.QueryRow(ctx, `
+		select count(*)
+		from information_schema.columns
+		where table_schema = 'reminder' and table_name = 'reminder_deliveries'
+			and column_name = 'origin' and is_nullable = 'NO' and column_default = '''local''::text'
+	`).Scan(&originColumnCount); err != nil {
+		t.Fatalf("origin column query error = %v", err)
+	}
+	if originColumnCount != 1 {
+		t.Fatalf("reminder.reminder_deliveries.origin count = %d, want 1", originColumnCount)
+	}
+
+	var planIDNullableCount int
+	if err := conn.QueryRow(ctx, `
+		select count(*)
+		from information_schema.columns
+		where table_schema = 'reminder' and table_name = 'reminder_deliveries'
+			and column_name = 'plan_id' and is_nullable = 'YES'
+	`).Scan(&planIDNullableCount); err != nil {
+		t.Fatalf("plan_id column query error = %v", err)
+	}
+	if planIDNullableCount != 1 {
+		t.Fatalf("nullable reminder.reminder_deliveries.plan_id count = %d, want 1", planIDNullableCount)
 	}
 }

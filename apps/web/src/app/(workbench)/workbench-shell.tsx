@@ -5,10 +5,11 @@ const workbenchLinks = [
   { href: "/todos", label: "Todos" },
   { href: "/conversation", label: "Conversation" },
   { href: "/settings", label: "Settings" },
+  { href: "/data", label: "Data" },
 ];
 
 // WorkbenchShell is the presentational frame for session-gated pages: a nav
-// with the four workbench areas plus the page content. It renders no
+// with the five workbench areas plus the page content. It renders no
 // internal URLs or configuration.
 export function WorkbenchShell({
   children,

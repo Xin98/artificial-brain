@@ -1,5 +1,38 @@
 # ITER-0004 handoff
 
-ITER-0004 (private deployment and data portability) has just opened on branch `iter-0004-private-deployment-and-data-portability`, cut from `master` after ITER-0003's passing regression. Task 1 has established this ledger, refreshed the `AGENTS.md` zones, and added the portability architecture-policy fixture; no implementation tasks have run yet.
+ITER-0004 (private deployment and data portability) is implemented on branch `iter-0004-private-deployment-and-data-portability`, branched from `master` (`05dd59d`) after ITER-0003's passing regression. The iteration ledger and the governing [design](../../superpowers/specs/2026-08-21-iter-0004-private-deployment-and-data-portability-design.md) and [implementation plan](../../superpowers/plans/2026-08-21-iter-0004-private-deployment-and-data-portability.md) are in place. Start with [brief.md](brief.md), [progress.md](progress.md), [decisions.md](decisions.md), and the [test matrix](test-matrix.md).
 
-Start with [brief.md](brief.md) (scope and acceptance criteria), [progress.md](progress.md) (task status), and [decisions.md](decisions.md) (seeded D1–D10). This stub is rewritten for handoff in Task 18.
+## Current state
+
+All 18 tasks are implemented and verified; the unified acceptance sequence ran green at the branch tip `4e94f7e` (`ci: extend smoke with portability, private mode, backup/restore, and upgrade drill`). The ledger finalization commit lands on top of it; the independent clean-context regression is the remaining gate. Task 17's three out-of-scope regression fixes live in `5b8b752` (`fix: restore empty-schema fail-safe, transaction-clean channel import, and nullable plan scans`), just before the tip.
+
+What is implemented: one image stack serves both deployment forms. `DEPLOYMENT_MODE=private` provisions a fixed admin from `PRIVATE_ADMIN_PHONE` idempotently at API startup (identity's public `ProvisionAdmin` command) and rejects every other phone with 403 `registration_closed` from the application-layer login gate; cloud mode is unchanged. The schema advanced 7→8 via append-only migration 008 (`public.instance_meta`, `portability.portability_imports` with the stored bundle + preview, `portability.portability_source_records`, `reminder_deliveries.origin` defaulting to `local`, nullable `plan_id`). The Portability bounded context follows the house layering: domain (manifest/record validation, four-outcome decision engine new/skipped/conflict/invalid, stable content fingerprints), application (streaming `ExportBundle` with per-entry sha256 tee and manifest-last writing; upload stores the validated bundle as bytea with a pure-computation preview; confirm re-decides from the stored bytes and executes channels → todos → deliveries in one transaction exactly once, Source Identity idempotency — conflicts never overwrite), and adapters (postgres imports/source records/instance meta, zip streaming writer + parser with human-readable CSV, HTTP routes 27–30). Module seams: identity (admin provisioning, login gate, unverified channel import, channel preference export without codes or verification state), todo (`Restore` constructor, plan-less `ImportTodo`, full-history `ExportTodos`), reminder (`RestoreDelivery` with `origin`, read-only `ImportDeliveries` history with NULL plan_id and no scheduling/provider side effects, delivery export). The web `/data` page offers export download and the three-step import flow (upload → preview → report) with actionable copy per stable code. Operators get `deploy/private/**` (README, `backup.sh`, `restore.sh` with the CONFIRM gate, `env.template`), `docs/runbooks/{backup-restore,upgrade}.md`, `make backup` / `make restore` / `make offline-bundle`, compose env passthrough, and four new smoke blocks (portability round trip with self-import idempotency and conflict semantics, private-mode admin login + rejected phone, backup/restore round trip, same-version upgrade drill). Zero new Go or web dependencies; migrations 001–007 untouched.
+
+Useful URLs once the stack is up (`make dev`):
+
+- `http://localhost:3000/data` — session-gated portability page (export download + import flow)
+- `http://localhost:8080/api/v1/portability/export` — streaming export bundle (zip attachment; manifest + four data files)
+- `http://localhost:8080/api/v1/portability/imports` — multipart bundle upload (201 `{importId, preview}`)
+- `http://localhost:8080/api/v1/portability/imports/{id}` — stored import view; `POST .../imports/{id}/confirm` executes exactly once (409 `import_conflict` afterwards)
+- `http://localhost:3000/login` — two-step phone + code login (private mode: only `PRIVATE_ADMIN_PHONE` is admitted)
+- the ITER-0003 surface (dashboard, `/api/v1/reminders`, `/api/v1/ops/reminder`, receipt webhook, dev outbox) is unchanged
+
+## How to continue
+
+1. Run the acceptance sequence exactly as CI does: `corepack pnpm install --frozen-lockfile`, `make verify`, `make migration-test`, `make smoke-test`. The full sequence was green at the branch tip `4e94f7e`; `make smoke-test` includes the reminder block plus the four new blocks (portability, private mode, backup/restore, upgrade drill) and takes several minutes with Docker.
+2. The independent clean-context regression follows the master design §11.4 contract: a reviewer with only the approved spec, this iteration's brief/plan/test-matrix/handoff, the merge-base…HEAD diff, and the README/Makefile commands re-runs the gates, maps the acceptance criteria to evidence, checks yellow/red zone compliance (zero new dependencies; migrations 001–007 untouched; no real-provider egress in CI; no credentials), and writes the immutable `regression-report.md`. On FAIL, fixes land as fresh red→green `fix:` commits and a new reviewer supersedes the old report.
+3. Respect the zones: business modules are green; the yellow register in the plan (migration 008 + schema version, platform config fields, `cmd/api` wiring + `main.go` provisioning + cmd shims, `contracts/openapi/portability.yaml` + `contracts/export-schemas/**`, architecture testdata fixture, `Makefile` backup/restore/offline-bundle targets, compose env passthrough + `.env.example`, smoke blocks + migration pin, `deploy/private/**` + runbooks, README + AGENTS.md files) is deliberately handled; delivery, River, real providers remain red-zone behavior inherited from ITER-0003.
+
+## Environment prerequisites
+
+Go 1.26.5 (or newer 1.26 patch), Node.js 24.18.0, pnpm 11.19.0, Docker Compose v2, `curl`, `jq`, Ruby, and `unzip` (the portability smoke block inspects bundles with it). Integration tests need `TEST_DATABASE_URL` (this host uses the dedicated `ab-test-postgres` container, `postgres:18.4-alpine` on host port 5433; packages sharing that database run with `-p=1`). Docker-dependent gates (`make migration-test`, `make smoke-test`) need a running Docker engine. The verification sequence is `corepack pnpm install --frozen-lockfile`, `make verify`, `make migration-test`, `make smoke-test`.
+
+### Verification environment on the current Linux host
+
+Notes carried over from ITER-0002/0003's host setup (unchanged):
+
+- The pinned toolchain is installed natively: Go 1.26.5 at `/usr/local/go`, Node.js 24.18.0 at `/opt/node`, pnpm 11.19.0 via Corepack, Ruby via dnf.
+- Container egress to Google IPs and `registry.npmjs.org` is blocked; the gitignored `compose.override.yaml` passes Aliyun/npmmirror build args (`GOPROXY`, `APK_MIRROR`, `NPM_REGISTRY`) and builds on host networking. Defaults elsewhere are unchanged.
+- The host resolver injects `ndots:5` search suffixes into containers, breaking short-name resolution; the override uses the absolute `http://api.:8080` form for the web image. The backend runtime image carries `tzdata` for per-request IANA zones.
+
+The unified verification sequence was green at the branch tip `4e94f7e` (all four commands exit 0). The independent clean-context regression is the remaining gate; on PASS, record the approval in the ledger and open the merge request.

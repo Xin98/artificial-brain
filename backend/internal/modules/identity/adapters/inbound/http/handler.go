@@ -74,6 +74,8 @@ func (h *Handler) requestLogin(w http.ResponseWriter, r *http.Request) {
 			writeValidationError(w, r)
 		case errors.Is(err, domain.ErrRateLimited):
 			writeError(w, r, http.StatusTooManyRequests, "rate_limited", "too many requests")
+		case errors.Is(err, domain.ErrRegistrationClosed):
+			writeError(w, r, http.StatusForbidden, "registration_closed", "registration is closed")
 		default:
 			writeError(w, r, http.StatusInternalServerError, "internal_error", "internal server error")
 		}
@@ -92,11 +94,14 @@ func (h *Handler) verifyLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	result, err := h.VerifyLoginChallenge.Handle(r.Context(), body.Phone, body.Code)
 	if err != nil {
-		if errors.Is(err, domain.ErrInvalidPhone) {
+		switch {
+		case errors.Is(err, domain.ErrInvalidPhone):
 			writeValidationError(w, r)
-			return
+		case errors.Is(err, domain.ErrRegistrationClosed):
+			writeError(w, r, http.StatusForbidden, "registration_closed", "registration is closed")
+		default:
+			writeError(w, r, http.StatusUnauthorized, "unauthenticated", "login failed")
 		}
-		writeError(w, r, http.StatusUnauthorized, "unauthenticated", "login failed")
 		return
 	}
 	h.setSessionCookie(w, result.Token)

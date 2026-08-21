@@ -1453,17 +1453,17 @@ func TestPrivateModeProvisioningAndLoginGate(t *testing.T) {
 			session, adminWorkspaceID, adminUserID)
 	}
 
-	// A different phone is rejected by the registration-closed gate (the
-	// wired RequestLoginChallengeHandler answers ErrRegistrationClosed, which
-	// the identity http layer maps to the generic error envelope): the request
-	// is refused and no challenge lands in the fake outbox.
+	// A different phone is rejected by the registration-closed gate: the wired
+	// RequestLoginChallengeHandler answers ErrRegistrationClosed, which the
+	// identity http layer maps to HTTP 403 + {"code":"registration_closed"}
+	// (Global Constraint 4), and no challenge lands in the fake outbox.
 	otherPhone := "+8613900001234"
 	rejected := doJSON(t, srv.Client(), http.MethodPost, srv.URL+"/api/v1/auth/login/request",
 		`{"phone":"`+otherPhone+`"}`)
 	rejectedBody, _ := io.ReadAll(rejected.Body)
 	rejected.Body.Close()
-	if rejected.StatusCode == http.StatusAccepted {
-		t.Fatalf("other phone login request was accepted, want the registration-closed gate")
+	if rejected.StatusCode != http.StatusForbidden {
+		t.Fatalf("other phone login request status = %d, want 403, body=%s", rejected.StatusCode, rejectedBody)
 	}
 	var rejectedEnvelope struct {
 		Code string `json:"code"`
@@ -1471,8 +1471,8 @@ func TestPrivateModeProvisioningAndLoginGate(t *testing.T) {
 	if err := json.Unmarshal(rejectedBody, &rejectedEnvelope); err != nil {
 		t.Fatalf("rejected body error = %v, body=%s", err, rejectedBody)
 	}
-	if rejectedEnvelope.Code == "rate_limited" || rejectedEnvelope.Code == "validation_error" {
-		t.Fatalf("rejected code = %q, want the registration-closed gate", rejectedEnvelope.Code)
+	if rejectedEnvelope.Code != "registration_closed" {
+		t.Fatalf("rejected code = %q, want registration_closed", rejectedEnvelope.Code)
 	}
 	inboxResp, err := srv.Client().Get(srv.URL + "/api/v1/dev/sms-inbox?address=" + url.QueryEscape(otherPhone))
 	if err != nil {

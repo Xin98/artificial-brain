@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -9,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -23,6 +25,7 @@ import (
 	riverqueue "github.com/riverqueue/river"
 	"github.com/riverqueue/river/riverdriver/riverpgxv5"
 
+	portabilitypostgres "github.com/Xin98/artificial-brain/backend/internal/modules/portability/adapters/outbound/postgres"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/reminder/adapters/outbound/noopjob"
 	reminderpostgres "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/adapters/outbound/postgres"
 	riversched "github.com/Xin98/artificial-brain/backend/internal/modules/reminder/adapters/outbound/river"
@@ -45,7 +48,10 @@ func setupAPIHandler(t *testing.T, devInbox bool) http.Handler {
 	return handler
 }
 
-func setupAPIHandlerWithPool(t *testing.T, devInbox bool) (http.Handler, *pgxpool.Pool) {
+// setupTestPool migrates the test database, opens a pool, and truncates every
+// business table — identity, todo, reminder, conversation, portability, and
+// the river job queue — so each test starts from a clean instance.
+func setupTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	dbURL, ok := os.LookupEnv("TEST_DATABASE_URL")
 	if !ok {
@@ -66,19 +72,29 @@ func setupAPIHandlerWithPool(t *testing.T, devInbox bool) (http.Handler, *pgxpoo
 			identity.users, identity.workspaces, identity.message_outbox,
 			todo.todos, reminder.reminder_plans, reminder.fake_outbox,
 			conversation.confirmation_requests, conversation.messages,
+			portability.portability_imports, portability.portability_source_records,
+			public.instance_meta,
 			river_job restart identity cascade
 	`); err != nil {
 		t.Fatalf("truncate error = %v", err)
 	}
+	return pool
+}
+
+func setupAPIHandlerWithPool(t *testing.T, devInbox bool) (http.Handler, *pgxpool.Pool) {
+	t.Helper()
+	pool := setupTestPool(t)
 	cfg := config.Config{
-		AppEnv:                   "development",
-		DevInboxEnabled:          devInbox,
-		ReminderDevOutboxEnabled: devInbox,
-		ReminderReceiptSecret:    receiptSecret,
-		SessionTTL:               time.Hour,
-		LoginChallengeTTL:        5 * time.Minute,
-		ChannelCodeTTL:           10 * time.Minute,
-		ConfirmationTTL:          5 * time.Minute,
+		AppEnv:                    "development",
+		DevInboxEnabled:           devInbox,
+		ReminderDevOutboxEnabled:  devInbox,
+		ReminderReceiptSecret:     receiptSecret,
+		SessionTTL:                time.Hour,
+		LoginChallengeTTL:         5 * time.Minute,
+		ChannelCodeTTL:            10 * time.Minute,
+		ConfirmationTTL:           5 * time.Minute,
+		DeploymentMode:            config.DeploymentModeCloud,
+		PortabilityMaxBundleBytes: 33554432,
 	}
 	ready := func(context.Context) error { return nil }
 	checker := systemhealth.NewChecker(pool, workerstatus.NewRegistry(pool, time.Now), time.Now, 6*time.Second)
@@ -291,27 +307,7 @@ func TestHealthRoutesStillServed(t *testing.T) {
 
 func setupTodoPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	dbURL, ok := os.LookupEnv("TEST_DATABASE_URL")
-	if !ok {
-		t.Skip("TEST_DATABASE_URL is not set")
-	}
-	ctx := context.Background()
-	directory := filepath.Join("..", "..", "..", "deploy", "migrations")
-	if err := database.RunMigrations(ctx, dbURL, directory); err != nil {
-		t.Fatalf("RunMigrations() error = %v", err)
-	}
-	pool, err := database.OpenPool(ctx, dbURL)
-	if err != nil {
-		t.Fatalf("OpenPool() error = %v", err)
-	}
-	t.Cleanup(pool.Close)
-	if _, err := pool.Exec(ctx, `
-		truncate todo.todos, reminder.reminder_plans, reminder.fake_outbox,
-			river_job restart identity cascade
-	`); err != nil {
-		t.Fatalf("truncate error = %v", err)
-	}
-	return pool
+	return setupTestPool(t)
 }
 
 type failingScheduler struct{ err error }
@@ -1325,5 +1321,429 @@ func TestRevokeSuppressesScheduledDeliveriesOnDelete(t *testing.T) {
 		if row[1] != "suppressed" || row[2] != "todo_deleted" {
 			t.Fatalf("delivery after delete = %#v, want suppressed(todo_deleted)", row)
 		}
+	}
+}
+
+// TestProvisionInstanceIdentityIsStable proves the instance identity
+// provisioning seam: the portability MetaStore get-or-creates exactly one
+// stable instance id, unchanged across repeat provisioning calls.
+func TestProvisionInstanceIdentityIsStable(t *testing.T) {
+	pool := setupTodoPool(t)
+	ctx := context.Background()
+
+	if err := provisionInstanceIdentity(ctx, pool); err != nil {
+		t.Fatalf("provisionInstanceIdentity() error = %v", err)
+	}
+	meta := portabilitypostgres.NewMetaStore(pool)
+	first, err := meta.InstanceID(ctx)
+	if err != nil {
+		t.Fatalf("InstanceID() error = %v", err)
+	}
+	second, err := meta.InstanceID(ctx)
+	if err != nil {
+		t.Fatalf("InstanceID(second) error = %v", err)
+	}
+	if len(first) != 36 {
+		t.Fatalf("instance id = %q, want a 36-char uuid", first)
+	}
+	if first != second {
+		t.Fatalf("instance ids = %q vs %q, want one stable id", first, second)
+	}
+	// Repeat provisioning observes the same id and never errors.
+	if err := provisionInstanceIdentity(ctx, pool); err != nil {
+		t.Fatalf("provisionInstanceIdentity(second) error = %v", err)
+	}
+	third, err := meta.InstanceID(ctx)
+	if err != nil {
+		t.Fatalf("InstanceID(third) error = %v", err)
+	}
+	if third != first {
+		t.Fatalf("instance id after reprovision = %q, want stable %q", third, first)
+	}
+}
+
+// identityCounts returns the number of identity users and workspaces.
+func identityCounts(t *testing.T, pool *pgxpool.Pool) (int, int) {
+	t.Helper()
+	var users, workspaces int
+	if err := pool.QueryRow(context.Background(), `select count(*) from identity.users`).Scan(&users); err != nil {
+		t.Fatalf("count users error = %v", err)
+	}
+	if err := pool.QueryRow(context.Background(), `select count(*) from identity.workspaces`).Scan(&workspaces); err != nil {
+		t.Fatalf("count workspaces error = %v", err)
+	}
+	return users, workspaces
+}
+
+// TestPrivateModeProvisioningAndLoginGate proves the private-deployment
+// composition: provisionPrivateAdmin creates the admin workspace+user once
+// (a second call is a no-op, cloud mode never provisions), the admin phone
+// logs in through the real handler chain with the challenge landing in the
+// fake outbox, and any other phone is rejected by the registration-closed
+// gate without a challenge ever reaching the outbox.
+func TestPrivateModeProvisioningAndLoginGate(t *testing.T) {
+	pool := setupTestPool(t)
+	ctx := context.Background()
+
+	adminPhone := "+8613900009999"
+	cfg := config.Config{
+		AppEnv:                    "development",
+		DevInboxEnabled:           true,
+		SessionTTL:                time.Hour,
+		LoginChallengeTTL:         5 * time.Minute,
+		ChannelCodeTTL:            10 * time.Minute,
+		ConfirmationTTL:           5 * time.Minute,
+		DeploymentMode:            config.DeploymentModePrivate,
+		PrivateAdminPhone:         adminPhone,
+		PortabilityMaxBundleBytes: 33554432,
+	}
+	ready := func(context.Context) error { return nil }
+	checker := systemhealth.NewChecker(pool, workerstatus.NewRegistry(pool, time.Now), time.Now, 6*time.Second)
+	srv := httptest.NewServer(buildHandler(cfg, pool, ready, checker))
+	defer srv.Close()
+
+	// First provisioning creates the workspace+user once; the second call
+	// is a no-op.
+	if err := provisionPrivateAdmin(ctx, cfg, pool); err != nil {
+		t.Fatalf("provisionPrivateAdmin() error = %v", err)
+	}
+	if users, workspaces := identityCounts(t, pool); users != 1 || workspaces != 1 {
+		t.Fatalf("identity rows after provision = %d users / %d workspaces, want 1/1", users, workspaces)
+	}
+	if err := provisionPrivateAdmin(ctx, cfg, pool); err != nil {
+		t.Fatalf("provisionPrivateAdmin(second) error = %v", err)
+	}
+	if users, workspaces := identityCounts(t, pool); users != 1 || workspaces != 1 {
+		t.Fatalf("identity rows after reprovision = %d users / %d workspaces, want 1/1", users, workspaces)
+	}
+	var phone string
+	if err := pool.QueryRow(ctx, `select phone from identity.users`).Scan(&phone); err != nil {
+		t.Fatalf("admin phone query error = %v", err)
+	}
+	if phone != adminPhone {
+		t.Fatalf("provisioned phone = %q, want %q", phone, adminPhone)
+	}
+
+	// Cloud mode never provisions.
+	cloudCfg := cfg
+	cloudCfg.DeploymentMode = config.DeploymentModeCloud
+	cloudCfg.PrivateAdminPhone = ""
+	if err := provisionPrivateAdmin(ctx, cloudCfg, pool); err != nil {
+		t.Fatalf("provisionPrivateAdmin(cloud) error = %v", err)
+	}
+	if users, workspaces := identityCounts(t, pool); users != 1 || workspaces != 1 {
+		t.Fatalf("identity rows after cloud no-op = %d users / %d workspaces, want 1/1", users, workspaces)
+	}
+
+	// The admin phone proceeds through the real handler chain: the challenge
+	// code lands in the fake outbox and verify issues a session that reuses
+	// the provisioned identity instead of registering a new one.
+	_, session := loginViaDevInbox(t, srv, adminPhone)
+	if users, workspaces := identityCounts(t, pool); users != 1 || workspaces != 1 {
+		t.Fatalf("identity rows after admin login = %d users / %d workspaces, want 1/1", users, workspaces)
+	}
+	var adminUserID, adminWorkspaceID string
+	if err := pool.QueryRow(ctx,
+		`select id, workspace_id from identity.users where phone = $1`, adminPhone).
+		Scan(&adminUserID, &adminWorkspaceID); err != nil {
+		t.Fatalf("admin user query error = %v", err)
+	}
+	if session.UserID != adminUserID || session.WorkspaceID != adminWorkspaceID {
+		t.Fatalf("admin session = %#v, want the provisioned identity %s/%s",
+			session, adminWorkspaceID, adminUserID)
+	}
+
+	// A different phone is rejected by the registration-closed gate (the
+	// wired RequestLoginChallengeHandler answers ErrRegistrationClosed, which
+	// the identity http layer maps to the generic error envelope): the request
+	// is refused and no challenge lands in the fake outbox.
+	otherPhone := "+8613900001234"
+	rejected := doJSON(t, srv.Client(), http.MethodPost, srv.URL+"/api/v1/auth/login/request",
+		`{"phone":"`+otherPhone+`"}`)
+	rejectedBody, _ := io.ReadAll(rejected.Body)
+	rejected.Body.Close()
+	if rejected.StatusCode == http.StatusAccepted {
+		t.Fatalf("other phone login request was accepted, want the registration-closed gate")
+	}
+	var rejectedEnvelope struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(rejectedBody, &rejectedEnvelope); err != nil {
+		t.Fatalf("rejected body error = %v, body=%s", err, rejectedBody)
+	}
+	if rejectedEnvelope.Code == "rate_limited" || rejectedEnvelope.Code == "validation_error" {
+		t.Fatalf("rejected code = %q, want the registration-closed gate", rejectedEnvelope.Code)
+	}
+	inboxResp, err := srv.Client().Get(srv.URL + "/api/v1/dev/sms-inbox?address=" + url.QueryEscape(otherPhone))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inbox struct {
+		Messages []struct {
+			Code string `json:"code"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(inboxResp.Body).Decode(&inbox); err != nil {
+		t.Fatal(err)
+	}
+	inboxResp.Body.Close()
+	if len(inbox.Messages) != 0 {
+		t.Fatalf("other phone outbox messages = %#v, want none behind the gate", inbox.Messages)
+	}
+}
+
+// TestPortabilityRoundTripBetweenTwoWorkspaces proves the full portability
+// loop in cloud mode through the real handler chain and two sessions (two
+// phone numbers ⇒ two auto-provisioned workspaces): workspace A creates one
+// todo with a due date — which plans a reminder — and one channel, exports
+// its history into a buffer, workspace B uploads and confirms the bundle,
+// and B then holds the copied todo WITHOUT a reminder plan and the channel
+// unverified; a second confirm reports the import conflict.
+func TestPortabilityRoundTripBetweenTwoWorkspaces(t *testing.T) {
+	handler, pool := setupAPIHandlerWithPool(t, true)
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+	ctx := context.Background()
+
+	clientA, sessionA := loginViaDevInbox(t, srv, "+8613900010001")
+	clientB, sessionB := loginViaDevInbox(t, srv, "+8613900010002")
+	if sessionA.WorkspaceID == sessionB.WorkspaceID {
+		t.Fatalf("both sessions share workspace %s, want two workspaces", sessionA.WorkspaceID)
+	}
+
+	// A: verify an email channel first so the due todo plans it.
+	addResp := doJSON(t, clientA, http.MethodPost, srv.URL+"/api/v1/settings/contact-channels",
+		`{"kind":"email","address":"migrate-a@example.com"}`)
+	addBody, _ := io.ReadAll(addResp.Body)
+	addResp.Body.Close()
+	if addResp.StatusCode != http.StatusCreated {
+		t.Fatalf("add channel status = %d, want 201, body=%s", addResp.StatusCode, addBody)
+	}
+	var channelView struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(addBody, &channelView); err != nil {
+		t.Fatal(err)
+	}
+	codeResp, err := clientA.Get(srv.URL + "/api/v1/dev/sms-inbox?address=" + url.QueryEscape("migrate-a@example.com"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var codeInbox struct {
+		Messages []struct {
+			Code string `json:"code"`
+		} `json:"messages"`
+	}
+	if err := json.NewDecoder(codeResp.Body).Decode(&codeInbox); err != nil {
+		t.Fatal(err)
+	}
+	codeResp.Body.Close()
+	if len(codeInbox.Messages) == 0 || codeInbox.Messages[0].Code == "" {
+		t.Fatal("no channel verification code in the fake outbox")
+	}
+	verifyChannelResp := doJSON(t, clientA, http.MethodPost,
+		srv.URL+"/api/v1/settings/contact-channels/"+channelView.ID+"/verify",
+		`{"code":"`+codeInbox.Messages[0].Code+`"}`)
+	verifyChannelResp.Body.Close()
+	if verifyChannelResp.StatusCode != http.StatusOK {
+		t.Fatalf("verify channel status = %d, want 200", verifyChannelResp.StatusCode)
+	}
+
+	// A: a due todo plans a reminder through the real chain.
+	createResp := doJSON(t, clientA, http.MethodPost, srv.URL+"/api/v1/todos",
+		`{"title":"迁移待办","dueAtUtc":"2026-08-25T12:00:00Z","timezoneAtInput":"UTC"}`)
+	createBody, _ := io.ReadAll(createResp.Body)
+	createResp.Body.Close()
+	if createResp.StatusCode != http.StatusCreated {
+		t.Fatalf("create todo status = %d, want 201, body=%s", createResp.StatusCode, createBody)
+	}
+	var planCount int
+	if err := pool.QueryRow(ctx,
+		`select count(*) from reminder.reminder_plans where workspace_id = $1`, sessionA.WorkspaceID).
+		Scan(&planCount); err != nil {
+		t.Fatalf("count A plans error = %v", err)
+	}
+	if planCount != 1 {
+		t.Fatalf("A plans before export = %d, want the due todo planned once", planCount)
+	}
+
+	// A exports its history into a buffer through the real export route.
+	exportResp := doJSON(t, clientA, http.MethodPost, srv.URL+"/api/v1/portability/export", `{}`)
+	if exportResp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(exportResp.Body)
+		t.Fatalf("export status = %d, want 200, body=%s", exportResp.StatusCode, body)
+	}
+	if contentType := exportResp.Header.Get("Content-Type"); contentType != "application/zip" {
+		t.Fatalf("export content type = %q, want application/zip", contentType)
+	}
+	bundle, err := io.ReadAll(exportResp.Body)
+	exportResp.Body.Close()
+	if err != nil {
+		t.Fatalf("export body error = %v", err)
+	}
+	if len(bundle) == 0 {
+		t.Fatal("export bundle is empty")
+	}
+
+	// B uploads the bundle: the preview sees all three records as new.
+	var uploadBody bytes.Buffer
+	writer := multipart.NewWriter(&uploadBody)
+	part, err := writer.CreateFormFile("bundle", "export.zip")
+	if err != nil {
+		t.Fatalf("multipart CreateFormFile error = %v", err)
+	}
+	if _, err := part.Write(bundle); err != nil {
+		t.Fatalf("multipart write error = %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("multipart close error = %v", err)
+	}
+	uploadReq, err := http.NewRequest(http.MethodPost, srv.URL+"/api/v1/portability/imports", &uploadBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploadReq.Header.Set("Content-Type", writer.FormDataContentType())
+	uploadResp, err := clientB.Do(uploadReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	uploadRespBody, _ := io.ReadAll(uploadResp.Body)
+	uploadResp.Body.Close()
+	if uploadResp.StatusCode != http.StatusCreated {
+		t.Fatalf("upload status = %d, want 201, body=%s", uploadResp.StatusCode, uploadRespBody)
+	}
+	var uploaded struct {
+		ImportID string `json:"importId"`
+		Preview  struct {
+			New     int `json:"new"`
+			Skipped int `json:"skipped"`
+		} `json:"preview"`
+	}
+	if err := json.Unmarshal(uploadRespBody, &uploaded); err != nil {
+		t.Fatalf("upload body error = %v", err)
+	}
+	if uploaded.ImportID == "" {
+		t.Fatalf("upload returned no importId: %s", uploadRespBody)
+	}
+	if uploaded.Preview.New != 3 || uploaded.Preview.Skipped != 0 {
+		t.Fatalf("upload preview = %#v, want 3 new records", uploaded.Preview)
+	}
+
+	// B confirms: all three records land in exactly one transaction.
+	confirmResp := doJSON(t, clientB, http.MethodPost,
+		srv.URL+"/api/v1/portability/imports/"+uploaded.ImportID+"/confirm", "")
+	confirmBody, _ := io.ReadAll(confirmResp.Body)
+	confirmResp.Body.Close()
+	if confirmResp.StatusCode != http.StatusOK {
+		t.Fatalf("confirm status = %d, want 200, body=%s", confirmResp.StatusCode, confirmBody)
+	}
+	var report struct {
+		New     int `json:"new"`
+		Skipped int `json:"skipped"`
+	}
+	if err := json.Unmarshal(confirmBody, &report); err != nil {
+		t.Fatalf("confirm body error = %v", err)
+	}
+	if report.New != 3 || report.Skipped != 0 {
+		t.Fatalf("confirm report = %#v, want 3 new records", report)
+	}
+
+	// B holds the copied todo — pending, due preserved, and WITHOUT a
+	// reminder plan (import never plans, D7).
+	var todoCount int
+	if err := pool.QueryRow(ctx,
+		`select count(*) from todo.todos where workspace_id = $1`, sessionB.WorkspaceID).
+		Scan(&todoCount); err != nil {
+		t.Fatalf("count B todos error = %v", err)
+	}
+	if todoCount != 1 {
+		t.Fatalf("B todos after confirm = %d, want the one copied todo", todoCount)
+	}
+	var title, status string
+	var dueAt time.Time
+	if err := pool.QueryRow(ctx,
+		`select title, status, due_at_utc from todo.todos where workspace_id = $1`, sessionB.WorkspaceID).
+		Scan(&title, &status, &dueAt); err != nil {
+		t.Fatalf("B todo row error = %v", err)
+	}
+	if title != "迁移待办" || status != "pending" {
+		t.Fatalf("B todo = %q/%q, want 迁移待办/pending", title, status)
+	}
+	wantDue := time.Date(2026, 8, 25, 12, 0, 0, 0, time.UTC)
+	if !dueAt.Equal(wantDue) {
+		t.Fatalf("B todo due = %v, want %v", dueAt, wantDue)
+	}
+	var plansInB int
+	if err := pool.QueryRow(ctx,
+		`select count(*) from reminder.reminder_plans where workspace_id = $1`, sessionB.WorkspaceID).
+		Scan(&plansInB); err != nil {
+		t.Fatalf("count B plans error = %v", err)
+	}
+	if plansInB != 0 {
+		t.Fatalf("B reminder plans after confirm = %d, want zero — import never plans", plansInB)
+	}
+
+	// B holds the copied channel unverified.
+	var kind, address string
+	var verified bool
+	if err := pool.QueryRow(ctx,
+		`select kind, address, verified from identity.contact_channels where workspace_id = $1`,
+		sessionB.WorkspaceID).Scan(&kind, &address, &verified); err != nil {
+		t.Fatalf("B channel row error = %v", err)
+	}
+	if kind != "email" || address != "migrate-a@example.com" {
+		t.Fatalf("B channel = %s/%s, want email/migrate-a@example.com", kind, address)
+	}
+	if verified {
+		t.Fatal("B channel is verified, want imported channels unverified")
+	}
+
+	// B holds the copied delivery history as an imported, never-planned row.
+	var importedDeliveries int
+	if err := pool.QueryRow(ctx,
+		`select count(*) from reminder.reminder_deliveries where workspace_id = $1 and origin = 'imported'`,
+		sessionB.WorkspaceID).Scan(&importedDeliveries); err != nil {
+		t.Fatalf("count B imported deliveries error = %v", err)
+	}
+	if importedDeliveries != 1 {
+		t.Fatalf("B imported deliveries = %d, want the one copied history row", importedDeliveries)
+	}
+
+	// The import view renders committed with its report.
+	getResp, err := clientB.Get(srv.URL + "/api/v1/portability/imports/" + uploaded.ImportID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	getBody, _ := io.ReadAll(getResp.Body)
+	getResp.Body.Close()
+	if getResp.StatusCode != http.StatusOK {
+		t.Fatalf("get import status = %d, want 200, body=%s", getResp.StatusCode, getBody)
+	}
+	var view struct {
+		State string `json:"state"`
+	}
+	if err := json.Unmarshal(getBody, &view); err != nil {
+		t.Fatalf("get import body error = %v", err)
+	}
+	if view.State != "committed" {
+		t.Fatalf("import state = %q, want committed", view.State)
+	}
+
+	// A second confirm reports the import conflict.
+	secondResp := doJSON(t, clientB, http.MethodPost,
+		srv.URL+"/api/v1/portability/imports/"+uploaded.ImportID+"/confirm", "")
+	secondBody, _ := io.ReadAll(secondResp.Body)
+	secondResp.Body.Close()
+	if secondResp.StatusCode != http.StatusConflict {
+		t.Fatalf("second confirm status = %d, want 409, body=%s", secondResp.StatusCode, secondBody)
+	}
+	var conflict struct {
+		Code string `json:"code"`
+	}
+	if err := json.Unmarshal(secondBody, &conflict); err != nil {
+		t.Fatalf("second confirm body error = %v", err)
+	}
+	if conflict.Code != "import_conflict" {
+		t.Fatalf("second confirm code = %q, want import_conflict", conflict.Code)
 	}
 }

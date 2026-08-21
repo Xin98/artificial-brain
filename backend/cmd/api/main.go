@@ -33,6 +33,19 @@ func main() {
 	}
 	defer pool.Close()
 
+	if err := database.RequireSchema(context.Background(), pool, database.CurrentSchemaVersion); err != nil {
+		logger.Error("database schema verification failed")
+		os.Exit(1)
+	}
+	if err := provisionInstanceIdentity(context.Background(), pool); err != nil {
+		logger.Error("instance identity provisioning failed")
+		os.Exit(1)
+	}
+	if err := provisionPrivateAdmin(context.Background(), cfg, pool); err != nil {
+		logger.Error("private admin provisioning failed")
+		os.Exit(1)
+	}
+
 	ready := func(ctx context.Context) error {
 		if err := pool.Ping(ctx); err != nil {
 			return err

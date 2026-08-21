@@ -216,7 +216,11 @@ full_stack_test() {
 	project=$(unique_project_name)
 	API_PORT=0
 	WEB_PORT=0
-	export API_PORT WEB_PORT
+	# Smoke caps the bundle size at the configuration floor (1 MiB) so the
+	# oversized-upload rejection can be exercised with a small dd-padded file
+	# instead of padding past the 32 MiB default.
+	PORTABILITY_MAX_BUNDLE_BYTES=1048576
+	export API_PORT WEB_PORT PORTABILITY_MAX_BUNDLE_BYTES
 
 	lease_ttl=${WORKER_LEASE_TTL:-6s}
 	case "$lease_ttl" in
@@ -240,6 +244,8 @@ full_stack_test() {
 			compose logs --no-color --tail 200 2>&1 | redact_logs >&2 || true
 		fi
 		compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+		docker compose --project-name "${project}-private" down \
+			--volumes --remove-orphans >/dev/null 2>&1 || true
 		exit "$exit_code"
 	}
 	trap cleanup EXIT HUP INT TERM
@@ -526,6 +532,451 @@ full_stack_test() {
 			fail "fake outbox did not receive 冒烟恢复 within 30s after the worker restart"
 		sleep 1
 	done
+
+	# ITER-0004 data portability: export the workspace's full history as a
+	# zip bundle, then import the same bundle back. Locally created rows
+	# carry no source identity, so a self-import creates copies on the first
+	# confirm and is idempotent (every record skipped) from the second run on
+	# (assumption A3). Imports never plan reminders. The exporting user's
+	# channels already exist, so every channel record downgrades to skipped
+	# and its source record registers against the existing row (T9). The
+	# stack above runs with the bundle cap lowered to the configuration
+	# floor (PORTABILITY_MAX_BUNDLE_BYTES=1048576) so the oversized-upload
+	# rejection only needs a small dd-padded file.
+	port_bundle=$(mktemp) || fail "cannot create a temporary bundle file"
+	port_export_status=$(curl --silent --show-error --max-time 10 \
+		--output "$port_bundle" --write-out '%{http_code}' \
+		--header "$e2e_auth" --request POST \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/portability/export")
+	[ "$port_export_status" = 200 ] || \
+		fail "portability export status ${port_export_status}, want 200"
+
+	port_entries=$(unzip -Z1 "$port_bundle" | sort)
+	port_expected_entries=$(printf '%s\n' \
+		manifest.json preferences.json reminder-deliveries.json todos.csv todos.json)
+	[ "$port_entries" = "$port_expected_entries" ] || \
+		fail "export bundle entries are not the expected five: $(printf '%s' "$port_entries" | tr '\n' ' ')"
+
+	port_manifest=$(unzip -p "$port_bundle" manifest.json) || \
+		fail "unzip cannot read manifest.json from the export bundle"
+	printf '%s\n' "$port_manifest" | jq -e '.schemaVersion == "1"' >/dev/null || \
+		fail "export manifest schemaVersion is not 1: ${port_manifest}"
+	printf '%s\n' "$port_manifest" | jq -e '.counts.todos >= 1' >/dev/null || \
+		fail "export manifest does not report at least one todo: ${port_manifest}"
+	port_todos=$(printf '%s\n' "$port_manifest" | jq -r '.counts.todos')
+	port_deliveries=$(printf '%s\n' "$port_manifest" | jq -r '.counts.deliveries')
+	port_channels=$(printf '%s\n' "$port_manifest" | jq -r '.counts.channels')
+	port_total=$((port_todos + port_deliveries + port_channels))
+
+	port_upload=$(curl --silent --show-error --max-time 10 \
+		--write-out '\n%{http_code}' \
+		--header "$e2e_auth" \
+		--form "bundle=@${port_bundle}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/portability/imports")
+	port_upload_status=$(printf '%s\n' "$port_upload" | tail -n 1)
+	port_upload_body=$(printf '%s\n' "$port_upload" | sed '$d')
+	[ "$port_upload_status" = 201 ] || \
+		fail "portability upload status ${port_upload_status}, want 201: ${port_upload_body}"
+	port_import_id=$(printf '%s\n' "$port_upload_body" | jq -r '.importId')
+	[ -n "$port_import_id" ] && [ "$port_import_id" != null ] || \
+		fail "portability upload did not return an importId: ${port_upload_body}"
+	printf '%s\n' "$port_upload_body" | jq -e --argjson total "$port_total" '
+		.preview.new == $total and
+		.preview.skipped == 0 and
+		.preview.conflicts == 0 and
+		.preview.invalid == 0
+	' >/dev/null || \
+		fail "first upload preview does not classify every record as new: ${port_upload_body}"
+
+	port_todos_before=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select count(*) from todo.todos")
+	port_plans_before=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select count(*) from reminder.reminder_plans")
+	port_channels_list=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/settings/contact-channels")
+	port_existing_channel_id=$(printf '%s\n' "$port_channels_list" | \
+		jq -r --arg address "$e2e_email" '.channels[] | select(.address == $address) | .id')
+	[ -n "$port_existing_channel_id" ] && [ "$port_existing_channel_id" != null ] || \
+		fail "settings listing carries no channel for ${e2e_email}: ${port_channels_list}"
+
+	port_confirm=$(curl --silent --show-error --max-time 10 \
+		--write-out '\n%{http_code}' \
+		--header "$e2e_auth" --request POST \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/portability/imports/${port_import_id}/confirm")
+	port_confirm_status=$(printf '%s\n' "$port_confirm" | tail -n 1)
+	port_report=$(printf '%s\n' "$port_confirm" | sed '$d')
+	[ "$port_confirm_status" = 200 ] || \
+		fail "portability confirm status ${port_confirm_status}, want 200: ${port_report}"
+	# Self-import executes against a user whose channels already exist: each
+	# duplicate (user, kind, address) channel downgrades to skipped and
+	# registers against the existing row (T9), so the executed report copies
+	# every todo and delivery but skips every channel.
+	port_new_expected=$((port_todos + port_deliveries))
+	printf '%s\n' "$port_report" | jq -e \
+		--argjson new "$port_new_expected" --argjson skipped "$port_channels" '
+		.new == $new and
+		.skipped == $skipped and
+		.conflicts == 0 and
+		.invalid == 0
+	' >/dev/null || \
+		fail "first confirm report does not match the self-import contract: ${port_report}"
+
+	port_todos_after=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select count(*) from todo.todos")
+	[ $((port_todos_after - port_todos_before)) -eq "$port_todos" ] || \
+		fail "todo count grew by $((port_todos_after - port_todos_before)), want ${port_todos}"
+	port_plans_after=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select count(*) from reminder.reminder_plans")
+	[ "$port_plans_after" = "$port_plans_before" ] || \
+		fail "import changed the reminder plan count: ${port_plans_before} -> ${port_plans_after}"
+	port_imported_rows=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select count(*) from reminder.reminder_deliveries where origin = 'imported'")
+	[ "$port_imported_rows" = "$port_deliveries" ] || \
+		fail "imported delivery rows are ${port_imported_rows}, want ${port_deliveries}"
+
+	# Downgraded channels register their source record against the EXISTING
+	# channel row and never create a copy: resolve one bundle channel id and
+	# prove the mapping lands on the pre-existing channel, and that the
+	# settings listing did not gain an unverified duplicate.
+	port_bundle_channel_id=$(unzip -p "$port_bundle" preferences.json | \
+		jq -r --arg address "$e2e_email" '.[] | select(.address == $address) | .id')
+	[ -n "$port_bundle_channel_id" ] && [ "$port_bundle_channel_id" != null ] || \
+		fail "bundle preferences.json carries no channel for ${e2e_email}"
+	port_channel_target=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select target_id from portability.portability_source_records where source_record_id = '${port_bundle_channel_id}' and target_kind = 'channel'")
+	[ "$port_channel_target" = "$port_existing_channel_id" ] || \
+		fail "downgraded channel ${port_bundle_channel_id} is not registered against ${port_existing_channel_id}: ${port_channel_target}"
+	port_channels_after=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/settings/contact-channels")
+	printf '%s\n' "$port_channels_after" | jq -e --arg address "$e2e_email" \
+		'[.channels[] | select(.address == $address)] | length == 1' \
+		>/dev/null || \
+		fail "self-import duplicated the channel ${e2e_email}: ${port_channels_after}"
+
+	port_reminder_copy=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select target_id from portability.portability_source_records where source_record_id = '${e2e_rem_todo_id}' and target_kind = 'todo'")
+	[ -n "$port_reminder_copy" ] || \
+		fail "source records do not map the imported copy of todo ${e2e_rem_todo_id}"
+	port_rem_list=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" "http://127.0.0.1:${WEB_PORT}/api/v1/reminders")
+	printf '%s\n' "$port_rem_list" | jq -e --arg todoId "$port_reminder_copy" '
+		[.deliveries[] | select(.todoId == $todoId)] as $rows |
+		($rows | length == 2) and
+		([$rows[] | select(.state == "succeeded")] | length == 2) and
+		(([$rows[] | .channel] | sort) == ["email", "sms"])
+	' >/dev/null || \
+		fail "imported reminder history is not preserved for ${port_reminder_copy}: ${port_rem_list}"
+
+	port_view=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/portability/imports/${port_import_id}")
+	printf '%s\n' "$port_view" | jq -e --argjson new "$port_new_expected" '
+		.state == "committed" and .report.new == $new
+	' >/dev/null || \
+		fail "import view does not report the committed report: ${port_view}"
+
+	port_reupload=$(curl --silent --show-error --max-time 10 \
+		--write-out '\n%{http_code}' \
+		--header "$e2e_auth" \
+		--form "bundle=@${port_bundle}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/portability/imports")
+	port_reupload_status=$(printf '%s\n' "$port_reupload" | tail -n 1)
+	port_reupload_body=$(printf '%s\n' "$port_reupload" | sed '$d')
+	[ "$port_reupload_status" = 201 ] || \
+		fail "portability re-upload status ${port_reupload_status}, want 201: ${port_reupload_body}"
+	port_reimport_id=$(printf '%s\n' "$port_reupload_body" | jq -r '.importId')
+	[ -n "$port_reimport_id" ] && [ "$port_reimport_id" != null ] || \
+		fail "portability re-upload did not return an importId: ${port_reupload_body}"
+	printf '%s\n' "$port_reupload_body" | jq -e --argjson total "$port_total" '
+		.preview.new == 0 and
+		.preview.skipped == $total and
+		.preview.conflicts == 0 and
+		.preview.invalid == 0
+	' >/dev/null || \
+		fail "re-upload preview does not classify every record as skipped: ${port_reupload_body}"
+
+	port_todos_rerun=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select count(*) from todo.todos")
+	port_reconfirm=$(curl --silent --show-error --max-time 10 \
+		--write-out '\n%{http_code}' \
+		--header "$e2e_auth" --request POST \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/portability/imports/${port_reimport_id}/confirm")
+	port_reconfirm_status=$(printf '%s\n' "$port_reconfirm" | tail -n 1)
+	port_rerun_report=$(printf '%s\n' "$port_reconfirm" | sed '$d')
+	[ "$port_reconfirm_status" = 200 ] || \
+		fail "portability re-confirm status ${port_reconfirm_status}, want 200: ${port_rerun_report}"
+	printf '%s\n' "$port_rerun_report" | jq -e --argjson total "$port_total" '
+		.new == 0 and
+		.skipped == $total and
+		.conflicts == 0 and
+		.invalid == 0
+	' >/dev/null || \
+		fail "re-confirm report is not fully skipped: ${port_rerun_report}"
+	port_todos_rerun_after=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select count(*) from todo.todos")
+	[ "$port_todos_rerun_after" = "$port_todos_rerun" ] || \
+		fail "idempotent re-import changed the todo count: ${port_todos_rerun} -> ${port_todos_rerun_after}"
+
+	port_conflict=$(curl --silent --show-error --max-time 5 \
+		--write-out '\n%{http_code}' \
+		--header "$e2e_auth" --request POST \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/portability/imports/${port_import_id}/confirm")
+	port_conflict_status=$(printf '%s\n' "$port_conflict" | tail -n 1)
+	port_conflict_body=$(printf '%s\n' "$port_conflict" | sed '$d')
+	[ "$port_conflict_status" = 409 ] || \
+		fail "committed re-confirm status ${port_conflict_status}, want 409: ${port_conflict_body}"
+	printf '%s\n' "$port_conflict_body" | jq -e '.code == "import_conflict"' >/dev/null || \
+		fail "committed re-confirm code is not import_conflict: ${port_conflict_body}"
+
+	port_garbage=$(mktemp) || fail "cannot create a temporary garbage file"
+	printf 'not a bundle' >"$port_garbage"
+	port_invalid=$(curl --silent --show-error --max-time 5 \
+		--write-out '\n%{http_code}' \
+		--header "$e2e_auth" \
+		--form "bundle=@${port_garbage}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/portability/imports")
+	port_invalid_status=$(printf '%s\n' "$port_invalid" | tail -n 1)
+	port_invalid_body=$(printf '%s\n' "$port_invalid" | sed '$d')
+	[ "$port_invalid_status" = 422 ] || \
+		fail "non-zip upload status ${port_invalid_status}, want 422: ${port_invalid_body}"
+	printf '%s\n' "$port_invalid_body" | jq -e '.code == "bundle_invalid"' >/dev/null || \
+		fail "non-zip upload code is not bundle_invalid: ${port_invalid_body}"
+
+	port_oversized=$(mktemp) || fail "cannot create a temporary oversized file"
+	dd if=/dev/zero of="$port_oversized" bs=1024 count=1025 2>/dev/null || \
+		fail "cannot pad the oversized bundle file"
+	port_large=$(curl --silent --show-error --max-time 10 \
+		--write-out '\n%{http_code}' \
+		--header "$e2e_auth" \
+		--form "bundle=@${port_oversized}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/portability/imports")
+	port_large_status=$(printf '%s\n' "$port_large" | tail -n 1)
+	port_large_body=$(printf '%s\n' "$port_large" | sed '$d')
+	[ "$port_large_status" = 422 ] || \
+		fail "oversized upload status ${port_large_status}, want 422: ${port_large_body}"
+	printf '%s\n' "$port_large_body" | jq -e '.code == "bundle_too_large"' >/dev/null || \
+		fail "oversized upload code is not bundle_too_large: ${port_large_body}"
+
+	rm -f "$port_bundle" "$port_garbage" "$port_oversized"
+
+	# ITER-0004 private mode: a second Compose project boots the same stack
+	# with DEPLOYMENT_MODE=private. APP_ENV=development and
+	# DEV_INBOX_ENABLED=true keep the fake adapters and the dev inbox, so CI
+	# never calls a real provider (assumption A7). The fixed admin phone logs
+	# in through the dev inbox; every other phone number is rejected with
+	# registration_closed.
+	private_project="${project}-private"
+	DEPLOYMENT_MODE=private \
+	PRIVATE_ADMIN_PHONE="+8613800137999" \
+	APP_ENV=development \
+	DEV_INBOX_ENABLED=true \
+	API_PORT=0 \
+	WEB_PORT=0 \
+	docker compose --project-name "$private_project" up --build --detach --wait \
+		--wait-timeout "${STACK_WAIT_SECONDS:-180}"
+	private_web_mapping=$(docker compose --project-name "$private_project" port web 3000 | sed -n '1p')
+	private_web_port=${private_web_mapping##*:}
+	case "$private_web_port" in '' | *[!0-9]*) fail "private Web has no Docker-assigned host port" ;; esac
+
+	private_admin_phone="+8613800137999"
+	private_request_status=$(curl --fail --silent --show-error --max-time 5 \
+		--output /dev/null --write-out '%{http_code}' \
+		--header 'Content-Type: application/json' \
+		--data "{\"phone\":\"${private_admin_phone}\"}" \
+		"http://127.0.0.1:${private_web_port}/api/v1/auth/login/request")
+	[ "$private_request_status" = 202 ] || \
+		fail "private admin login request status ${private_request_status}, want 202"
+
+	private_inbox=$(curl --fail --silent --show-error --max-time 5 \
+		"http://127.0.0.1:${private_web_port}/api/v1/dev/sms-inbox?address=$(printf '%s' "$private_admin_phone" | jq -sRr @uri)")
+	private_code=$(printf '%s\n' "$private_inbox" | jq -r '.messages[0].code')
+	case "$private_code" in '' | *[!0-9]*) fail "private dev inbox did not return a numeric code" ;; esac
+
+	private_verify_headers=$(curl --fail --silent --show-error --max-time 5 \
+		--dump-header - --output /dev/null \
+		--header 'Content-Type: application/json' \
+		--data "{\"phone\":\"${private_admin_phone}\",\"code\":\"${private_code}\"}" \
+		"http://127.0.0.1:${private_web_port}/api/v1/auth/login/verify")
+	private_session=$(printf '%s\n' "$private_verify_headers" |
+		sed -n 's/^[Ss]et-[Cc]ookie: ab_session=\([^;]*\).*$/\1/p' | sed -n '1p')
+	[ -n "$private_session" ] || fail "private verify did not set the ab_session cookie"
+
+	private_home=$(curl --fail --silent --show-error --max-time 5 \
+		--header "Cookie: ab_session=${private_session}" \
+		"http://127.0.0.1:${private_web_port}/")
+	printf '%s\n' "$private_home" | grep -F 'data-page="dashboard"' >/dev/null || \
+		fail "private admin home did not render the dashboard page"
+
+	private_stranger_phone="+8613800137998"
+	private_stranger=$(curl --silent --show-error --max-time 5 \
+		--write-out '\n%{http_code}' \
+		--header 'Content-Type: application/json' \
+		--data "{\"phone\":\"${private_stranger_phone}\"}" \
+		"http://127.0.0.1:${private_web_port}/api/v1/auth/login/request")
+	private_stranger_status=$(printf '%s\n' "$private_stranger" | tail -n 1)
+	private_stranger_body=$(printf '%s\n' "$private_stranger" | sed '$d')
+	[ "$private_stranger_status" = 403 ] || \
+		fail "private stranger login request status ${private_stranger_status}, want 403: ${private_stranger_body}"
+	printf '%s\n' "$private_stranger_body" | jq -e '.code == "registration_closed"' >/dev/null || \
+		fail "private stranger login code is not registration_closed: ${private_stranger_body}"
+
+	docker compose --project-name "$private_project" down --volumes --remove-orphans
+
+	# ITER-0004 backup/restore drill: archive the live database with
+	# deploy/private/backup.sh, soft-delete the portability-imported copy todo
+	# through the confirmation flow, restore the archive with
+	# deploy/private/restore.sh, and prove the deleted row is back. A wrong
+	# CONFIRM value must refuse before touching the database.
+	port_backup_dir=$(mktemp -d) || fail "cannot create a backup directory"
+	port_backup_archive=$(COMPOSE_PROJECT_NAME="$project" OUTPUT_DIR="$port_backup_dir" \
+		sh deploy/private/backup.sh) || fail "backup.sh failed"
+	[ -f "$port_backup_archive" ] || \
+		fail "backup archive ${port_backup_archive} is missing"
+
+	port_delete_confirmation=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" --header 'Content-Type: application/json' \
+		--data "{\"intent\":\"todo.delete\",\"todoId\":\"${port_reminder_copy}\"}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/confirmations")
+	port_delete_confirmation_id=$(printf '%s\n' "$port_delete_confirmation" | jq -r '.confirmationId')
+	[ -n "$port_delete_confirmation_id" ] && [ "$port_delete_confirmation_id" != null ] || \
+		fail "backup delete confirmation create did not return an id: ${port_delete_confirmation}"
+	port_deleted_status=$(curl --fail --silent --show-error --max-time 5 \
+		--output /dev/null --write-out '%{http_code}' \
+		--header "$e2e_auth" --header 'Content-Type: application/json' --data '{}' \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/confirmations/${port_delete_confirmation_id}/confirm")
+	[ "$port_deleted_status" = 200 ] || \
+		fail "backup delete confirm status ${port_deleted_status}, want 200"
+	port_deleted_rows=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select count(*) from todo.todos where id = '${port_reminder_copy}' and deleted_at is null")
+	[ "$port_deleted_rows" = 0 ] || \
+		fail "deleted import copy todo ${port_reminder_copy} is still active"
+
+	COMPOSE_PROJECT_NAME="$project" BACKUP="$port_backup_archive" CONFIRM=restore \
+		sh deploy/private/restore.sh || fail "restore.sh failed"
+	# Compose restarts the stopped services (re-running the completed one-shot
+	# migrate alongside them) and assigns FRESH ephemeral host ports, so both
+	# ports must be re-resolved before waiting on them.
+	api_mapping=$(compose port api 8080 | sed -n '1p')
+	web_mapping=$(compose port web 3000 | sed -n '1p')
+	API_PORT=${api_mapping##*:}
+	WEB_PORT=${web_mapping##*:}
+	case "$API_PORT" in '' | *[!0-9]*) fail "API has no Docker-assigned host port after the restore" ;; esac
+	case "$WEB_PORT" in '' | *[!0-9]*) fail "Web has no Docker-assigned host port after the restore" ;; esac
+	sh tests/smoke/wait_for_url.sh "http://127.0.0.1:${API_PORT}/health/ready" 30
+	wait_for_system_state healthy healthy 30
+	sh tests/smoke/wait_for_url.sh "http://127.0.0.1:${WEB_PORT}/health/live" 30
+	port_restored_rows=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select count(*) from todo.todos where id = '${port_reminder_copy}' and deleted_at is null")
+	[ "$port_restored_rows" = 1 ] || \
+		fail "restore did not bring back the deleted todo ${port_reminder_copy}"
+	port_dashboard=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/dashboard/summary?timezone=UTC")
+	printf '%s\n' "$port_dashboard" | jq -e '.pendingTotal >= 1' >/dev/null || \
+		fail "dashboard after restore does not report pending todos: ${port_dashboard}"
+	assert_page healthy /status
+
+	if COMPOSE_PROJECT_NAME="$project" BACKUP="$port_backup_archive" CONFIRM=wrong \
+		sh deploy/private/restore.sh >/dev/null 2>&1; then
+		fail "restore.sh ran with CONFIRM=wrong"
+	fi
+	port_untouched_rows=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select count(*) from todo.todos where id = '${port_reminder_copy}' and deleted_at is null")
+	[ "$port_untouched_rows" = 1 ] || \
+		fail "refused restore touched the database"
+	rm -rf "$port_backup_dir"
+
+	# ITER-0004 upgrade drill: rebuild and force-recreate the stack against
+	# the existing database volume; the one-shot migrate re-runs idempotently
+	# at the current schema version and no business row is lost.
+	upgrade_todo_count=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select count(*) from todo.todos")
+	upgrade_delivery_count=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select count(*) from reminder.reminder_deliveries")
+
+	compose up --build --detach --wait --wait-timeout "${STACK_WAIT_SECONDS:-180}" --force-recreate
+	migrate_container=$(compose ps --all --quiet migrate)
+	[ -n "$migrate_container" ] || fail "migrate container is missing after the upgrade"
+	migrate_exit=$(docker inspect --format '{{.State.ExitCode}}' "$migrate_container")
+	[ "$migrate_exit" = 0 ] || fail "migrate exited with status ${migrate_exit} during the upgrade"
+
+	api_mapping=$(compose port api 8080 | sed -n '1p')
+	web_mapping=$(compose port web 3000 | sed -n '1p')
+	API_PORT=${api_mapping##*:}
+	WEB_PORT=${web_mapping##*:}
+	case "$API_PORT" in '' | *[!0-9]*) fail "API has no Docker-assigned host port after the upgrade" ;; esac
+	case "$WEB_PORT" in '' | *[!0-9]*) fail "Web has no Docker-assigned host port after the upgrade" ;; esac
+	sh tests/smoke/wait_for_url.sh "http://127.0.0.1:${API_PORT}/health/live" 30
+	sh tests/smoke/wait_for_url.sh "http://127.0.0.1:${API_PORT}/health/ready" 30
+	sh tests/smoke/wait_for_url.sh "http://127.0.0.1:${WEB_PORT}/health/live" 30
+	wait_for_system_state healthy healthy 30
+
+	upgrade_schema_version=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select version from public.schema_version limit 1")
+	[ "$upgrade_schema_version" = 8 ] || \
+		fail "schema version after the upgrade is ${upgrade_schema_version}, want 8"
+	upgrade_todo_after=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select count(*) from todo.todos")
+	upgrade_delivery_after=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select count(*) from reminder.reminder_deliveries")
+	[ "$upgrade_todo_after" = "$upgrade_todo_count" ] || \
+		fail "upgrade changed the todo count: ${upgrade_todo_count} -> ${upgrade_todo_after}"
+	[ "$upgrade_delivery_after" = "$upgrade_delivery_count" ] || \
+		fail "upgrade changed the delivery count: ${upgrade_delivery_count} -> ${upgrade_delivery_after}"
+	assert_page healthy /status
 }
 
 case "${1:-}" in

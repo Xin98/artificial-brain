@@ -23,12 +23,19 @@ type RequestLoginChallengeHandler struct {
 	NewID        func() string
 	Now          func() time.Time
 	ChallengeTTL time.Duration
+	// PrivateAdminPhone, when non-empty, restricts login to that single
+	// private-deployment admin phone; every other phone is rejected before
+	// any store or outbox interaction. Empty keeps public-cloud behavior.
+	PrivateAdminPhone string
 }
 
 func (h *RequestLoginChallengeHandler) Handle(ctx context.Context, phone string) error {
 	p, err := domain.NewPhone(phone)
 	if err != nil {
 		return err
+	}
+	if h.PrivateAdminPhone != "" && p.String() != h.PrivateAdminPhone {
+		return domain.ErrRegistrationClosed
 	}
 	now := h.Now()
 	count, err := h.Challenges.CountByPhoneSince(ctx, p.String(), now.Add(-time.Hour))
@@ -71,12 +78,19 @@ type VerifyLoginChallengeHandler struct {
 	NewToken   func() (string, error)
 	Now        func() time.Time
 	SessionTTL time.Duration
+	// PrivateAdminPhone, when non-empty, restricts login to that single
+	// private-deployment admin phone; every other phone is rejected before
+	// any store interaction. Empty keeps public-cloud behavior.
+	PrivateAdminPhone string
 }
 
 func (h *VerifyLoginChallengeHandler) Handle(ctx context.Context, phone, code string) (dto.VerifyLoginChallengeResult, error) {
 	p, err := domain.NewPhone(phone)
 	if err != nil {
 		return dto.VerifyLoginChallengeResult{}, err
+	}
+	if h.PrivateAdminPhone != "" && p.String() != h.PrivateAdminPhone {
+		return dto.VerifyLoginChallengeResult{}, domain.ErrRegistrationClosed
 	}
 	if _, err := domain.NewCode(code); err != nil {
 		return dto.VerifyLoginChallengeResult{}, err

@@ -289,6 +289,88 @@ func TestStoreSearchCandidatesILikeAndLimit(t *testing.T) {
 	}
 }
 
+func restoredTodo(t *testing.T, workspaceID, ownerUserID, title string, status domain.Status, createdAt time.Time) domain.Todo {
+	t.Helper()
+	var completedAt, deletedAt *time.Time
+	version := 1
+	switch status {
+	case domain.StatusCompleted:
+		completedAt = ptrTime(createdAt.Add(time.Hour))
+		version = 2
+	case domain.StatusDeleted:
+		deletedAt = ptrTime(createdAt.Add(time.Hour))
+		version = 2
+	}
+	todo, err := domain.Restore(randomID(t), workspaceID, ownerUserID, title, nil, nil, nil,
+		status, 2, version, createdAt, createdAt.Add(30*time.Minute), completedAt, deletedAt)
+	if err != nil {
+		t.Fatalf("Restore() error = %v", err)
+	}
+	return todo
+}
+
+func TestStoreListAllReturnsFullHistoryOrderedAndPaged(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	store := NewStore(pool)
+	workspaceID, ownerUserID := randomID(t), randomID(t)
+
+	first := restoredTodo(t, workspaceID, ownerUserID, "最早的任务", domain.StatusPending, testNow.Add(-3*time.Hour))
+	second := restoredTodo(t, workspaceID, ownerUserID, "完成的任务", domain.StatusCompleted, testNow.Add(-2*time.Hour))
+	third := restoredTodo(t, workspaceID, ownerUserID, "删除的任务", domain.StatusDeleted, testNow.Add(-time.Hour))
+	// Insert out of creation order to prove the ordering comes from created_at.
+	for _, todo := range []domain.Todo{third, first, second} {
+		if err := store.Insert(ctx, todo); err != nil {
+			t.Fatalf("Insert(%s) error = %v", todo.Title, err)
+		}
+	}
+
+	all, err := store.ListAll(ctx, workspaceID, ownerUserID, 0, dto.MaxListLimit)
+	if err != nil {
+		t.Fatalf("ListAll() error = %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("ListAll(all) = %d, want 3 (deleted included)", len(all))
+	}
+	wantOrder := []string{first.ID, second.ID, third.ID}
+	for index, want := range wantOrder {
+		if all[index].ID != want {
+			t.Fatalf("ListAll order[%d] = %s, want %s", index, all[index].ID, want)
+		}
+	}
+	if all[0].ReminderVersion != 2 || all[0].Version != 1 || !all[0].CreatedAt.Equal(first.CreatedAt) {
+		t.Fatalf("ListAll historical fields = %#v", all[0])
+	}
+	if all[1].CompletedAt == nil || all[2].DeletedAt == nil {
+		t.Fatalf("ListAll terminal instants lost: %#v / %#v", all[1], all[2])
+	}
+
+	page, err := store.ListAll(ctx, workspaceID, ownerUserID, 1, 1)
+	if err != nil {
+		t.Fatalf("ListAll(page) error = %v", err)
+	}
+	if len(page) != 1 || page[0].ID != second.ID {
+		t.Fatalf("ListAll(offset 1, limit 1) = %#v, want second row by created_at", page)
+	}
+
+	beyond, err := store.ListAll(ctx, workspaceID, ownerUserID, 10, dto.MaxListLimit)
+	if err != nil {
+		t.Fatalf("ListAll(beyond) error = %v", err)
+	}
+	if len(beyond) != 0 {
+		t.Fatalf("ListAll(offset beyond) = %d, want 0", len(beyond))
+	}
+
+	scoped, err := store.ListAll(ctx, randomID(t), ownerUserID, 0, dto.MaxListLimit)
+	if err != nil || len(scoped) != 0 {
+		t.Fatalf("ListAll(other workspace) = %d, err = %v, want 0", len(scoped), err)
+	}
+	otherOwner, err := store.ListAll(ctx, workspaceID, randomID(t), 0, dto.MaxListLimit)
+	if err != nil || len(otherOwner) != 0 {
+		t.Fatalf("ListAll(other owner) = %d, err = %v, want 0", len(otherOwner), err)
+	}
+}
+
 func TestStoreEnforcesCrossWorkspaceIsolation(t *testing.T) {
 	pool := setupTestDB(t)
 	ctx := context.Background()

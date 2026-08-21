@@ -68,6 +68,36 @@ type DeleteTodoRequest struct {
 	Version     int
 }
 
+// ImportTodoRequest carries a recorded todo for portability import; the
+// historical identity, versions, and timestamps are restored as-is.
+type ImportTodoRequest struct {
+	WorkspaceID, UserID      string
+	Title                    string
+	Description              *string
+	DueAtUTC                 *time.Time
+	TimezoneAtInput          *string
+	Status                   string
+	ReminderVersion, Version int
+	CreatedAt, UpdatedAt     time.Time
+	CompletedAt, DeletedAt   *time.Time
+}
+
+// TodoExportRecord is one row of a portability export; deleted and completed
+// todos included, with their historical timestamps.
+type TodoExportRecord struct {
+	ID              string     `json:"id"`
+	Title           string     `json:"title"`
+	Description     *string    `json:"description,omitempty"`
+	DueAtUTC        *time.Time `json:"dueAtUtc,omitempty"`
+	TimezoneAtInput *string    `json:"timezoneAtInput,omitempty"`
+	Status          string     `json:"status"`
+	ReminderVersion int        `json:"reminderVersion"`
+	CreatedAt       time.Time  `json:"createdAt"`
+	UpdatedAt       time.Time  `json:"updatedAt"`
+	CompletedAt     *time.Time `json:"completedAt,omitempty"`
+	DeletedAt       *time.Time `json:"deletedAt,omitempty"`
+}
+
 // UpdateTodoRequest carries a partial edit. DueChanged distinguishes an
 // absent field from an explicit clear.
 type UpdateTodoRequest struct {

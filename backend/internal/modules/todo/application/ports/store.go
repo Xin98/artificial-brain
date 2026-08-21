@@ -25,4 +25,7 @@ type TodoStore interface {
 	// SearchCandidates returns pending todos whose title matches keyword,
 	// capped at limit, each carrying its current Version.
 	SearchCandidates(ctx context.Context, workspaceID, ownerUserID, keyword string, limit int) ([]dto.Candidate, error)
+	// ListAll returns every todo for the owner regardless of status, ordered by
+	// created_at, capped at limit from offset — the export seam.
+	ListAll(ctx context.Context, workspaceID, ownerUserID string, offset, limit int) ([]domain.Todo, error)
 }

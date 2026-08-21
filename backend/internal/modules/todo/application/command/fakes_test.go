@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -93,6 +94,27 @@ func (s *fakeTodoStore) List(_ context.Context, workspaceID, ownerUserID string,
 		if len(result) >= limit {
 			break
 		}
+	}
+	return result, nil
+}
+
+func (s *fakeTodoStore) ListAll(_ context.Context, workspaceID, ownerUserID string, offset, limit int) ([]domain.Todo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var result []domain.Todo
+	for key, todo := range s.todos {
+		if key.workspaceID != workspaceID || key.ownerUserID != ownerUserID {
+			continue
+		}
+		result = append(result, todo)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].CreatedAt.Before(result[j].CreatedAt) })
+	if offset > len(result) {
+		return nil, nil
+	}
+	result = result[offset:]
+	if len(result) > limit {
+		result = result[:limit]
 	}
 	return result, nil
 }

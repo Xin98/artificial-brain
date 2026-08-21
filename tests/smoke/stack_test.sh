@@ -746,6 +746,99 @@ full_stack_test() {
 	[ "$port_todos_rerun_after" = "$port_todos_rerun" ] || \
 		fail "idempotent re-import changed the todo count: ${port_todos_rerun} -> ${port_todos_rerun_after}"
 
+	# Conflict on change: mutate the SOURCE todo after it was imported so its
+	# content fingerprint changes, then re-export and import the fresh bundle.
+	# The registered source record classifies as conflict in the preview and
+	# in the confirmed report, and the previously imported copy keeps the
+	# original title — a conflict is skipped and reported, never applied. The
+	# fresh bundle also carries the first import's copies, which carry no
+	# source identity and therefore classify as new.
+	port_coc_source=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/todos/${e2e_rem_todo_id}")
+	port_coc_version=$(printf '%s\n' "$port_coc_source" | jq -r '.version')
+	case "$port_coc_version" in '' | *[!0-9]*) fail "source todo ${e2e_rem_todo_id} has no numeric version: ${port_coc_source}" ;; esac
+	port_coc_title="冒烟提醒-冲突演练"
+	port_coc_patch=$(curl --silent --show-error --max-time 5 \
+		--write-out '\n%{http_code}' \
+		--header "$e2e_auth" --header 'Content-Type: application/json' \
+		--request PATCH \
+		--data "{\"version\":${port_coc_version},\"title\":\"${port_coc_title}\"}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/todos/${e2e_rem_todo_id}")
+	port_coc_patch_status=$(printf '%s\n' "$port_coc_patch" | tail -n 1)
+	port_coc_patch_body=$(printf '%s\n' "$port_coc_patch" | sed '$d')
+	[ "$port_coc_patch_status" = 200 ] || \
+		fail "source todo PATCH status ${port_coc_patch_status}, want 200: ${port_coc_patch_body}"
+	printf '%s\n' "$port_coc_patch_body" | jq -e --arg title "$port_coc_title" \
+		'.title == $title' >/dev/null || \
+		fail "source todo PATCH did not apply the mutated title: ${port_coc_patch_body}"
+
+	port_coc_bundle=$(mktemp) || fail "cannot create a temporary conflict bundle file"
+	port_coc_export_status=$(curl --silent --show-error --max-time 10 \
+		--output "$port_coc_bundle" --write-out '%{http_code}' \
+		--header "$e2e_auth" --request POST \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/portability/export")
+	[ "$port_coc_export_status" = 200 ] || \
+		fail "conflict re-export status ${port_coc_export_status}, want 200"
+
+	port_coc_upload=$(curl --silent --show-error --max-time 10 \
+		--write-out '\n%{http_code}' \
+		--header "$e2e_auth" \
+		--form "bundle=@${port_coc_bundle}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/portability/imports")
+	port_coc_upload_status=$(printf '%s\n' "$port_coc_upload" | tail -n 1)
+	port_coc_upload_body=$(printf '%s\n' "$port_coc_upload" | sed '$d')
+	[ "$port_coc_upload_status" = 201 ] || \
+		fail "conflict bundle upload status ${port_coc_upload_status}, want 201: ${port_coc_upload_body}"
+	port_coc_import_id=$(printf '%s\n' "$port_coc_upload_body" | jq -r '.importId')
+	[ -n "$port_coc_import_id" ] && [ "$port_coc_import_id" != null ] || \
+		fail "conflict bundle upload did not return an importId: ${port_coc_upload_body}"
+	printf '%s\n' "$port_coc_upload_body" | jq -e \
+		--arg sourceRecordId "$e2e_rem_todo_id" \
+		--argjson new "$port_new_expected" --argjson skipped "$((port_total - 1))" '
+		.preview.new == $new and
+		.preview.skipped == $skipped and
+		.preview.conflicts >= 1 and
+		.preview.invalid == 0 and
+		([.preview.details[] | select(.kind == "todo" and .sourceRecordId == $sourceRecordId and .outcome == "conflict")] | length == 1)
+	' >/dev/null || \
+		fail "conflict bundle preview does not classify the mutated todo as conflict: ${port_coc_upload_body}"
+
+	port_coc_confirm=$(curl --silent --show-error --max-time 10 \
+		--write-out '\n%{http_code}' \
+		--header "$e2e_auth" --request POST \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/portability/imports/${port_coc_import_id}/confirm")
+	port_coc_confirm_status=$(printf '%s\n' "$port_coc_confirm" | tail -n 1)
+	port_coc_report=$(printf '%s\n' "$port_coc_confirm" | sed '$d')
+	[ "$port_coc_confirm_status" = 200 ] || \
+		fail "conflict bundle confirm status ${port_coc_confirm_status}, want 200: ${port_coc_report}"
+	printf '%s\n' "$port_coc_report" | jq -e \
+		--arg sourceRecordId "$e2e_rem_todo_id" \
+		--argjson new "$port_new_expected" --argjson skipped "$((port_total - 1))" '
+		.new == $new and
+		.skipped == $skipped and
+		.conflicts >= 1 and
+		.invalid == 0 and
+		([.details[] | select(.kind == "todo" and .sourceRecordId == $sourceRecordId and .outcome == "conflict")] | length == 1)
+	' >/dev/null || \
+		fail "conflict bundle report does not report the mutated todo as conflict: ${port_coc_report}"
+
+	port_coc_copy_title=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select title from todo.todos where id = '${port_reminder_copy}'")
+	[ "$port_coc_copy_title" = 冒烟提醒 ] || \
+		fail "conflict import overwrote the copied todo ${port_reminder_copy}: ${port_coc_copy_title}"
+	port_coc_mutated_rows=$(compose exec -T postgres psql \
+		--username "${POSTGRES_USER:-artificial_brain}" \
+		--dbname "${POSTGRES_DB:-artificial_brain}" \
+		--tuples-only --no-align \
+		--command "select count(*) from todo.todos where title = '${port_coc_title}'")
+	[ "$port_coc_mutated_rows" = 1 ] || \
+		fail "mutated title appears in ${port_coc_mutated_rows} todo rows, want exactly 1 (the source row only)"
+	rm -f "$port_coc_bundle"
+
 	port_conflict=$(curl --silent --show-error --max-time 5 \
 		--write-out '\n%{http_code}' \
 		--header "$e2e_auth" --request POST \

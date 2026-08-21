@@ -7,7 +7,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
+	"time"
 
 	"github.com/Xin98/artificial-brain/backend/internal/modules/portability/application/dto"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/portability/application/ports"
@@ -177,4 +179,231 @@ func (f *fakeArchiveFactory) newArchive(w io.Writer) ports.ArchiveWriter {
 	f.calls++
 	f.gotWriter = w
 	return f.archive
+}
+
+// Import-side fakes (Task 9): parser, import store, source records, the three
+// module importers, and the joinable unit of work.
+
+var (
+	errImportSave      = errors.New("import save failed")
+	errImportCommit    = errors.New("import commit failed")
+	errFingerprints    = errors.New("fingerprint lookup failed")
+	errTargets         = errors.New("target lookup failed")
+	errTodoImport      = errors.New("todo import failed")
+	errChannelImport   = errors.New("channel import failed")
+	errDeliveryImport  = errors.New("delivery import failed")
+	errUnitOfWorkStart = errors.New("unit of work failed")
+)
+
+// fakeBundleParser returns a fixed parse result or error and records the
+// bytes it was asked to parse.
+type fakeBundleParser struct {
+	parsed  ports.ParsedBundle
+	err     error
+	calls   int
+	gotData []byte
+}
+
+func (f *fakeBundleParser) Parse(data []byte) (ports.ParsedBundle, error) {
+	f.calls++
+	f.gotData = data
+	return f.parsed, f.err
+}
+
+// importCommitCall records one Commit invocation.
+type importCommitCall struct {
+	workspaceID string
+	importID    string
+	report      dto.ImportReport
+	now         time.Time
+}
+
+// fakeImportStore keeps rows in memory keyed "workspaceID/importID". Get
+// reports domain.ErrImportNotFound for unknown rows, mirroring the postgres
+// adapter contract.
+type fakeImportStore struct {
+	rows      map[string]dto.ImportRecordRow
+	saved     []dto.ImportRecordRow
+	commits   []importCommitCall
+	saveErr   error
+	getErr    error
+	commitErr error
+}
+
+func newFakeImportStore() *fakeImportStore {
+	return &fakeImportStore{rows: map[string]dto.ImportRecordRow{}}
+}
+
+func importRowKey(workspaceID, importID string) string { return workspaceID + "/" + importID }
+
+func (f *fakeImportStore) Save(_ context.Context, imp dto.ImportRecordRow) error {
+	if f.saveErr != nil {
+		return f.saveErr
+	}
+	f.saved = append(f.saved, imp)
+	f.rows[importRowKey(imp.WorkspaceID, imp.ID)] = imp
+	return nil
+}
+
+func (f *fakeImportStore) Get(_ context.Context, workspaceID, importID string) (dto.ImportRecordRow, error) {
+	if f.getErr != nil {
+		return dto.ImportRecordRow{}, f.getErr
+	}
+	row, ok := f.rows[importRowKey(workspaceID, importID)]
+	if !ok {
+		return dto.ImportRecordRow{}, domain.ErrImportNotFound
+	}
+	return row, nil
+}
+
+func (f *fakeImportStore) Commit(_ context.Context, workspaceID, importID string, report dto.ImportReport, now time.Time) error {
+	if f.commitErr != nil {
+		return f.commitErr
+	}
+	f.commits = append(f.commits, importCommitCall{workspaceID: workspaceID, importID: importID, report: report, now: now})
+	key := importRowKey(workspaceID, importID)
+	row := f.rows[key]
+	row.State = dto.ImportStateCommitted
+	row.Report = &report
+	committedAt := now
+	row.CommittedAt = &committedAt
+	f.rows[key] = row
+	return nil
+}
+
+// fakeSourceRecordStore serves fixed fingerprint/target maps and records
+// every registration in order.
+type fakeSourceRecordStore struct {
+	fingerprints      map[string]string
+	targets           map[string]string
+	fingerprintsErr   error
+	targetsErr        error
+	registerErr       error
+	failRegisterOn    string // source record id whose registration reports ErrSourceRecordExists
+	registered        []dto.SourceRecord
+	gotInstanceID     string
+	fingerprintIDSets [][]string
+	targetIDSets      [][]string
+}
+
+func (f *fakeSourceRecordStore) Fingerprints(_ context.Context, sourceInstanceID string, ids []string) (map[string]string, error) {
+	f.gotInstanceID = sourceInstanceID
+	f.fingerprintIDSets = append(f.fingerprintIDSets, ids)
+	if f.fingerprintsErr != nil {
+		return nil, f.fingerprintsErr
+	}
+	return f.fingerprints, nil
+}
+
+func (f *fakeSourceRecordStore) Targets(_ context.Context, sourceInstanceID string, ids []string) (map[string]string, error) {
+	f.gotInstanceID = sourceInstanceID
+	f.targetIDSets = append(f.targetIDSets, ids)
+	if f.targetsErr != nil {
+		return nil, f.targetsErr
+	}
+	return f.targets, nil
+}
+
+func (f *fakeSourceRecordStore) Register(_ context.Context, record dto.SourceRecord) error {
+	if f.registerErr != nil {
+		return f.registerErr
+	}
+	if f.failRegisterOn != "" && record.SourceRecordID == f.failRegisterOn {
+		return domain.ErrSourceRecordExists
+	}
+	f.registered = append(f.registered, record)
+	return nil
+}
+
+// fakeTodoImporter returns sequential ids ("todo-1", "todo-2", …), records
+// every request, and appends "todo:<title>" to the shared call log when one
+// is wired so tests can assert the channels → todos → deliveries order.
+type fakeTodoImporter struct {
+	err    error
+	nextID int
+	calls  []dto.TodoImportRequest
+	log    *[]string
+}
+
+func (f *fakeTodoImporter) ImportTodo(_ context.Context, _ ports.Principal, record dto.TodoImportRequest) (string, error) {
+	f.calls = append(f.calls, record)
+	if f.log != nil {
+		*f.log = append(*f.log, "todo:"+record.Title)
+	}
+	if f.err != nil {
+		return "", f.err
+	}
+	f.nextID++
+	return fmt.Sprintf("todo-%d", f.nextID), nil
+}
+
+// fakeChannelImporter mirrors fakeTodoImporter ("channel-1", …); a non-empty
+// existsID makes every call return that id together with
+// ports.ErrChannelExists, mirroring the cmd shim's translation of identity's
+// duplicate-channel error.
+type fakeChannelImporter struct {
+	err      error
+	existsID string
+	nextID   int
+	calls    []dto.ChannelImportRequest
+	log      *[]string
+}
+
+func (f *fakeChannelImporter) ImportChannel(_ context.Context, _ ports.Principal, record dto.ChannelImportRequest) (string, error) {
+	f.calls = append(f.calls, record)
+	if f.log != nil {
+		*f.log = append(*f.log, "channel:"+record.Kind+":"+record.Address)
+	}
+	if f.existsID != "" {
+		return f.existsID, ports.ErrChannelExists
+	}
+	if f.err != nil {
+		return "", f.err
+	}
+	f.nextID++
+	return fmt.Sprintf("channel-%d", f.nextID), nil
+}
+
+// fakeDeliveryImporter records every request and appends
+// "delivery:<sourceRecordId>" to the shared call log; failOnSourceRecordID
+// fails the import of that one delivery.
+type fakeDeliveryImporter struct {
+	err                  error
+	failOnSourceRecordID string
+	calls                []dto.DeliveryImportRequest
+	log                  *[]string
+}
+
+func (f *fakeDeliveryImporter) ImportDelivery(_ context.Context, _ ports.Principal, record dto.DeliveryImportRequest) error {
+	f.calls = append(f.calls, record)
+	if f.log != nil {
+		*f.log = append(*f.log, "delivery:"+record.SourceRecordID)
+	}
+	if f.err != nil {
+		return f.err
+	}
+	if f.failOnSourceRecordID != "" && record.SourceRecordID == f.failOnSourceRecordID {
+		return errDeliveryImport
+	}
+	return nil
+}
+
+// fakeUnitOfWork runs the work function directly, surfacing its error the
+// way a rolled-back transaction would; commitErr fails Run after the work
+// itself succeeded.
+type fakeUnitOfWork struct {
+	runs      int
+	err       error // returned instead of running the work
+	commitErr error
+}
+
+func (f *fakeUnitOfWork) Run(ctx context.Context, work func(context.Context) error) error {
+	f.runs++
+	if f.err != nil {
+		return f.err
+	}
+	if err := work(ctx); err != nil {
+		return err
+	}
+	return f.commitErr
 }

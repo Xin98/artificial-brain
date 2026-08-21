@@ -12,6 +12,7 @@ create table portability.portability_imports (
   state text not null default 'pending',
   source_instance_id text not null,
   bundle bytea not null,
+  preview jsonb,
   report jsonb,
   created_at timestamptz not null default now(),
   committed_at timestamptz,
@@ -40,6 +41,7 @@ alter table reminder.reminder_deliveries drop constraint if exists reminder_deli
 alter table reminder.reminder_deliveries drop column if exists origin;
 alter table reminder.reminder_deliveries alter column plan_id set not null;
 drop table if exists portability.portability_source_records;
+alter table portability.portability_imports drop column if exists preview;
 drop table if exists portability.portability_imports;
 drop table if exists public.instance_meta;
 drop schema if exists portability;

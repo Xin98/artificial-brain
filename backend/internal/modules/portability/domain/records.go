@@ -3,6 +3,7 @@ package domain
 import (
 	"fmt"
 	"time"
+	"unicode/utf8"
 )
 
 // Todo record statuses carried by bundles; they mirror the todo module's
@@ -34,6 +35,32 @@ const (
 const (
 	DeliveryOriginLocal    = "local"
 	DeliveryOriginImported = "imported"
+)
+
+// MaxTodoTitleLength bounds bundle todo titles in characters (runes). It
+// mirrors the todo module's domain.MaxTitleLength without importing another
+// context's domain: confirm hands titles to the todo importer, which rejects
+// anything longer, so the validator must reject them too — preview and
+// confirm stay aligned.
+const MaxTodoTitleLength = 200
+
+// Suppression reasons carried by bundles; they mirror the reminder module's
+// domain.SuppressionReason value set without importing another context's
+// domain. Confirm hands reasons to the reminder import seam, which accepts
+// only these five values.
+const (
+	SuppressionReasonTodoCompleted      = "todo_completed"
+	SuppressionReasonTodoDeleted        = "todo_deleted"
+	SuppressionReasonVersionStale       = "version_stale"
+	SuppressionReasonChannelUnavailable = "channel_unavailable"
+	SuppressionReasonPlanRevoked        = "plan_revoked"
+)
+
+// Receipt states carried by bundles; they mirror the reminder module's
+// domain.ReceiptState value set without importing another context's domain.
+const (
+	ReceiptStateReceivedOK     = "received_ok"
+	ReceiptStateReceivedFailed = "received_failed"
 )
 
 // TodoRecord is a todo row as carried by an export bundle.
@@ -89,6 +116,9 @@ func ValidateTodoRecord(r TodoRecord) error {
 	if r.Title == "" {
 		return recordError(r.ID, "todo: title is required")
 	}
+	if utf8.RuneCountInString(r.Title) > MaxTodoTitleLength {
+		return recordError(r.ID, fmt.Sprintf("todo: title longer than %d characters", MaxTodoTitleLength))
+	}
 	switch r.Status {
 	case TodoStatusPending, TodoStatusCompleted, TodoStatusDeleted:
 	default:
@@ -132,6 +162,24 @@ func ValidateDeliveryRecord(r DeliveryRecord) error {
 	case DeliveryStateScheduled, DeliveryStateSending, DeliveryStateSucceeded, DeliveryStateFailed, DeliveryStateSuppressed:
 	default:
 		return recordError(r.ID, fmt.Sprintf("delivery: unknown state %q", r.State))
+	}
+	if r.State == DeliveryStateSuppressed && (r.SuppressionReason == nil || *r.SuppressionReason == "") {
+		return recordError(r.ID, "delivery: suppressed state requires a suppression reason")
+	}
+	if r.SuppressionReason != nil {
+		switch *r.SuppressionReason {
+		case SuppressionReasonTodoCompleted, SuppressionReasonTodoDeleted, SuppressionReasonVersionStale,
+			SuppressionReasonChannelUnavailable, SuppressionReasonPlanRevoked:
+		default:
+			return recordError(r.ID, fmt.Sprintf("delivery: unknown suppression reason %q", *r.SuppressionReason))
+		}
+	}
+	if r.ReceiptState != nil {
+		switch *r.ReceiptState {
+		case ReceiptStateReceivedOK, ReceiptStateReceivedFailed:
+		default:
+			return recordError(r.ID, fmt.Sprintf("delivery: unknown receipt state %q", *r.ReceiptState))
+		}
 	}
 	if r.AttemptCount < 0 {
 		return recordError(r.ID, "delivery: attempt count must not be negative")

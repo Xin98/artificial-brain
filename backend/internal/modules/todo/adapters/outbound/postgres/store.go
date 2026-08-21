@@ -123,14 +123,15 @@ func (s *Store) List(ctx context.Context, workspaceID, ownerUserID string, filte
 }
 
 // ListAll returns every todo for the owner regardless of status, ordered by
-// created_at, capped at limit from offset — the export seam.
+// created_at with id as the tie-breaker for stable offset paging, capped at
+// limit from offset — the export seam.
 func (s *Store) ListAll(ctx context.Context, workspaceID, ownerUserID string, offset, limit int) ([]domain.Todo, error) {
 	exec := database.ExecutorFromContextOr(ctx, s.pool)
 	rows, err := exec.Query(ctx, `
 		select `+todoColumns+`
 		from todo.todos
 		where workspace_id = $1 and owner_user_id = $2
-		order by created_at asc
+		order by created_at asc, id asc
 		limit $3 offset $4
 	`, workspaceID, ownerUserID, limit, offset)
 	if err != nil {

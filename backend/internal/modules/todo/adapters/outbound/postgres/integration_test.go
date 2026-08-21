@@ -371,6 +371,87 @@ func TestStoreListAllReturnsFullHistoryOrderedAndPaged(t *testing.T) {
 	}
 }
 
+// TestStoreListAllStableOrderOnCreatedAtTies pins the export paging
+// invariant: rows sharing created_at are tie-broken by id, so offset paging
+// can never skip or duplicate a record when several todos were created in
+// the same instant.
+func TestStoreListAllStableOrderOnCreatedAtTies(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	store := NewStore(pool)
+	workspaceID, ownerUserID := randomID(t), randomID(t)
+
+	// Three todos on one shared created_at, inserted in a different order.
+	tie := testNow.Add(-time.Hour)
+	one := restoredTodo(t, workspaceID, ownerUserID, "并列任务一", domain.StatusPending, tie)
+	two := restoredTodo(t, workspaceID, ownerUserID, "并列任务二", domain.StatusPending, tie)
+	three := restoredTodo(t, workspaceID, ownerUserID, "并列任务三", domain.StatusPending, tie)
+	for _, todo := range []domain.Todo{two, three, one} {
+		if err := store.Insert(ctx, todo); err != nil {
+			t.Fatalf("Insert(%s) error = %v", todo.Title, err)
+		}
+	}
+
+	// The full listing orders by created_at with id as the tie-breaker.
+	all, err := store.ListAll(ctx, workspaceID, ownerUserID, 0, dto.MaxListLimit)
+	if err != nil {
+		t.Fatalf("ListAll() error = %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("ListAll() rows = %d, want 3", len(all))
+	}
+	// The ids are random, so the contract is the shape of the order: every
+	// inserted record present, ascending by id within the created_at tie.
+	wantSet := map[string]bool{one.ID: true, two.ID: true, three.ID: true}
+	for _, row := range all {
+		if !wantSet[row.ID] {
+			t.Fatalf("ListAll() returned unexpected record %s", row.ID)
+		}
+	}
+	for i := 1; i < len(all); i++ {
+		if all[i-1].ID > all[i].ID {
+			t.Fatalf("ListAll() order = [%s %s], want id ascending tie-break", all[i-1].ID, all[i].ID)
+		}
+	}
+
+	// Repeated full listings keep the exact same order.
+	again, err := store.ListAll(ctx, workspaceID, ownerUserID, 0, dto.MaxListLimit)
+	if err != nil {
+		t.Fatalf("ListAll(again) error = %v", err)
+	}
+	for i := range all {
+		if all[i].ID != again[i].ID {
+			t.Fatalf("ListAll() unstable order at %d: %s vs %s", i, all[i].ID, again[i].ID)
+		}
+	}
+
+	// One-row paging covers every tied record exactly once — no skips, no
+	// duplicates, even though every page boundary cuts through equal
+	// created_at values.
+	seen := map[string]int{}
+	for offset := 0; offset < 3; offset++ {
+		page, err := store.ListAll(ctx, workspaceID, ownerUserID, offset, 1)
+		if err != nil {
+			t.Fatalf("ListAll(offset %d) error = %v", offset, err)
+		}
+		if len(page) != 1 {
+			t.Fatalf("ListAll(offset %d, limit 1) rows = %d, want 1", offset, len(page))
+		}
+		if page[0].ID != all[offset].ID {
+			t.Fatalf("ListAll(offset %d, limit 1) = %s, want %s from the stable order", offset, page[0].ID, all[offset].ID)
+		}
+		seen[page[0].ID]++
+	}
+	if len(seen) != 3 {
+		t.Fatalf("paged ids = %v, want all 3 distinct records", seen)
+	}
+	for id, count := range seen {
+		if count != 1 {
+			t.Fatalf("record %s paged %d times, want exactly once", id, count)
+		}
+	}
+}
+
 func TestStoreEnforcesCrossWorkspaceIsolation(t *testing.T) {
 	pool := setupTestDB(t)
 	ctx := context.Background()

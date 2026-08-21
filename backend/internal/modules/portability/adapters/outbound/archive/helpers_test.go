@@ -72,7 +72,7 @@ func sampleDeliveries() []dto.DeliveryExportRecord {
 			SourceTodoRecordID: "todo-2",
 			Channel:            domain.ChannelKindSMS,
 			State:              domain.DeliveryStateSuppressed,
-			SuppressionReason:  strPtr("channel_disabled"),
+			SuppressionReason:  strPtr(domain.SuppressionReasonChannelUnavailable),
 			AttemptCount:       0,
 			TodoTitleSnapshot:  "file taxes",
 			ScheduledAt:        deliveryAt,

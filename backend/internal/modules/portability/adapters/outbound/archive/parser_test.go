@@ -1,7 +1,10 @@
 package archive
 
 import (
+	"archive/zip"
+	"bytes"
 	"errors"
+	"io"
 	"reflect"
 	"strings"
 	"testing"
@@ -59,7 +62,7 @@ func wantDeliveryDomains() []domain.DeliveryRecord {
 			SourceTodoRecordID: "todo-2",
 			Channel:            domain.ChannelKindSMS,
 			State:              domain.DeliveryStateSuppressed,
-			SuppressionReason:  strPtr("channel_disabled"),
+			SuppressionReason:  strPtr(domain.SuppressionReasonChannelUnavailable),
 			AttemptCount:       0,
 			TodoTitleSnapshot:  "file taxes",
 			ScheduledAt:        deliveryAt,
@@ -246,6 +249,42 @@ func TestParseInvalidRecordReportsRecordInvalid(t *testing.T) {
 		}
 	})
 
+	t.Run("todo with title over the todo domain limit", func(t *testing.T) {
+		spec := fullSpec()
+		spec.todos = []dto.TodoExportRecord{{
+			ID:        "todo-bad",
+			Title:     strings.Repeat("x", domain.MaxTodoTitleLength+1),
+			Status:    domain.TodoStatusPending,
+			CreatedAt: todoCreatedAt,
+			UpdatedAt: todoCreatedAt,
+		}}
+		data, _ := buildBundle(t, spec)
+
+		_, err := Parse(data)
+		if !errors.Is(err, domain.ErrRecordInvalid) {
+			t.Fatalf("Parse() error = %v, want ErrRecordInvalid", err)
+		}
+	})
+
+	t.Run("suppressed delivery without a suppression reason", func(t *testing.T) {
+		spec := fullSpec()
+		spec.deliveries = []dto.DeliveryExportRecord{{
+			ID:                 "delivery-bad",
+			SourceTodoRecordID: "todo-1",
+			Channel:            domain.ChannelKindEmail,
+			State:              domain.DeliveryStateSuppressed,
+			ScheduledAt:        deliveryAt,
+			CreatedAt:          deliveryAt,
+			Origin:             domain.DeliveryOriginLocal,
+		}}
+		data, _ := buildBundle(t, spec)
+
+		_, err := Parse(data)
+		if !errors.Is(err, domain.ErrRecordInvalid) {
+			t.Fatalf("Parse() error = %v, want ErrRecordInvalid", err)
+		}
+	})
+
 	t.Run("delivery with unknown state", func(t *testing.T) {
 		spec := fullSpec()
 		spec.deliveries = []dto.DeliveryExportRecord{{
@@ -267,6 +306,76 @@ func TestParseInvalidRecordReportsRecordInvalid(t *testing.T) {
 			t.Fatalf("Parse() error = %v, want the record id named", err)
 		}
 	})
+}
+
+// zeroReader streams an unbounded run of zero bytes; it lets a test craft a
+// highly compressible oversized entry without allocating it.
+type zeroReader struct{}
+
+func (zeroReader) Read(p []byte) (int, error) {
+	for i := range p {
+		p[i] = 0
+	}
+	return len(p), nil
+}
+
+// TestParseRejectsOversizedEntry guards the decompression bomb edge: the
+// bundle cap bounds compressed bytes, so a zero-filled entry can claim a
+// decompressed size orders of magnitude larger. The parser must cap each
+// entry's decompressed size and report ErrBundleStructure instead of
+// allocating the claimed payload.
+func TestParseRejectsOversizedEntry(t *testing.T) {
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	entry, err := writer.Create(dto.TodosEntry)
+	if err != nil {
+		t.Fatalf("zip.Create() error = %v", err)
+	}
+	if _, err := io.CopyN(entry, zeroReader{}, maxEntryBytes+1); err != nil {
+		t.Fatalf("write oversized entry: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("zip.Close() error = %v", err)
+	}
+
+	_, err = Parse(buf.Bytes())
+	if !errors.Is(err, domain.ErrBundleStructure) {
+		t.Fatalf("Parse() error = %v, want ErrBundleStructure", err)
+	}
+	if !strings.Contains(err.Error(), dto.TodosEntry) {
+		t.Fatalf("Parse() error = %v, want the oversized entry named", err)
+	}
+}
+
+// TestParseAcceptsEntryAtSizeLimit pins that the cap is inclusive: an entry
+// of exactly maxEntryBytes decompressed bytes reads fine (the failure above
+// comes from the structure violation, which is what the test asserts, so this
+// case drives readEntry directly to keep the boundary honest).
+func TestParseReadEntryAtSizeLimit(t *testing.T) {
+	var buf bytes.Buffer
+	writer := zip.NewWriter(&buf)
+	entry, err := writer.Create("bounded.bin")
+	if err != nil {
+		t.Fatalf("zip.Create() error = %v", err)
+	}
+	if _, err := io.CopyN(entry, zeroReader{}, maxEntryBytes); err != nil {
+		t.Fatalf("write limit-size entry: %v", err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatalf("zip.Close() error = %v", err)
+	}
+
+	reader, err := zip.NewReader(bytes.NewReader(buf.Bytes()), int64(buf.Len()))
+	if err != nil {
+		t.Fatalf("zip.NewReader() error = %v", err)
+	}
+	content, err := readEntry(reader.File[0])
+	if err != nil {
+		t.Fatalf("readEntry(at limit) error = %v, want nil", err)
+	}
+	if len(content) != maxEntryBytes {
+		t.Fatalf("readEntry(at limit) len = %d, want %d", len(content), maxEntryBytes)
+	}
 }
 
 func TestParseNonZipReportsBundleStructure(t *testing.T) {

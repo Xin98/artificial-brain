@@ -127,6 +127,28 @@ func TestValidateTodoRecordNamesOffendingRecord(t *testing.T) {
 	}
 }
 
+// TestValidateTodoRecordTitleLength pins the title bound that keeps preview
+// aligned with confirm: the todo importer rejects titles beyond the todo
+// domain's MaxTitleLength, so the portability validator must reject them too.
+func TestValidateTodoRecordTitleLength(t *testing.T) {
+	record := validTodoRecord()
+	record.Title = strings.Repeat("长", MaxTodoTitleLength)
+	if err := ValidateTodoRecord(record); err != nil {
+		t.Fatalf("ValidateTodoRecord(title at limit) error = %v, want nil", err)
+	}
+
+	record.Title = strings.Repeat("长", MaxTodoTitleLength+1)
+	err := ValidateTodoRecord(record)
+	if !errors.Is(err, ErrRecordInvalid) {
+		t.Fatalf("ValidateTodoRecord(title over limit) error = %v, want ErrRecordInvalid", err)
+	}
+	// The bound counts characters (runes), not bytes, like the todo domain.
+	record.Title = strings.Repeat("a", MaxTodoTitleLength+1)
+	if err := ValidateTodoRecord(record); !errors.Is(err, ErrRecordInvalid) {
+		t.Fatalf("ValidateTodoRecord(ascii title over limit) error = %v, want ErrRecordInvalid", err)
+	}
+}
+
 func validChannelRecord() ChannelRecord {
 	return ChannelRecord{ID: "channel-1", Kind: ChannelKindEmail, Address: "ops@example.com", Enabled: true}
 }
@@ -177,6 +199,8 @@ func validDeliveryRecord() DeliveryRecord {
 	}
 }
 
+func strPtr(value string) *string { return &value }
+
 func TestValidateDeliveryRecord(t *testing.T) {
 	if err := ValidateDeliveryRecord(validDeliveryRecord()); err != nil {
 		t.Fatalf("ValidateDeliveryRecord(valid) error = %v, want nil", err)
@@ -187,6 +211,10 @@ func TestValidateDeliveryRecord(t *testing.T) {
 	} {
 		record := validDeliveryRecord()
 		record.State = state
+		if state == DeliveryStateSuppressed {
+			// A suppressed delivery is only valid with a known reason.
+			record.SuppressionReason = strPtr(SuppressionReasonTodoCompleted)
+		}
 		if err := ValidateDeliveryRecord(record); err != nil {
 			t.Fatalf("ValidateDeliveryRecord(state %q) error = %v, want nil", state, err)
 		}
@@ -211,6 +239,18 @@ func TestValidateDeliveryRecord(t *testing.T) {
 		{"empty state", func(r *DeliveryRecord) { r.State = "" }},
 		{"negative attempt count", func(r *DeliveryRecord) { r.AttemptCount = -1 }},
 		{"unknown origin", func(r *DeliveryRecord) { r.Origin = "elsewhere" }},
+		{"suppressed without reason", func(r *DeliveryRecord) {
+			r.State = DeliveryStateSuppressed
+			r.SuppressionReason = nil
+		}},
+		{"suppressed with empty reason", func(r *DeliveryRecord) {
+			r.State = DeliveryStateSuppressed
+			r.SuppressionReason = strPtr("")
+		}},
+		{"unknown suppression reason", func(r *DeliveryRecord) { r.SuppressionReason = strPtr("channel_disabled") }},
+		{"empty suppression reason", func(r *DeliveryRecord) { r.SuppressionReason = strPtr("") }},
+		{"unknown receipt state", func(r *DeliveryRecord) { r.ReceiptState = strPtr("delivered") }},
+		{"empty receipt state", func(r *DeliveryRecord) { r.ReceiptState = strPtr("") }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -220,5 +260,30 @@ func TestValidateDeliveryRecord(t *testing.T) {
 				t.Fatalf("ValidateDeliveryRecord(%s) error = %v, want ErrRecordInvalid", test.name, err)
 			}
 		})
+	}
+}
+
+// TestValidateDeliveryRecordKnownSuppressionAndReceiptValues pins that every
+// value the reminder domain accepts validates, keeping preview aligned with
+// confirm; the unknown values are covered by the rejection table above.
+func TestValidateDeliveryRecordKnownSuppressionAndReceiptValues(t *testing.T) {
+	for _, reason := range []string{
+		SuppressionReasonTodoCompleted, SuppressionReasonTodoDeleted,
+		SuppressionReasonVersionStale, SuppressionReasonChannelUnavailable,
+		SuppressionReasonPlanRevoked,
+	} {
+		record := validDeliveryRecord()
+		record.State = DeliveryStateSuppressed
+		record.SuppressionReason = strPtr(reason)
+		if err := ValidateDeliveryRecord(record); err != nil {
+			t.Fatalf("ValidateDeliveryRecord(reason %q) error = %v, want nil", reason, err)
+		}
+	}
+	for _, receipt := range []string{ReceiptStateReceivedOK, ReceiptStateReceivedFailed} {
+		record := validDeliveryRecord()
+		record.ReceiptState = strPtr(receipt)
+		if err := ValidateDeliveryRecord(record); err != nil {
+			t.Fatalf("ValidateDeliveryRecord(receipt %q) error = %v, want nil", receipt, err)
+		}
 	}
 }

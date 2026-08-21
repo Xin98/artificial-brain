@@ -311,6 +311,14 @@ func Load(role Role, lookup LookupEnv) (Config, error) {
 	if privateAdminPhone != "" && !e164PhonePattern.MatchString(privateAdminPhone) {
 		return Config{}, fmt.Errorf("config: invalid PRIVATE_ADMIN_PHONE")
 	}
+	// The E.164 pattern allows an optional '+', but the admin phone gates
+	// provisioning and login by exact string comparison: a '+'-less value
+	// would provision the user under one string while the admin logs in with
+	// the canonical '+' form, a permanent lockout. Require the canonical
+	// form so both sides always compare identical strings.
+	if privateAdminPhone != "" && !strings.HasPrefix(privateAdminPhone, "+") {
+		return Config{}, fmt.Errorf("config: PRIVATE_ADMIN_PHONE must start with '+' (canonical E.164 form)")
+	}
 	if deploymentMode == DeploymentModePrivate && role == RoleAPI && privateAdminPhone == "" {
 		return Config{}, fmt.Errorf("config: missing PRIVATE_ADMIN_PHONE")
 	}

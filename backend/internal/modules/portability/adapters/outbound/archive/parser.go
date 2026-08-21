@@ -25,6 +25,12 @@ var requiredEntries = []string{
 	dto.ManifestEntry,
 }
 
+// maxEntryBytes caps one entry's decompressed size. The upload cap bounds
+// compressed bytes only, so a zero-filled zip can claim a decompressed size
+// orders of magnitude larger than its wire size; reading past this bound
+// reports ErrBundleStructure instead of allocating the claimed payload.
+const maxEntryBytes = 64 << 20
+
 // checksummedEntries are the entries whose bytes must match the manifest's
 // recorded sha256. todos.csv is checksummed but never parsed: its rows are a
 // human-readable copy, and records come from the JSON entries.
@@ -120,15 +126,22 @@ func isRequiredEntry(name string) bool {
 	return false
 }
 
+// readEntry decompresses one entry, capped at maxEntryBytes+1 bytes so an
+// oversized entry bounds its allocation before it is rejected — the zip wire
+// size is compressed bytes only, so a crafted entry can claim a decompressed
+// size orders of magnitude larger than the whole bundle.
 func readEntry(file *zip.File) ([]byte, error) {
 	reader, err := file.Open()
 	if err != nil {
 		return nil, err
 	}
 	defer reader.Close()
-	content, err := io.ReadAll(reader)
+	content, err := io.ReadAll(io.LimitReader(reader, maxEntryBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("read %q: %s", file.Name, err)
+	}
+	if int64(len(content)) > maxEntryBytes {
+		return nil, fmt.Errorf("entry %q exceeds the %d-byte decompressed limit", file.Name, maxEntryBytes)
 	}
 	return content, nil
 }

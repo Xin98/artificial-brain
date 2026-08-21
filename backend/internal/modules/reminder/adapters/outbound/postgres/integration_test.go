@@ -208,11 +208,11 @@ func timePtr(value time.Time) *time.Time { return &value }
 
 // newImportedDeliveryFixture rebuilds a historical delivery without a plan,
 // as the import seam restores one.
-func newImportedDeliveryFixture(t *testing.T, workspaceID, ownerUserID, todoID, key string, createdAt time.Time) domain.ReminderDelivery {
+func newImportedDeliveryFixture(t *testing.T, workspaceID, ownerUserID, todoID string, reminderVersion int, key string, createdAt time.Time) domain.ReminderDelivery {
 	t.Helper()
 	submitted := createdAt.Add(time.Minute)
 	finalized := submitted
-	delivery, err := domain.RestoreDelivery(randomID(t), workspaceID, ownerUserID, todoID, 1,
+	delivery, err := domain.RestoreDelivery(randomID(t), workspaceID, ownerUserID, todoID, reminderVersion,
 		"email", "review the launch checklist", key, domain.StateSucceeded,
 		nil, 1, strPtr("provider-message-"+key), nil,
 		createdAt.Add(-time.Hour), createdAt, &submitted, &finalized,
@@ -244,7 +244,7 @@ func TestDeliveryStoreSaveImportedInsertsNullPlanAndImportedOrigin(t *testing.T)
 	workspaceID, ownerUserID, todoID := randomID(t), randomID(t), randomID(t)
 	key := "import:" + randomID(t) + ":" + randomID(t)
 
-	delivery := newImportedDeliveryFixture(t, workspaceID, ownerUserID, todoID, key, testNow)
+	delivery := newImportedDeliveryFixture(t, workspaceID, ownerUserID, todoID, 1, key, testNow)
 	if err := store.SaveImported(ctx, delivery); err != nil {
 		t.Fatalf("SaveImported() error = %v", err)
 	}
@@ -291,9 +291,52 @@ func TestDeliveryStoreSaveImportedInsertsNullPlanAndImportedOrigin(t *testing.T)
 	}
 
 	// Re-importing the same key maps to ErrDeliveryExists.
-	duplicate := newImportedDeliveryFixture(t, workspaceID, ownerUserID, todoID, key, testNow)
+	duplicate := newImportedDeliveryFixture(t, workspaceID, ownerUserID, todoID, 1, key, testNow)
 	if err := store.SaveImported(ctx, duplicate); !errors.Is(err, domain.ErrDeliveryExists) {
 		t.Fatalf("duplicate SaveImported() error = %v, want ErrDeliveryExists", err)
+	}
+}
+
+// TestDeliveryStoreTodoChannelUniqueAppliesToLocalRowsOnly pins migration
+// 008's partial unique index: the bundle wire shape carries no reminder
+// version, so every delivery of a rescheduled todo restores as
+// (todo, 0, channel) — imported history must not collide on that triple,
+// while local planning rows keep the fallback uniqueness.
+func TestDeliveryStoreTodoChannelUniqueAppliesToLocalRowsOnly(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	store := NewDeliveryStore(pool)
+	plans := NewPlanStore(pool)
+	workspaceID, ownerUserID, todoID := randomID(t), randomID(t), randomID(t)
+
+	// Two imported rows on the same (todo, 0, channel) with distinct import
+	// keys both insert — no unique violation.
+	first := newImportedDeliveryFixture(t, workspaceID, ownerUserID, todoID, 0, "import:inst-x:rec-1", testNow)
+	if err := store.SaveImported(ctx, first); err != nil {
+		t.Fatalf("SaveImported(first) error = %v, want imported history exempt from the todo/channel uniqueness", err)
+	}
+	second := newImportedDeliveryFixture(t, workspaceID, ownerUserID, todoID, 0, "import:inst-x:rec-2", testNow.Add(time.Minute))
+	if err := store.SaveImported(ctx, second); err != nil {
+		t.Fatalf("SaveImported(second) error = %v, want imported history exempt from the todo/channel uniqueness", err)
+	}
+	// The import idempotency key still guards re-imports of the same record.
+	repeat := newImportedDeliveryFixture(t, workspaceID, ownerUserID, todoID, 0, "import:inst-x:rec-1", testNow)
+	if err := store.SaveImported(ctx, repeat); !errors.Is(err, domain.ErrDeliveryExists) {
+		t.Fatalf("SaveImported(repeat key) error = %v, want ErrDeliveryExists", err)
+	}
+
+	// Two local rows on the same (todo, version, channel) still collide, even
+	// with distinct idempotency keys — the collision comes from the partial
+	// unique index, not the key constraint.
+	plan := seedPlanFixture(t, ctx, plans, workspaceID, todoID, 1)
+	local := newDeliveryFixture(t, workspaceID, ownerUserID, todoID, 1, plan.ID, "sms", testNow.Add(time.Hour))
+	if err := store.Save(ctx, local); err != nil {
+		t.Fatalf("Save(local) error = %v", err)
+	}
+	collision := newDeliveryFixture(t, workspaceID, ownerUserID, todoID, 1, plan.ID, "sms", testNow.Add(2*time.Hour))
+	collision.IdempotencyKey = "distinct:" + randomID(t)
+	if err := store.Save(ctx, collision); !errors.Is(err, domain.ErrDeliveryExists) {
+		t.Fatalf("Save(local collision) error = %v, want ErrDeliveryExists from the local-only todo/channel uniqueness", err)
 	}
 }
 
@@ -304,17 +347,17 @@ func TestDeliveryStoreExportOrdersByCreatedAtWithOrigin(t *testing.T) {
 	plans := NewPlanStore(pool)
 	workspaceID, otherWorkspaceID := randomID(t), randomID(t)
 
-	imported1 := newImportedDeliveryFixture(t, workspaceID, randomID(t), randomID(t), "import:inst-a:rec-1", testNow.Add(1*time.Minute))
+	imported1 := newImportedDeliveryFixture(t, workspaceID, randomID(t), randomID(t), 1, "import:inst-a:rec-1", testNow.Add(1*time.Minute))
 	if err := store.SaveImported(ctx, imported1); err != nil {
 		t.Fatalf("SaveImported(first) error = %v", err)
 	}
 	local := seedExportDelivery(t, ctx, plans, store, workspaceID, testNow.Add(2*time.Minute))
-	imported2 := newImportedDeliveryFixture(t, workspaceID, randomID(t), randomID(t), "import:inst-a:rec-2", testNow.Add(3*time.Minute))
+	imported2 := newImportedDeliveryFixture(t, workspaceID, randomID(t), randomID(t), 1, "import:inst-a:rec-2", testNow.Add(3*time.Minute))
 	if err := store.SaveImported(ctx, imported2); err != nil {
 		t.Fatalf("SaveImported(second) error = %v", err)
 	}
 	// Another workspace's delivery must never appear in this export.
-	other := newImportedDeliveryFixture(t, otherWorkspaceID, randomID(t), randomID(t), "import:inst-b:rec-1", testNow.Add(4*time.Minute))
+	other := newImportedDeliveryFixture(t, otherWorkspaceID, randomID(t), randomID(t), 1, "import:inst-b:rec-1", testNow.Add(4*time.Minute))
 	if err := store.SaveImported(ctx, other); err != nil {
 		t.Fatalf("SaveImported(other workspace) error = %v", err)
 	}

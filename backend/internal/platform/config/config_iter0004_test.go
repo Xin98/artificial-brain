@@ -91,6 +91,10 @@ func TestLoadRejectsInvalidAdminPhones(t *testing.T) {
 		{name: "leading zero", value: "+0123456789"},
 		{name: "too long", value: "+12345678901234567"},
 		{name: "internal separator", value: "+86 13800138000"},
+		// A '+'-less E.164 number would provision the admin under a string
+		// the login gate never matches (logins compare the canonical '+'
+		// form), permanently locking the operator out.
+		{name: "missing plus", value: "8613800138000"},
 	}
 
 	for _, tt := range tests {

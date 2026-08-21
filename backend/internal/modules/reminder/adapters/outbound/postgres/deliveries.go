@@ -60,9 +60,10 @@ const importedDeliveryColumns = `id, workspace_id, owner_user_id, todo_id, todo_
 	receipt_state, receipt_at, receipt_error_code, origin`
 
 // SaveImported inserts an imported delivery with a NULL plan_id and the
-// imported origin, mapping any unique violation (the import key or the
-// todo/version/channel fallback) to domain.ErrDeliveryExists so re-imports
-// stay idempotent.
+// imported origin, mapping any unique violation (the import key — migration
+// 008 scopes the todo/version/channel fallback uniqueness to local rows, so
+// imported history never collides on it) to domain.ErrDeliveryExists so
+// re-imports stay idempotent.
 func (s *DeliveryStore) SaveImported(ctx context.Context, delivery domain.ReminderDelivery) error {
 	exec := database.ExecutorFromContextOr(ctx, s.pool)
 	_, err := exec.Exec(ctx, `

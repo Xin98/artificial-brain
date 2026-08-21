@@ -11,6 +11,10 @@ var (
 	ErrMissingDeliveryFields  = errors.New("reminder: delivery requires id, workspace, owner, todo, plan, and title")
 	ErrInvalidDeliveryChannel = errors.New("reminder: delivery channel must be email or sms")
 
+	// ErrInvalidDeliveryAttemptCount rejects a restored delivery whose
+	// historical attempt count is negative.
+	ErrInvalidDeliveryAttemptCount = errors.New("reminder: delivery attempt count must not be negative")
+
 	// ErrInvalidSuppressionReason rejects a suppression reason that is not one
 	// of the five known domain reasons, so callers never persist free-form text.
 	ErrInvalidSuppressionReason = errors.New("reminder: suppression reason must be one of the known reasons")

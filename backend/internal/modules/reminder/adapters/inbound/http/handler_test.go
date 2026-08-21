@@ -120,6 +120,14 @@ func (s *fakeDeliveryStore) List(_ context.Context, workspaceID string, filter r
 	return s.deliveries, s.listErr
 }
 
+func (s *fakeDeliveryStore) SaveImported(context.Context, reminderdomain.ReminderDelivery) error {
+	return nil
+}
+
+func (s *fakeDeliveryStore) Export(context.Context, string, int, int) ([]reminderdomain.ReminderDelivery, error) {
+	return nil, nil
+}
+
 type fakeOpsStore struct {
 	view reminderdto.OpsView
 	err  error

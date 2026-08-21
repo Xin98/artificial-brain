@@ -14,17 +14,26 @@ import (
 var fixedNow = time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 
 type fakeDeliveryStore struct {
-	statsCalls []string
-	stats      dto.DeliveryCounts
-	statsErr   error
-	listCalls  []listCall
-	rows       []domain.ReminderDelivery
-	listErr    error
+	statsCalls  []string
+	stats       dto.DeliveryCounts
+	statsErr    error
+	listCalls   []listCall
+	rows        []domain.ReminderDelivery
+	listErr     error
+	exportCalls []exportCall
+	exportRows  []domain.ReminderDelivery
+	exportErr   error
 }
 
 type listCall struct {
 	workspaceID string
 	filter      dto.DeliveryFilter
+}
+
+type exportCall struct {
+	workspaceID string
+	offset      int
+	limit       int
 }
 
 func newFakeDeliveryStore() *fakeDeliveryStore { return &fakeDeliveryStore{} }
@@ -61,6 +70,15 @@ func (s *fakeDeliveryStore) Stats(_ context.Context, workspaceID string) (dto.De
 func (s *fakeDeliveryStore) List(_ context.Context, workspaceID string, filter dto.DeliveryFilter) ([]domain.ReminderDelivery, error) {
 	s.listCalls = append(s.listCalls, listCall{workspaceID, filter})
 	return s.rows, s.listErr
+}
+
+func (s *fakeDeliveryStore) SaveImported(context.Context, domain.ReminderDelivery) error {
+	return nil
+}
+
+func (s *fakeDeliveryStore) Export(_ context.Context, workspaceID string, offset, limit int) ([]domain.ReminderDelivery, error) {
+	s.exportCalls = append(s.exportCalls, exportCall{workspaceID, offset, limit})
+	return s.exportRows, s.exportErr
 }
 
 type fakeOpsStore struct {

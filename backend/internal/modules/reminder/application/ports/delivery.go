@@ -37,4 +37,12 @@ type DeliveryStore interface {
 	Stats(ctx context.Context, workspaceID string) (dto.DeliveryCounts, error)
 	// List returns deliveries for the workspace matching the filter.
 	List(ctx context.Context, workspaceID string, filter dto.DeliveryFilter) ([]domain.ReminderDelivery, error)
+	// SaveImported inserts an imported delivery with a NULL plan and the
+	// imported origin; a duplicate idempotency key (the caller's import key)
+	// returns domain.ErrDeliveryExists.
+	SaveImported(ctx context.Context, delivery domain.ReminderDelivery) error
+	// Export returns the workspace's deliveries across all five states and
+	// both origins, ordered by created_at for stable paging, with the origin
+	// populated on every row.
+	Export(ctx context.Context, workspaceID string, offset, limit int) ([]domain.ReminderDelivery, error)
 }

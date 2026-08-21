@@ -65,6 +65,19 @@ const (
 	ReceiptFailed ReceiptState = "received_failed"
 )
 
+// DeliveryOrigin distinguishes plan-time deliveries from imported history.
+// The zero value is the local origin, so every existing construction site
+// stays untouched; the database default mirrors it with 'local'.
+type DeliveryOrigin string
+
+const (
+	// OriginLocal marks a delivery planned and executed by this instance.
+	OriginLocal DeliveryOrigin = "local"
+	// OriginImported marks a delivery restored from another instance's
+	// export bundle.
+	OriginImported DeliveryOrigin = "imported"
+)
+
 // ReminderDelivery tracks one attempt to deliver a planned reminder over one
 // channel. One delivery is created per requested channel, atomically with the
 // plan; the UNIQUE IdempotencyKey keeps replanning and retries on a single
@@ -92,6 +105,7 @@ type ReminderDelivery struct {
 	ReceiptState        *ReceiptState
 	ReceiptAt           *time.Time
 	ReceiptErrorCode    *string
+	Origin              DeliveryOrigin // zero value is the local origin; only RestoreDelivery stamps the imported origin
 }
 
 // IdempotencyKeyFor builds the business idempotency key
@@ -127,6 +141,51 @@ func NewDelivery(id, workspaceID, ownerUserID, todoID string, todoReminderVersio
 		State:               StateScheduled,
 		ScheduledAt:         scheduledAt,
 		CreatedAt:           now,
+	}, nil
+}
+
+// RestoreDelivery rebuilds a historical delivery without a plan; the
+// idempotency key is the caller's import key, states must be terminal or
+// scheduled-with-history (all five states allowed — history is history). The
+// restored delivery carries the imported origin; imported history is
+// read-only and never transitions again.
+func RestoreDelivery(id, workspaceID, ownerUserID, todoID string, todoReminderVersion int,
+	channel, titleSnapshot, idempotencyKey string, state DeliveryState,
+	suppressionReason *SuppressionReason, attemptCount int,
+	providerMessageID, lastErrorCode *string,
+	scheduledAt, createdAt time.Time, submittedAt, finalizedAt *time.Time,
+	receiptState *ReceiptState, receiptAt *time.Time, receiptErrorCode *string) (ReminderDelivery, error) {
+	if id == "" || workspaceID == "" || ownerUserID == "" || todoID == "" || titleSnapshot == "" || idempotencyKey == "" {
+		return ReminderDelivery{}, ErrMissingDeliveryFields
+	}
+	if channel != "email" && channel != "sms" {
+		return ReminderDelivery{}, ErrInvalidDeliveryChannel
+	}
+	if attemptCount < 0 {
+		return ReminderDelivery{}, ErrInvalidDeliveryAttemptCount
+	}
+	return ReminderDelivery{
+		ID:                  id,
+		WorkspaceID:         workspaceID,
+		TodoID:              todoID,
+		OwnerUserID:         ownerUserID,
+		TodoReminderVersion: todoReminderVersion,
+		Channel:             channel,
+		TodoTitleSnapshot:   titleSnapshot,
+		IdempotencyKey:      idempotencyKey,
+		State:               state,
+		SuppressionReason:   suppressionReason,
+		AttemptCount:        attemptCount,
+		ProviderMessageID:   providerMessageID,
+		LastErrorCode:       lastErrorCode,
+		ScheduledAt:         scheduledAt,
+		CreatedAt:           createdAt,
+		SubmittedAt:         submittedAt,
+		FinalizedAt:         finalizedAt,
+		ReceiptState:        receiptState,
+		ReceiptAt:           receiptAt,
+		ReceiptErrorCode:    receiptErrorCode,
+		Origin:              OriginImported,
 	}, nil
 }
 

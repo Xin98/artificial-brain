@@ -50,6 +50,33 @@ func (s *DeliveryStore) Save(ctx context.Context, delivery domain.ReminderDelive
 	return err
 }
 
+// importedDeliveryColumns is SaveImported's insert column list:
+// deliveryColumns without plan_id, plus origin. Imported rows carry a NULL
+// plan and the imported origin.
+const importedDeliveryColumns = `id, workspace_id, owner_user_id, todo_id, todo_reminder_version,
+	channel, todo_title_snapshot, idempotency_key, state, suppression_reason,
+	attempt_count, provider_job_id, provider_message_id, last_error_code,
+	scheduled_at, created_at, submitted_at, finalized_at,
+	receipt_state, receipt_at, receipt_error_code, origin`
+
+// SaveImported inserts an imported delivery with a NULL plan_id and the
+// imported origin, mapping any unique violation (the import key or the
+// todo/version/channel fallback) to domain.ErrDeliveryExists so re-imports
+// stay idempotent.
+func (s *DeliveryStore) SaveImported(ctx context.Context, delivery domain.ReminderDelivery) error {
+	exec := database.ExecutorFromContextOr(ctx, s.pool)
+	_, err := exec.Exec(ctx, `
+		insert into reminder.reminder_deliveries (`+importedDeliveryColumns+`)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
+			$16, $17, $18, $19, $20, $21, $22)
+	`, importedDeliveryArgs(delivery)...)
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
+		return domain.ErrDeliveryExists
+	}
+	return err
+}
+
 // Update replaces a delivery's mutable fields, keyed by (workspace_id, id).
 // Identity and planning fields (todo, plan, channel, idempotency key, title
 // snapshot, created_at) are immutable once planned; provider_job_id is owned
@@ -242,6 +269,35 @@ func (s *DeliveryStore) List(ctx context.Context, workspaceID string, filter dto
 	return deliveries, rows.Err()
 }
 
+// Export returns every delivery for the workspace — all five states and both
+// origins — ordered by created_at (id as the tie-breaker) for stable paging.
+// It is the only read path selecting the origin column; every other read
+// keeps the historical 22-column shape.
+func (s *DeliveryStore) Export(ctx context.Context, workspaceID string, offset, limit int) ([]domain.ReminderDelivery, error) {
+	exec := database.ExecutorFromContextOr(ctx, s.pool)
+	rows, err := exec.Query(ctx, `
+		select `+deliveryColumns+`, origin
+		from reminder.reminder_deliveries
+		where workspace_id = $1
+		order by created_at, id
+		limit $2 offset $3
+	`, workspaceID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	deliveries := []domain.ReminderDelivery{}
+	for rows.Next() {
+		delivery, err := scanDeliveryWithOrigin(rows)
+		if err != nil {
+			return nil, err
+		}
+		deliveries = append(deliveries, delivery)
+	}
+	return deliveries, rows.Err()
+}
+
 // rowScanner is satisfied by both pgx.Row and pgx.Rows.
 type rowScanner interface {
 	Scan(dest ...any) error
@@ -258,6 +314,21 @@ func deliveryArgs(delivery domain.ReminderDelivery) []any {
 		delivery.ScheduledAt, delivery.CreatedAt, delivery.SubmittedAt,
 		delivery.FinalizedAt, receiptStateArg(delivery.ReceiptState),
 		delivery.ReceiptAt, delivery.ReceiptErrorCode,
+	}
+}
+
+// importedDeliveryArgs returns the 22 insert arguments for SaveImported in
+// importedDeliveryColumns order: no plan_id, and the imported origin last.
+func importedDeliveryArgs(delivery domain.ReminderDelivery) []any {
+	return []any{
+		delivery.ID, delivery.WorkspaceID, delivery.OwnerUserID, delivery.TodoID,
+		delivery.TodoReminderVersion, delivery.Channel,
+		delivery.TodoTitleSnapshot, delivery.IdempotencyKey, string(delivery.State),
+		suppressionReasonArg(delivery.SuppressionReason), delivery.AttemptCount,
+		delivery.ProviderJobID, delivery.ProviderMessageID, delivery.LastErrorCode,
+		delivery.ScheduledAt, delivery.CreatedAt, delivery.SubmittedAt,
+		delivery.FinalizedAt, receiptStateArg(delivery.ReceiptState),
+		delivery.ReceiptAt, delivery.ReceiptErrorCode, string(domain.OriginImported),
 	}
 }
 
@@ -320,6 +391,53 @@ func scanDelivery(scanner rowScanner) (domain.ReminderDelivery, error) {
 	if receiptState != nil {
 		receipt := domain.ReceiptState(*receiptState)
 		delivery.ReceiptState = &receipt
+	}
+	return delivery, nil
+}
+
+// scanDeliveryWithOrigin reads one delivery row in deliveryColumns+origin
+// order; a missing row maps to domain.ErrDeliveryNotFound. It mirrors
+// scanDelivery with the origin column appended (and the nullable plan_id of
+// imported rows) so the 22-column scan stays untouched.
+func scanDeliveryWithOrigin(scanner rowScanner) (domain.ReminderDelivery, error) {
+	var delivery domain.ReminderDelivery
+	var planID, state, suppressionReason, receiptState, origin *string
+	err := scanner.Scan(&delivery.ID, &delivery.WorkspaceID, &delivery.OwnerUserID,
+		&delivery.TodoID, &delivery.TodoReminderVersion, &planID,
+		&delivery.Channel, &delivery.TodoTitleSnapshot, &delivery.IdempotencyKey,
+		&state, &suppressionReason, &delivery.AttemptCount, &delivery.ProviderJobID,
+		&delivery.ProviderMessageID, &delivery.LastErrorCode, &delivery.ScheduledAt,
+		&delivery.CreatedAt, &delivery.SubmittedAt, &delivery.FinalizedAt,
+		&receiptState, &delivery.ReceiptAt, &delivery.ReceiptErrorCode, &origin)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return domain.ReminderDelivery{}, domain.ErrDeliveryNotFound
+	}
+	if err != nil {
+		return domain.ReminderDelivery{}, err
+	}
+	// pgx scans timestamptz in the local location; the domain works in UTC,
+	// so normalize every scanned instant before handing it back.
+	delivery.ScheduledAt = delivery.ScheduledAt.UTC()
+	delivery.CreatedAt = delivery.CreatedAt.UTC()
+	delivery.SubmittedAt = utcPtr(delivery.SubmittedAt)
+	delivery.FinalizedAt = utcPtr(delivery.FinalizedAt)
+	delivery.ReceiptAt = utcPtr(delivery.ReceiptAt)
+	if planID != nil {
+		delivery.PlanID = *planID
+	}
+	if state != nil {
+		delivery.State = domain.DeliveryState(*state)
+	}
+	if suppressionReason != nil {
+		reason := domain.SuppressionReason(*suppressionReason)
+		delivery.SuppressionReason = &reason
+	}
+	if receiptState != nil {
+		receipt := domain.ReceiptState(*receiptState)
+		delivery.ReceiptState = &receipt
+	}
+	if origin != nil {
+		delivery.Origin = domain.DeliveryOrigin(*origin)
 	}
 	return delivery, nil
 }

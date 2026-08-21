@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -198,6 +199,152 @@ func TestPlanStoreRevokePlannedCutoff(t *testing.T) {
 	statuses = statusesByTodo(t, pool, workspaceID, todoID)
 	if statuses[3] != "planned" {
 		t.Fatalf("status above cutoff after re-revoke = %q, want planned", statuses[3])
+	}
+}
+
+func strPtr(value string) *string        { return &value }
+func timePtr(value time.Time) *time.Time { return &value }
+
+// newImportedDeliveryFixture rebuilds a historical delivery without a plan,
+// as the import seam restores one.
+func newImportedDeliveryFixture(t *testing.T, workspaceID, ownerUserID, todoID, key string, createdAt time.Time) domain.ReminderDelivery {
+	t.Helper()
+	submitted := createdAt.Add(time.Minute)
+	finalized := submitted
+	delivery, err := domain.RestoreDelivery(randomID(t), workspaceID, ownerUserID, todoID, 1,
+		"email", "review the launch checklist", key, domain.StateSucceeded,
+		nil, 1, strPtr("provider-message-"+key), nil,
+		createdAt.Add(-time.Hour), createdAt, &submitted, &finalized,
+		nil, nil, nil)
+	if err != nil {
+		t.Fatalf("RestoreDelivery() error = %v", err)
+	}
+	return delivery
+}
+
+// seedExportDelivery saves one local delivery for a fresh todo with an
+// explicit created_at so export ordering is deterministic.
+func seedExportDelivery(t *testing.T, ctx context.Context, plans *PlanStore, deliveries *DeliveryStore, workspaceID string, createdAt time.Time) domain.ReminderDelivery {
+	t.Helper()
+	todoID := randomID(t)
+	plan := seedPlanFixture(t, ctx, plans, workspaceID, todoID, 1)
+	delivery := newDeliveryFixture(t, workspaceID, randomID(t), todoID, 1, plan.ID, "email", testNow.Add(time.Hour))
+	delivery.CreatedAt = createdAt
+	if err := deliveries.Save(ctx, delivery); err != nil {
+		t.Fatalf("Save(export fixture) error = %v", err)
+	}
+	return delivery
+}
+
+func TestDeliveryStoreSaveImportedInsertsNullPlanAndImportedOrigin(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	store := NewDeliveryStore(pool)
+	workspaceID, ownerUserID, todoID := randomID(t), randomID(t), randomID(t)
+	key := "import:" + randomID(t) + ":" + randomID(t)
+
+	delivery := newImportedDeliveryFixture(t, workspaceID, ownerUserID, todoID, key, testNow)
+	if err := store.SaveImported(ctx, delivery); err != nil {
+		t.Fatalf("SaveImported() error = %v", err)
+	}
+
+	// The raw row carries a NULL plan_id and the imported origin.
+	var planID *string
+	var origin string
+	if err := pool.QueryRow(ctx, `
+		select plan_id, origin from reminder.reminder_deliveries where idempotency_key = $1
+	`, key).Scan(&planID, &origin); err != nil {
+		t.Fatalf("raw row scan error = %v", err)
+	}
+	if planID != nil {
+		t.Fatalf("plan_id = %v, want NULL for an imported delivery", *planID)
+	}
+	if origin != "imported" {
+		t.Fatalf("origin = %q, want imported", origin)
+	}
+
+	// Every persisted field round-trips through Export, plan included as empty.
+	rows, err := store.Export(ctx, workspaceID, 0, 50)
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("Export() rows = %d, want 1", len(rows))
+	}
+	if !reflect.DeepEqual(rows[0], delivery) {
+		t.Fatalf("Export() row = %#v, want %#v", rows[0], delivery)
+	}
+
+	// Re-importing the same key maps to ErrDeliveryExists.
+	duplicate := newImportedDeliveryFixture(t, workspaceID, ownerUserID, todoID, key, testNow)
+	if err := store.SaveImported(ctx, duplicate); !errors.Is(err, domain.ErrDeliveryExists) {
+		t.Fatalf("duplicate SaveImported() error = %v, want ErrDeliveryExists", err)
+	}
+}
+
+func TestDeliveryStoreExportOrdersByCreatedAtWithOrigin(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	store := NewDeliveryStore(pool)
+	plans := NewPlanStore(pool)
+	workspaceID, otherWorkspaceID := randomID(t), randomID(t)
+
+	imported1 := newImportedDeliveryFixture(t, workspaceID, randomID(t), randomID(t), "import:inst-a:rec-1", testNow.Add(1*time.Minute))
+	if err := store.SaveImported(ctx, imported1); err != nil {
+		t.Fatalf("SaveImported(first) error = %v", err)
+	}
+	local := seedExportDelivery(t, ctx, plans, store, workspaceID, testNow.Add(2*time.Minute))
+	imported2 := newImportedDeliveryFixture(t, workspaceID, randomID(t), randomID(t), "import:inst-a:rec-2", testNow.Add(3*time.Minute))
+	if err := store.SaveImported(ctx, imported2); err != nil {
+		t.Fatalf("SaveImported(second) error = %v", err)
+	}
+	// Another workspace's delivery must never appear in this export.
+	other := newImportedDeliveryFixture(t, otherWorkspaceID, randomID(t), randomID(t), "import:inst-b:rec-1", testNow.Add(4*time.Minute))
+	if err := store.SaveImported(ctx, other); err != nil {
+		t.Fatalf("SaveImported(other workspace) error = %v", err)
+	}
+
+	// All states and both origins export, ordered by created_at.
+	rows, err := store.Export(ctx, workspaceID, 0, 50)
+	if err != nil {
+		t.Fatalf("Export() error = %v", err)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("Export() rows = %d, want 3", len(rows))
+	}
+	if rows[0].ID != imported1.ID || rows[1].ID != local.ID || rows[2].ID != imported2.ID {
+		t.Fatalf("Export() order = [%s %s %s], want created_at order", rows[0].ID, rows[1].ID, rows[2].ID)
+	}
+	if rows[0].Origin != domain.OriginImported || rows[2].Origin != domain.OriginImported {
+		t.Fatalf("imported origins = %q/%q, want %q", rows[0].Origin, rows[2].Origin, domain.OriginImported)
+	}
+	// The local row round-trips with the local origin and its plan intact.
+	if rows[1].Origin != domain.OriginLocal {
+		t.Fatalf("local origin = %q, want %q", rows[1].Origin, domain.OriginLocal)
+	}
+	if rows[1].PlanID != local.PlanID || rows[1].IdempotencyKey != local.IdempotencyKey {
+		t.Fatalf("local row plan/key = %q/%q, want %q/%q", rows[1].PlanID, rows[1].IdempotencyKey, local.PlanID, local.IdempotencyKey)
+	}
+	if rows[0].PlanID != "" || rows[2].PlanID != "" {
+		t.Fatalf("imported rows carry plan ids %q/%q, want empty", rows[0].PlanID, rows[2].PlanID)
+	}
+
+	// Offset and limit page through the created_at ordering.
+	page, err := store.Export(ctx, workspaceID, 1, 1)
+	if err != nil {
+		t.Fatalf("Export(page) error = %v", err)
+	}
+	if len(page) != 1 || page[0].ID != local.ID {
+		t.Fatalf("Export(offset 1, limit 1) = %v, want [%s]", page, local.ID)
+	}
+
+	// Another workspace exports nothing of this workspace's rows.
+	empty, err := store.Export(ctx, randomID(t), 0, 50)
+	if err != nil {
+		t.Fatalf("Export(other workspace) error = %v", err)
+	}
+	if len(empty) != 0 {
+		t.Fatalf("Export(other workspace) = %v, want none", empty)
 	}
 }
 

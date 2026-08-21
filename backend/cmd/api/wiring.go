@@ -656,6 +656,15 @@ type channelImportShim struct {
 
 func (s *channelImportShim) ImportChannel(ctx context.Context, principal portabilityports.Principal, record portabilitydto.ChannelImportRequest) (string, error) {
 	identityPrincipal := identitydto.Principal{UserID: principal.UserID, WorkspaceID: principal.WorkspaceID}
+	// Detect duplicates BEFORE the insert: confirm runs inside one unit-of-
+	// work transaction, and a failed insert aborts it ("current transaction
+	// is aborted"), rolling back the whole import. Reading the existing
+	// channels joins the same transaction and keeps the downgrade path
+	// transaction-clean — a self-import skips duplicate channels instead of
+	// failing.
+	if existingID, found := s.findExisting(ctx, identityPrincipal, record.Kind, record.Address); found {
+		return existingID, portabilityports.ErrChannelExists
+	}
 	view, err := s.imp.Handle(ctx, identityPrincipal, record.Kind, record.Address, record.Enabled)
 	if err == nil {
 		return view.ID, nil
@@ -663,9 +672,13 @@ func (s *channelImportShim) ImportChannel(ctx context.Context, principal portabi
 	if !errors.Is(err, identitydomain.ErrChannelExists) {
 		return "", err
 	}
+	// Concurrent duplicate between the check and the insert. The ambient
+	// transaction is already aborted here, so resolving the existing id is
+	// best-effort: report the sentinel with whatever id the listing still
+	// yields, and let confirm surface the raw error otherwise.
 	existing, listErr := s.list.GetContactChannels(ctx, identityPrincipal)
 	if listErr != nil {
-		return "", listErr
+		return "", err
 	}
 	for _, channel := range existing {
 		if channel.Kind == record.Kind && channel.Address == record.Address {
@@ -673,6 +686,22 @@ func (s *channelImportShim) ImportChannel(ctx context.Context, principal portabi
 		}
 	}
 	return "", err
+}
+
+// findExisting resolves an existing (user, kind, address) channel id inside
+// the ambient transaction; found is false when the listing fails or carries
+// no match (the caller then attempts the insert and maps the outcome).
+func (s *channelImportShim) findExisting(ctx context.Context, principal identitydto.Principal, kind, address string) (string, bool) {
+	existing, err := s.list.GetContactChannels(ctx, principal)
+	if err != nil {
+		return "", false
+	}
+	for _, channel := range existing {
+		if channel.Kind == kind && channel.Address == address {
+			return channel.ID, true
+		}
+	}
+	return "", false
 }
 
 // deliveryImportShim adapts Reminder's public import handler to

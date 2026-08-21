@@ -13,6 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/Xin98/artificial-brain/backend/internal/modules/reminder/application/dto"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/reminder/domain"
 	"github.com/Xin98/artificial-brain/backend/internal/platform/database"
 )
@@ -273,6 +274,20 @@ func TestDeliveryStoreSaveImportedInsertsNullPlanAndImportedOrigin(t *testing.T)
 	}
 	if !reflect.DeepEqual(rows[0], delivery) {
 		t.Fatalf("Export() row = %#v, want %#v", rows[0], delivery)
+	}
+
+	// The historical 22-column reads also tolerate the NULL plan: List backs
+	// the reminders listing, which must keep serving after an import inserts
+	// plan-less rows (the empty PlanID stays empty).
+	listed, err := store.List(ctx, workspaceID, dto.DeliveryFilter{Limit: 50})
+	if err != nil {
+		t.Fatalf("List() error = %v", err)
+	}
+	if len(listed) != 1 {
+		t.Fatalf("List() rows = %d, want 1", len(listed))
+	}
+	if listed[0].ID != delivery.ID || listed[0].PlanID != "" {
+		t.Fatalf("List() row = %#v, want id %s with an empty plan id", listed[0], delivery.ID)
 	}
 
 	// Re-importing the same key maps to ErrDeliveryExists.

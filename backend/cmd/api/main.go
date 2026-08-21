@@ -33,17 +33,24 @@ func main() {
 	}
 	defer pool.Close()
 
+	// Fail safe, never hard-exit: without a migrated schema the API still
+	// serves liveness and answers readiness 503 (ready re-verifies the
+	// schema). The one-shot migrate service is the only schema owner, and
+	// Compose starts the API only after it completes successfully, so the
+	// schema is always present in a real stack — the degraded path exists
+	// for probes against an empty database. Startup provisioning needs the
+	// schema, so it only runs once verification succeeds.
 	if err := database.RequireSchema(context.Background(), pool, database.CurrentSchemaVersion); err != nil {
-		logger.Error("database schema verification failed")
-		os.Exit(1)
-	}
-	if err := provisionInstanceIdentity(context.Background(), pool); err != nil {
-		logger.Error("instance identity provisioning failed")
-		os.Exit(1)
-	}
-	if err := provisionPrivateAdmin(context.Background(), cfg, pool); err != nil {
-		logger.Error("private admin provisioning failed")
-		os.Exit(1)
+		logger.Warn("database schema verification failed; serving degraded until migration completes")
+	} else {
+		if err := provisionInstanceIdentity(context.Background(), pool); err != nil {
+			logger.Error("instance identity provisioning failed")
+			os.Exit(1)
+		}
+		if err := provisionPrivateAdmin(context.Background(), cfg, pool); err != nil {
+			logger.Error("private admin provisioning failed")
+			os.Exit(1)
+		}
 	}
 
 	ready := func(ctx context.Context) error {

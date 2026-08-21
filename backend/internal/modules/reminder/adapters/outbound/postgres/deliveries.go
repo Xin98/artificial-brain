@@ -357,12 +357,13 @@ func utcPtr(t *time.Time) *time.Time {
 }
 
 // scanDelivery reads one delivery row in deliveryColumns order; a missing row
-// maps to domain.ErrDeliveryNotFound.
+// maps to domain.ErrDeliveryNotFound. plan_id scans nullable: imported rows
+// carry no plan (migration 008 dropped the NOT NULL).
 func scanDelivery(scanner rowScanner) (domain.ReminderDelivery, error) {
 	var delivery domain.ReminderDelivery
-	var state, suppressionReason, receiptState *string
+	var planID, state, suppressionReason, receiptState *string
 	err := scanner.Scan(&delivery.ID, &delivery.WorkspaceID, &delivery.OwnerUserID,
-		&delivery.TodoID, &delivery.TodoReminderVersion, &delivery.PlanID,
+		&delivery.TodoID, &delivery.TodoReminderVersion, &planID,
 		&delivery.Channel, &delivery.TodoTitleSnapshot, &delivery.IdempotencyKey,
 		&state, &suppressionReason, &delivery.AttemptCount, &delivery.ProviderJobID,
 		&delivery.ProviderMessageID, &delivery.LastErrorCode, &delivery.ScheduledAt,
@@ -373,6 +374,9 @@ func scanDelivery(scanner rowScanner) (domain.ReminderDelivery, error) {
 	}
 	if err != nil {
 		return domain.ReminderDelivery{}, err
+	}
+	if planID != nil {
+		delivery.PlanID = *planID
 	}
 	// pgx scans timestamptz in the local location; the domain works in UTC,
 	// so normalize every scanned instant before handing it back.

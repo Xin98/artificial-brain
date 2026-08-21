@@ -55,6 +55,15 @@ func TestValidateFixtures(t *testing.T) {
 			}},
 		},
 		{
+			name: "portability imports another context's domain",
+			root: "testdata/invalid-cross-context-portability",
+			want: []policy.Violation{{
+				File:   "backend/internal/modules/portability/application/bad.go",
+				Rule:   "go-cross-context",
+				Import: "github.com/Xin98/artificial-brain/backend/internal/modules/todo/domain",
+			}},
+		},
+		{
 			name: "platform imports business",
 			root: "testdata/invalid-platform",
 			want: []policy.Violation{{

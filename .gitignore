@@ -29,3 +29,7 @@ docker-compose.local.yml
 
 .worktrees/
 .superpowers/
+
+# Private deployment artifacts (never committed)
+.artifacts/
+deploy/private/backups/

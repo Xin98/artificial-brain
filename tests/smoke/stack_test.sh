@@ -63,6 +63,14 @@ assert(services.dig("backend-test", "profiles") == ["test"], "backend-test is no
 assert(config.fetch("volumes").keys == ["postgres-data"], "unexpected named volumes")
 assert(services.dig("migrate", "volumes").include?("./deploy/migrations:/migrations:ro"), "migrations are not mounted read-only")
 
+api_env = services.dig("api", "environment")
+worker_env = services.dig("worker", "environment")
+assert(api_env.fetch("DEPLOYMENT_MODE") == "${DEPLOYMENT_MODE:-cloud}", "api DEPLOYMENT_MODE passthrough does not default to cloud")
+assert(worker_env.fetch("DEPLOYMENT_MODE") == "${DEPLOYMENT_MODE:-cloud}", "worker DEPLOYMENT_MODE passthrough does not default to cloud")
+assert(api_env.key?("PRIVATE_ADMIN_PHONE"), "api does not receive PRIVATE_ADMIN_PHONE")
+assert(worker_env.key?("PRIVATE_ADMIN_PHONE"), "worker does not receive PRIVATE_ADMIN_PHONE")
+assert(api_env.key?("PORTABILITY_MAX_BUNDLE_BYTES"), "api does not receive PORTABILITY_MAX_BUNDLE_BYTES")
+
 backend = File.read(File.join(root, "backend/Dockerfile"))
 assert(backend.include?("FROM golang:1.26.5-alpine AS build"), "Go build image is not pinned")
 assert(backend.scan("CGO_ENABLED=0 go build").length == 3, "backend build does not produce three static binaries")
@@ -100,6 +108,7 @@ expected_env = {
   "REMINDER_QUEUE_EMAIL_CONCURRENCY" => "2",
   "REMINDER_QUEUE_SMS_CONCURRENCY" => "2",
   "REMINDER_JOB_MAX_ATTEMPTS" => "5",
+  "DEPLOYMENT_MODE" => "cloud",
 }
 actual_env = File.readlines(File.join(root, ".env.example"), chomp: true).to_h do |line|
   line.split("=", 2)

@@ -81,13 +81,14 @@ Existing routes 1–26 from ITER-0002/0003 are unchanged (the two login routes c
 - Create: `docs/superpowers/specs/2026-08-21-iter-0004-private-deployment-and-data-portability-design.md` (already committed at `060ea7b` — nothing to do, listed for ledger completeness)
 - Create: `docs/superpowers/plans/2026-08-21-iter-0004-private-deployment-and-data-portability.md` (this plan)
 - Create: `architecture/tests/testdata/invalid-cross-context-portability/backend/internal/modules/portability/application/bad.go`
+- Modify: `architecture/policy/policy_test.go` (add the fixture's table entry)
 - Modify (yellow): `AGENTS.md`, `backend/AGENTS.md`, `apps/web/AGENTS.md`, `deploy/AGENTS.md`
 
 **Interfaces:** consumes master design §14.4 + iteration spec; produces `decisions.md` seeded with D1–D10 and `test-matrix.md` row IDs (CFG/MIG/PDM/IDT/TDO/RMD/PTA/HTP/CNT/WEB/DEP/SMK).
 
 - [ ] **Step 1: Verify branch.** `git branch --show-current` prints `iter-0004-private-deployment-and-data-portability` (already cut from master at branch time); otherwise `git checkout -b iter-0004-private-deployment-and-data-portability master`.
 - [ ] **Step 2: Author the ledger.** `brief.md` carries the spec's 10 acceptance criteria verbatim; `spec.md` points at the approved design (same shape as ITER-0003's); `plan.md` points at this plan; `progress.md` table (Task | Status | Evidence) lists all 18 tasks Pending; `test-matrix.md` table (Requirement | Command and evidence | Evidence commit | Status) has one row per row ID; `decisions.md` seeds D1–D10 plus an empty Working assumptions section; `handoff.md` stub pointing at brief/progress/decisions.
-- [ ] **Step 3: Add the portability cross-context fixture.** `architecture/tests/testdata/invalid-cross-context-portability/backend/internal/modules/portability/application/bad.go`:
+- [ ] **Step 3: Add the portability cross-context fixture and its table entry.** `architecture/tests/testdata/invalid-cross-context-portability/backend/internal/modules/portability/application/bad.go`:
 
 ```go
 package application
@@ -97,8 +98,22 @@ import "github.com/Xin98/artificial-brain/backend/internal/modules/todo/domain"
 var Todo = domain.Todo{}
 ```
 
+and append the matching case to `TestValidateFixtures` in `architecture/policy/policy_test.go` (fixtures are exercised only through this table):
+
+```go
+{
+	name: "portability imports another context's domain",
+	root: "testdata/invalid-cross-context-portability",
+	want: []policy.Violation{{
+		File:   "backend/internal/modules/portability/application/bad.go",
+		Rule:   "go-cross-context",
+		Import: "github.com/Xin98/artificial-brain/backend/internal/modules/todo/domain",
+	}},
+},
+```
+
 - [ ] **Step 4: Refresh AGENTS.md zones.** Root `AGENTS.md`: green adds the Portability module and the `/data` web feature; yellow unchanged in scope but names the ITER-0004 register; red replaces the ITER-0003 wording: "in ITER-0004 do not call real providers from CI (private-mode smoke runs development fakes), do not commit credentials, do not lower CI gates, and migrations 001–007 stay untouched." `backend/AGENTS.md`: green includes `portability` and the identity/todo/reminder import-export seams; red drops "no Portability behavior" and keeps "no real-provider calls from CI". `apps/web/AGENTS.md`: green adds the ITER-0004 `/data` feature; red drops "do not add portability UI". `deploy/AGENTS.md`: green adds `deploy/private/**` assets and runbooks; add a note that the private stack deliberately ships no reverse proxy (master design §9.2 deviation, iteration decision D8).
-- [ ] **Step 5: Verify.** `make harness-test` green; `make architecture-test` FAILS is **not** expected here — the fixture directory is only scanned when `isFixturePath` matches, and `go test ./architecture/... -v` must stay green because the fixture asserts the violation is detected (same as existing invalid-cross-context). Run `make architecture-test` ⇒ PASS.
+- [ ] **Step 5: Verify.** `make harness-test` ⇒ PASS; `make architecture-test` ⇒ PASS (the repo scan skips `testdata`; the new table entry in `TestValidateFixtures` asserts the fixture produces exactly the one `go-cross-context` violation).
 - [ ] **Step 6: Commit** `docs: open ITER-0004 iteration ledger` (ledger + AGENTS + fixture only).
 
 ### Task 2: Migration 008 and Schema 7→8 (yellow)

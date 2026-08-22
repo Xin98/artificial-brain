@@ -75,16 +75,28 @@ func (s *fakeChallengeStore) CountByPhoneSince(_ context.Context, phone string, 
 
 type fakeUserStore struct {
 	users map[string]domain.User
+	// byPhoneErr, when set, makes ByPhone fail with this error so tests can
+	// exercise error propagation.
+	byPhoneErr error
+	// log, when set, records "user:<id>" on Save so tests can assert the
+	// cross-store save order.
+	log *[]string
 }
 
 func newFakeUserStore() *fakeUserStore { return &fakeUserStore{users: map[string]domain.User{}} }
 
 func (s *fakeUserStore) Save(_ context.Context, u domain.User) error {
+	if s.log != nil {
+		*s.log = append(*s.log, "user:"+u.ID)
+	}
 	s.users[u.ID] = u
 	return nil
 }
 
 func (s *fakeUserStore) ByPhone(_ context.Context, phone string) (domain.User, error) {
+	if s.byPhoneErr != nil {
+		return domain.User{}, s.byPhoneErr
+	}
 	for _, u := range s.users {
 		if u.Phone == phone {
 			return u, nil
@@ -95,6 +107,9 @@ func (s *fakeUserStore) ByPhone(_ context.Context, phone string) (domain.User, e
 
 type fakeWorkspaceStore struct {
 	workspaces map[string]domain.PersonalWorkspace
+	// log, when set, records "workspace:<id>" on Save so tests can assert the
+	// cross-store save order.
+	log *[]string
 }
 
 func newFakeWorkspaceStore() *fakeWorkspaceStore {
@@ -102,6 +117,9 @@ func newFakeWorkspaceStore() *fakeWorkspaceStore {
 }
 
 func (s *fakeWorkspaceStore) Save(_ context.Context, ws domain.PersonalWorkspace) error {
+	if s.log != nil {
+		*s.log = append(*s.log, "workspace:"+ws.ID)
+	}
 	s.workspaces[ws.ID] = ws
 	return nil
 }

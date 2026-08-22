@@ -1,0 +1,228 @@
+openapi: 3.1.1
+info:
+  title: Artificial Brain Portability API
+  version: 0.1.0
+paths:
+  /api/v1/portability/export:
+    post:
+      operationId: exportBundle
+      description: >-
+        Streams the workspace's full-history export bundle — todos, reminder
+        deliveries, contact channel preferences, and the manifest — as a zip
+        download. The Content-Disposition header carries the attachment
+        filename artificial-brain-export-YYYYMMDD.zip. Once streaming has
+        started the response is committed; a mid-stream failure can no longer
+        switch to the JSON error envelope.
+      responses:
+        '200':
+          description: The export bundle as a zip download.
+          content:
+            application/zip:
+              schema:
+                type: string
+                format: binary
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/portability/imports:
+    post:
+      operationId: uploadImport
+      description: >-
+        Uploads an export bundle as multipart/form-data under the bundle form
+        field, validates it, and stores a pending import; nothing is written
+        to the workspace until confirm. Rejections answer 422 with one of
+        bundle_too_large, bundle_invalid, unsupported_schema_version, or
+        checksum_mismatch.
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              $ref: '#/components/schemas/UploadRequest'
+      responses:
+        '201':
+          description: Import stored, pending confirmation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadAccepted'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Bundle too large, invalid, unsupported, or corrupt.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/portability/imports/{importId}:
+    get:
+      operationId: getImport
+      description: >-
+        One import's view: the preview stored at upload, the report once
+        committed, and the lazy TTL expiry — a pending import past its TTL
+        renders state expired without mutating the stored row.
+      responses:
+        '200':
+          description: The import's view.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportView'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Import not found in this workspace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/portability/imports/{importId}/confirm:
+    post:
+      operationId: confirmImport
+      description: >-
+        Executes a pending import exactly once and answers the final report.
+        Committed and expired imports answer 409 import_conflict; the message
+        names which state blocked the operation.
+      responses:
+        '200':
+          description: Import committed; the final report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ImportReport'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Import not found in this workspace.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '409':
+          description: Import already committed or expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+components:
+  schemas:
+    ErrorEnvelope:
+      type: object
+      additionalProperties: false
+      required: [code, message, correlationId]
+      properties:
+        code:
+          type: string
+        message:
+          type: string
+        correlationId:
+          type: string
+    UploadRequest:
+      type: object
+      additionalProperties: false
+      required: [bundle]
+      properties:
+        bundle:
+          type: string
+          format: binary
+    UploadAccepted:
+      type: object
+      additionalProperties: false
+      required: [importId, preview]
+      properties:
+        importId:
+          type: string
+        preview:
+          $ref: '#/components/schemas/ImportPreview'
+    ImportDecision:
+      type: object
+      additionalProperties: false
+      required: [kind, sourceRecordId, outcome, reason]
+      properties:
+        kind:
+          type: string
+          enum: [todo, channel, delivery]
+        sourceRecordId:
+          type: string
+        outcome:
+          type: string
+          enum: [new, skipped, conflict, invalid]
+        reason:
+          type: string
+    ImportPreview:
+      type: object
+      additionalProperties: false
+      required: [new, skipped, conflicts, invalid, details, truncated]
+      properties:
+        new:
+          type: integer
+        skipped:
+          type: integer
+        conflicts:
+          type: integer
+        invalid:
+          type: integer
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportDecision'
+        truncated:
+          type: boolean
+    ImportReport:
+      type: object
+      additionalProperties: false
+      required: [new, skipped, conflicts, invalid, details, truncated, committedAt]
+      properties:
+        new:
+          type: integer
+        skipped:
+          type: integer
+        conflicts:
+          type: integer
+        invalid:
+          type: integer
+        details:
+          type: array
+          items:
+            $ref: '#/components/schemas/ImportDecision'
+        truncated:
+          type: boolean
+        committedAt:
+          type: string
+          format: date-time
+    ImportView:
+      type: object
+      additionalProperties: false
+      required: [importId, state, sourceInstanceId, preview, createdAt]
+      properties:
+        importId:
+          type: string
+        state:
+          type: string
+          enum: [pending, committed, expired]
+        sourceInstanceId:
+          type: string
+        preview:
+          $ref: '#/components/schemas/ImportPreview'
+        report:
+          $ref: '#/components/schemas/ImportReport'
+        createdAt:
+          type: string
+          format: date-time
+        committedAt:
+          type: string
+          format: date-time

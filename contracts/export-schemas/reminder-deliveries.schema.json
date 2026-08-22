@@ -1,0 +1,73 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Export bundle reminder deliveries",
+  "description": "The reminder-deliveries.json entry of an export bundle: the full reminder delivery history; the wire shape of the portability module's DeliveryExportRecord. sourceTodoRecordId is the todo's source record id the reminder module stored; import resolves it to the restored todo id. Optional fields are omitted, never null.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["id", "sourceTodoRecordId", "channel", "state", "attemptCount", "todoTitleSnapshot", "scheduledAt", "createdAt", "origin"],
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "sourceTodoRecordId": {
+        "type": "string"
+      },
+      "channel": {
+        "type": "string",
+        "enum": ["email", "sms"]
+      },
+      "state": {
+        "type": "string",
+        "enum": ["scheduled", "sending", "succeeded", "failed", "suppressed"]
+      },
+      "suppressionReason": {
+        "type": "string"
+      },
+      "attemptCount": {
+        "type": "integer",
+        "minimum": 0
+      },
+      "providerMessageId": {
+        "type": "string"
+      },
+      "lastErrorCode": {
+        "type": "string"
+      },
+      "todoTitleSnapshot": {
+        "type": "string"
+      },
+      "scheduledAt": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "createdAt": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "submittedAt": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "finalizedAt": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "receiptState": {
+        "type": "string"
+      },
+      "receiptErrorCode": {
+        "type": "string"
+      },
+      "receiptAt": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "origin": {
+        "type": "string",
+        "enum": ["local", "imported"]
+      }
+    }
+  }
+}

@@ -26,6 +26,10 @@ it("renders navigation to the workbench areas", () => {
     "href",
     "/settings",
   );
+  expect(screen.getByRole("link", { name: "Data" })).toHaveAttribute(
+    "href",
+    "/data",
+  );
   expect(screen.getByText("page content")).toBeInTheDocument();
 });
 

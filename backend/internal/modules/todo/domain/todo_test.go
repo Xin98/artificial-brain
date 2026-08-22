@@ -220,6 +220,104 @@ func TestUpdateSameDueDoesNotBumpReminderVersion(t *testing.T) {
 	}
 }
 
+func TestRestoreRebuildsEachStatusWithHistoricalState(t *testing.T) {
+	description := "迁移来的说明"
+	due := testNow.Add(-24 * time.Hour)
+	timezone := "Asia/Shanghai"
+	createdAt := testNow.Add(-72 * time.Hour)
+	updatedAt := testNow.Add(-48 * time.Hour)
+
+	pending, err := Restore("todo-old", "ws-old", "user-old", "历史任务", &description,
+		&due, &timezone, StatusPending, 4, 7, createdAt, updatedAt, nil, nil)
+	if err != nil {
+		t.Fatalf("Restore(pending) error = %v", err)
+	}
+	if pending.ID != "todo-old" || pending.WorkspaceID != "ws-old" || pending.OwnerUserID != "user-old" {
+		t.Fatalf("restored identity = %#v", pending)
+	}
+	if pending.Status != StatusPending || pending.ReminderVersion != 4 || pending.Version != 7 {
+		t.Fatalf("restored status/versions = %q/%d/%d", pending.Status, pending.ReminderVersion, pending.Version)
+	}
+	if !pending.CreatedAt.Equal(createdAt) || !pending.UpdatedAt.Equal(updatedAt) {
+		t.Fatalf("restored timestamps = %v/%v, want historical", pending.CreatedAt, pending.UpdatedAt)
+	}
+	if pending.DueAtUTC == nil || !pending.DueAtUTC.Equal(due) || pending.Description == nil || *pending.Description != description {
+		t.Fatalf("restored due/description = %#v", pending)
+	}
+	if pending.TimezoneAtInput == nil || *pending.TimezoneAtInput != timezone {
+		t.Fatalf("restored timezone = %#v", pending.TimezoneAtInput)
+	}
+	if pending.CompletedAt != nil || pending.DeletedAt != nil {
+		t.Fatalf("pending restore carries terminal timestamps: %#v", pending)
+	}
+
+	completedAt := testNow.Add(-30 * time.Hour)
+	completed, err := Restore("todo-done", "ws-old", "user-old", "已完成任务", nil,
+		nil, nil, StatusCompleted, 1, 2, createdAt, updatedAt, &completedAt, nil)
+	if err != nil {
+		t.Fatalf("Restore(completed) error = %v", err)
+	}
+	if completed.Status != StatusCompleted || completed.CompletedAt == nil || !completed.CompletedAt.Equal(completedAt) {
+		t.Fatalf("restored completed = %#v", completed)
+	}
+
+	deletedAt := testNow.Add(-12 * time.Hour)
+	deleted, err := Restore("todo-gone", "ws-old", "user-old", "已删除任务", nil,
+		nil, nil, StatusDeleted, 1, 3, createdAt, updatedAt, nil, &deletedAt)
+	if err != nil {
+		t.Fatalf("Restore(deleted) error = %v", err)
+	}
+	if deleted.Status != StatusDeleted || deleted.DeletedAt == nil || !deleted.DeletedAt.Equal(deletedAt) {
+		t.Fatalf("restored deleted = %#v", deleted)
+	}
+}
+
+func TestRestoreRejectsInvalidTitleAndStatus(t *testing.T) {
+	createdAt := testNow.Add(-time.Hour)
+	if _, err := Restore("todo-1", "ws-1", "user-1", "", nil, nil, nil,
+		StatusPending, 1, 1, createdAt, createdAt, nil, nil); !errors.Is(err, ErrInvalidTitle) {
+		t.Fatalf("Restore(empty title) error = %v, want ErrInvalidTitle", err)
+	}
+	if _, err := Restore("todo-1", "ws-1", "user-1", strings.Repeat("a", 201), nil, nil, nil,
+		StatusPending, 1, 1, createdAt, createdAt, nil, nil); !errors.Is(err, ErrInvalidTitle) {
+		t.Fatalf("Restore(long title) error = %v, want ErrInvalidTitle", err)
+	}
+	for _, status := range []Status{"", "archived", "done"} {
+		if _, err := Restore("todo-1", "ws-1", "user-1", "历史任务", nil, nil, nil,
+			status, 1, 1, createdAt, createdAt, nil, nil); !errors.Is(err, ErrInvalidStatus) {
+			t.Fatalf("Restore(%q) error = %v, want ErrInvalidStatus", status, err)
+		}
+	}
+}
+
+func TestRestoreEnforcesStatusTimestampInvariants(t *testing.T) {
+	createdAt := testNow.Add(-time.Hour)
+	if _, err := Restore("todo-1", "ws-1", "user-1", "历史任务", nil, nil, nil,
+		StatusCompleted, 1, 2, createdAt, createdAt, nil, nil); !errors.Is(err, ErrInconsistentStatus) {
+		t.Fatalf("Restore(completed without completedAt) error = %v, want ErrInconsistentStatus", err)
+	}
+	if _, err := Restore("todo-1", "ws-1", "user-1", "历史任务", nil, nil, nil,
+		StatusDeleted, 1, 2, createdAt, createdAt, nil, nil); !errors.Is(err, ErrInconsistentStatus) {
+		t.Fatalf("Restore(deleted without deletedAt) error = %v, want ErrInconsistentStatus", err)
+	}
+}
+
+func TestRestoreRejectsEmptyIdentity(t *testing.T) {
+	createdAt := testNow.Add(-time.Hour)
+	if _, err := Restore("", "ws-1", "user-1", "历史任务", nil, nil, nil,
+		StatusPending, 1, 1, createdAt, createdAt, nil, nil); !errors.Is(err, ErrMissingRestoreFields) {
+		t.Fatalf("Restore(empty id) error = %v, want ErrMissingRestoreFields", err)
+	}
+	if _, err := Restore("todo-1", "", "user-1", "历史任务", nil, nil, nil,
+		StatusPending, 1, 1, createdAt, createdAt, nil, nil); !errors.Is(err, ErrMissingRestoreFields) {
+		t.Fatalf("Restore(empty workspace) error = %v, want ErrMissingRestoreFields", err)
+	}
+	if _, err := Restore("todo-1", "ws-1", "", "历史任务", nil, nil, nil,
+		StatusPending, 1, 1, createdAt, createdAt, nil, nil); !errors.Is(err, ErrMissingRestoreFields) {
+		t.Fatalf("Restore(empty owner) error = %v, want ErrMissingRestoreFields", err)
+	}
+}
+
 func TestIsOverdueIsDerived(t *testing.T) {
 	todo := newPendingTodo(t) // due one hour after testNow
 	if todo.IsOverdue(testNow) {

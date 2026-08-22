@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -36,6 +37,20 @@ const (
 	ModelAdapterOpenAICompatible = "openai_compatible"
 	AppEnvProduction             = "production"
 )
+
+const (
+	defaultDeploymentMode            = "cloud"
+	defaultPortabilityMaxBundleBytes = 33554432
+	minimumPortabilityBundleBytes    = 1048576
+
+	DeploymentModeCloud   = "cloud"
+	DeploymentModePrivate = "private"
+)
+
+// e164PhonePattern duplicates the identity module's E.164 validation
+// deliberately: the platform package must not import business modules
+// (ITER-0004 assumption A1).
+var e164PhonePattern = regexp.MustCompile(`^\+?[1-9][0-9]{6,14}$`)
 
 const (
 	defaultReminderEmailAdapter          = "fake"
@@ -98,6 +113,10 @@ type Config struct {
 	ReminderQueueEmailConcurrency int
 	ReminderQueueSmsConcurrency   int
 	ReminderJobMaxAttempts        int
+
+	DeploymentMode            string
+	PrivateAdminPhone         string
+	PortabilityMaxBundleBytes int
 }
 
 func Load(role Role, lookup LookupEnv) (Config, error) {
@@ -279,6 +298,39 @@ func Load(role Role, lookup LookupEnv) (Config, error) {
 		return Config{}, fmt.Errorf("config: invalid REMINDER_JOB_MAX_ATTEMPTS")
 	}
 
+	deploymentMode := valueOrDefault(lookup, "DEPLOYMENT_MODE", defaultDeploymentMode)
+	switch deploymentMode {
+	case DeploymentModeCloud, DeploymentModePrivate:
+	default:
+		return Config{}, fmt.Errorf("config: invalid DEPLOYMENT_MODE")
+	}
+	privateAdminPhone := valueOrDefault(lookup, "PRIVATE_ADMIN_PHONE", "")
+	if deploymentMode == DeploymentModeCloud && privateAdminPhone != "" {
+		return Config{}, fmt.Errorf("config: PRIVATE_ADMIN_PHONE requires a private DEPLOYMENT_MODE")
+	}
+	if privateAdminPhone != "" && !e164PhonePattern.MatchString(privateAdminPhone) {
+		return Config{}, fmt.Errorf("config: invalid PRIVATE_ADMIN_PHONE")
+	}
+	// The E.164 pattern allows an optional '+', but the admin phone gates
+	// provisioning and login by exact string comparison: a '+'-less value
+	// would provision the user under one string while the admin logs in with
+	// the canonical '+' form, a permanent lockout. Require the canonical
+	// form so both sides always compare identical strings.
+	if privateAdminPhone != "" && !strings.HasPrefix(privateAdminPhone, "+") {
+		return Config{}, fmt.Errorf("config: PRIVATE_ADMIN_PHONE must start with '+' (canonical E.164 form)")
+	}
+	if deploymentMode == DeploymentModePrivate && role == RoleAPI && privateAdminPhone == "" {
+		return Config{}, fmt.Errorf("config: missing PRIVATE_ADMIN_PHONE")
+	}
+
+	portabilityMaxBundleBytes, err := intValue(lookup, "PORTABILITY_MAX_BUNDLE_BYTES", defaultPortabilityMaxBundleBytes)
+	if err != nil {
+		return Config{}, err
+	}
+	if portabilityMaxBundleBytes < minimumPortabilityBundleBytes {
+		return Config{}, fmt.Errorf("config: invalid PORTABILITY_MAX_BUNDLE_BYTES")
+	}
+
 	return Config{
 		Role:              role,
 		ServiceName:       serviceName,
@@ -321,6 +373,10 @@ func Load(role Role, lookup LookupEnv) (Config, error) {
 		ReminderQueueEmailConcurrency: reminderQueueEmailConcurrency,
 		ReminderQueueSmsConcurrency:   reminderQueueSmsConcurrency,
 		ReminderJobMaxAttempts:        reminderJobMaxAttempts,
+
+		DeploymentMode:            deploymentMode,
+		PrivateAdminPhone:         privateAdminPhone,
+		PortabilityMaxBundleBytes: portabilityMaxBundleBytes,
 	}, nil
 }
 

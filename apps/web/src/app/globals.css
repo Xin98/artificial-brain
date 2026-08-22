@@ -106,7 +106,8 @@ button:disabled {
 .login-error,
 .todo-error,
 .chat-error,
-.channel-error {
+.channel-error,
+.data-error {
   color: #a61b1b;
   font-weight: 600;
 }
@@ -360,6 +361,63 @@ main[data-page="login"] {
 .chat-confirm p {
   flex: 1 1 100%;
   margin: 0;
+}
+
+/* Data portability */
+.data-panel {
+  display: grid;
+  gap: 1.5rem;
+}
+.data-export,
+.data-import {
+  background: #fff;
+  border: 1px solid #c6d1e2;
+  border-radius: 0.5rem;
+  padding: 1.25rem;
+}
+.data-export h2,
+.data-import h2 {
+  margin-top: 0;
+}
+.data-counts {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(auto-fit, minmax(8rem, 1fr));
+  list-style: none;
+  margin: 0.75rem 0;
+  padding: 0;
+}
+.data-counts li {
+  background: #f4f7fb;
+  border: 1px solid #c6d1e2;
+  border-radius: 0.5rem;
+  display: grid;
+  gap: 0.25rem;
+  padding: 0.625rem 0.875rem;
+}
+.data-counts li span:first-of-type {
+  color: #40506b;
+  font-size: 0.875rem;
+}
+.data-counts li span:last-of-type {
+  font-size: 1.5rem;
+  font-weight: 700;
+}
+.data-details {
+  display: grid;
+  gap: 0.375rem;
+  list-style: none;
+  margin: 0 0 0.75rem;
+  padding: 0;
+}
+.data-details li {
+  color: #40506b;
+  font-size: 0.875rem;
+}
+.data-truncated {
+  color: #8a5a00;
+  font-size: 0.875rem;
+  margin: 0 0 0.75rem;
 }
 
 /* Settings */

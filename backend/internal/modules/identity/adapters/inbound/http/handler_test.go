@@ -16,19 +16,32 @@ import (
 type fakeLoginRequester struct {
 	err   error
 	phone string
+	// privateAdminPhone, when non-empty, mirrors the private-deployment gate
+	// of command.RequestLoginChallengeHandler: every other phone is rejected
+	// with domain.ErrRegistrationClosed before any other behavior.
+	privateAdminPhone string
 }
 
 func (f *fakeLoginRequester) Handle(_ context.Context, phone string) error {
 	f.phone = phone
+	if f.privateAdminPhone != "" && phone != f.privateAdminPhone {
+		return domain.ErrRegistrationClosed
+	}
 	return f.err
 }
 
 type fakeLoginVerifier struct {
 	result dto.VerifyLoginChallengeResult
 	err    error
+	// privateAdminPhone, when non-empty, mirrors the private-deployment gate
+	// of command.VerifyLoginChallengeHandler.
+	privateAdminPhone string
 }
 
-func (f *fakeLoginVerifier) Handle(_ context.Context, _, _ string) (dto.VerifyLoginChallengeResult, error) {
+func (f *fakeLoginVerifier) Handle(_ context.Context, phone, _ string) (dto.VerifyLoginChallengeResult, error) {
+	if f.privateAdminPhone != "" && phone != f.privateAdminPhone {
+		return dto.VerifyLoginChallengeResult{}, domain.ErrRegistrationClosed
+	}
 	return f.result, f.err
 }
 
@@ -162,6 +175,70 @@ func TestVerifyLoginRejectsBadCode(t *testing.T) {
 	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/verify", strings.NewReader(`{"phone":"+8613800137000","code":"000000"}`)))
 	if rr.Code != http.StatusUnauthorized {
 		t.Fatalf("status = %d, want 401", rr.Code)
+	}
+}
+
+// TestPrivateModeLoginGateMapsTo403RegistrationClosed proves the private-mode
+// HTTP contract (Global Constraint 4): with PrivateAdminPhone set on both
+// login handlers, any non-admin phone is mapped to 403 +
+// {"code":"registration_closed"} on BOTH login routes, while the admin phone
+// still gets 202 / proceeds.
+func TestPrivateModeLoginGateMapsTo403RegistrationClosed(t *testing.T) {
+	const adminPhone = "+8613800137000"
+	const otherPhone = "+8613800139999"
+
+	assertRegistrationClosed := func(t *testing.T, target, body string) {
+		t.Helper()
+		mux := newTestRouter(&Handler{
+			RequestLoginChallenge: &fakeLoginRequester{privateAdminPhone: adminPhone},
+			VerifyLoginChallenge:  &fakeLoginVerifier{privateAdminPhone: adminPhone},
+		})
+		rr := httptest.NewRecorder()
+		mux.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, target, strings.NewReader(body)))
+		if rr.Code != http.StatusForbidden {
+			t.Fatalf("%s status = %d, want 403", target, rr.Code)
+		}
+		var envelope struct {
+			Code string `json:"code"`
+		}
+		if err := json.NewDecoder(rr.Body).Decode(&envelope); err != nil {
+			t.Fatalf("%s decode error = %v", target, err)
+		}
+		if envelope.Code != "registration_closed" {
+			t.Fatalf("%s code = %q, want registration_closed", target, envelope.Code)
+		}
+	}
+
+	// Non-admin phone is refused on both routes.
+	assertRegistrationClosed(t, "/api/v1/auth/login/request", `{"phone":"`+otherPhone+`"}`)
+	assertRegistrationClosed(t, "/api/v1/auth/login/verify", `{"phone":"`+otherPhone+`","code":"123456"}`)
+
+	// The admin phone still gets 202 on the request route.
+	requester := &fakeLoginRequester{privateAdminPhone: adminPhone}
+	mux := newTestRouter(&Handler{RequestLoginChallenge: requester})
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/request", strings.NewReader(`{"phone":"`+adminPhone+`"}`)))
+	if rr.Code != http.StatusAccepted {
+		t.Fatalf("admin request status = %d, want 202", rr.Code)
+	}
+	if requester.phone != adminPhone {
+		t.Fatalf("admin request phone = %q", requester.phone)
+	}
+
+	// The admin phone still proceeds on the verify route.
+	verifier := &fakeLoginVerifier{
+		privateAdminPhone: adminPhone,
+		result: dto.VerifyLoginChallengeResult{
+			Token:     "session-token",
+			Principal: testPrincipal,
+			ExpiresAt: time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC),
+		},
+	}
+	mux = newTestRouter(&Handler{VerifyLoginChallenge: verifier, SessionTTL: 168 * time.Hour})
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/verify", strings.NewReader(`{"phone":"`+adminPhone+`","code":"123456"}`)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("admin verify status = %d, want 200", rr.Code)
 	}
 }
 

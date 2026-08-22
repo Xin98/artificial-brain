@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Xin98/artificial-brain/backend/internal/modules/identity/application/dto"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/identity/domain"
 )
 
@@ -226,6 +227,91 @@ func TestVerifyLoginChallengeStoresHashNotPlaintext(t *testing.T) {
 	}
 	if challenge.CodeHash == "123456" {
 		t.Fatal("challenge stored plaintext code")
+	}
+}
+
+// The gate tests below cover the private-deployment login gate. The empty
+// PrivateAdminPhone case (ITER-0003 behavior untouched) is proven by every
+// test above, which constructs handlers with the zero-value field.
+
+func TestRequestLoginChallengeGateAllowsAdminPhoneUnchanged(t *testing.T) {
+	challenges := newFakeChallengeStore()
+	outbox := &fakeOutbox{}
+	h := newRequestHandler(challenges, outbox, fixedNow)
+	h.PrivateAdminPhone = "+8613800137000"
+
+	if err := h.Handle(context.Background(), "+8613800137000"); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if len(outbox.messages) != 1 || outbox.messages[0].Purpose != "login" {
+		t.Fatalf("outbox = %#v, want one login message", outbox.messages)
+	}
+	count, err := challenges.CountByPhoneSince(context.Background(), "+8613800137000", testNow.Add(-time.Hour))
+	if err != nil || count != 1 {
+		t.Fatalf("challenge count = %d, err = %v, want 1", count, err)
+	}
+}
+
+func TestRequestLoginChallengeGateRejectsOtherPhonesBeforeAnyStore(t *testing.T) {
+	challenges := newFakeChallengeStore()
+	outbox := &fakeOutbox{}
+	h := newRequestHandler(challenges, outbox, fixedNow)
+	h.PrivateAdminPhone = "+8613800137000"
+
+	if err := h.Handle(context.Background(), "+8613800139999"); !errors.Is(err, domain.ErrRegistrationClosed) {
+		t.Fatalf("Handle() error = %v, want ErrRegistrationClosed", err)
+	}
+	if len(challenges.challenges) != 0 {
+		t.Fatalf("challenges stored = %d, want 0", len(challenges.challenges))
+	}
+	if len(outbox.messages) != 0 {
+		t.Fatalf("outbox messages = %d, want 0", len(outbox.messages))
+	}
+}
+
+func TestVerifyLoginChallengeGateAllowsAdminPhoneUnchanged(t *testing.T) {
+	challenges := newFakeChallengeStore()
+	users := newFakeUserStore()
+	workspaces := newFakeWorkspaceStore()
+	sessions := newFakeSessionStore()
+	outbox := &fakeOutbox{}
+	phone := "+8613800137000"
+
+	request := newRequestHandler(challenges, outbox, fixedNow)
+	request.PrivateAdminPhone = phone
+	if err := request.Handle(context.Background(), phone); err != nil {
+		t.Fatal(err)
+	}
+	verify := newVerifyHandler(challenges, users, workspaces, sessions, fixedNow)
+	verify.PrivateAdminPhone = phone
+
+	result, err := verify.Handle(context.Background(), phone, "123456")
+	if err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if result.Token != "token-abc" || result.Principal.UserID == "" || result.Principal.WorkspaceID == "" {
+		t.Fatalf("result = %#v", result)
+	}
+}
+
+func TestVerifyLoginChallengeGateRejectsOtherPhonesBeforeAnyStore(t *testing.T) {
+	challenges := newFakeChallengeStore()
+	users := newFakeUserStore()
+	workspaces := newFakeWorkspaceStore()
+	sessions := newFakeSessionStore()
+	verify := newVerifyHandler(challenges, users, workspaces, sessions, fixedNow)
+	verify.PrivateAdminPhone = "+8613800137000"
+
+	result, err := verify.Handle(context.Background(), "+8613800139999", "123456")
+	if !errors.Is(err, domain.ErrRegistrationClosed) {
+		t.Fatalf("Handle() error = %v, want ErrRegistrationClosed", err)
+	}
+	if result != (dto.VerifyLoginChallengeResult{}) {
+		t.Fatalf("result = %#v, want zero value", result)
+	}
+	if len(challenges.challenges) != 0 || len(users.users) != 0 || len(workspaces.workspaces) != 0 || len(sessions.sessions) != 0 {
+		t.Fatalf("store interaction recorded: %d challenges, %d users, %d workspaces, %d sessions; want zero",
+			len(challenges.challenges), len(users.users), len(workspaces.workspaces), len(sessions.sessions))
 	}
 }
 

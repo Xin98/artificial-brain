@@ -122,6 +122,25 @@ func (s *Store) List(ctx context.Context, workspaceID, ownerUserID string, filte
 	return collectTodos(rows)
 }
 
+// ListAll returns every todo for the owner regardless of status, ordered by
+// created_at with id as the tie-breaker for stable offset paging, capped at
+// limit from offset — the export seam.
+func (s *Store) ListAll(ctx context.Context, workspaceID, ownerUserID string, offset, limit int) ([]domain.Todo, error) {
+	exec := database.ExecutorFromContextOr(ctx, s.pool)
+	rows, err := exec.Query(ctx, `
+		select `+todoColumns+`
+		from todo.todos
+		where workspace_id = $1 and owner_user_id = $2
+		order by created_at asc, id asc
+		limit $3 offset $4
+	`, workspaceID, ownerUserID, limit, offset)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return collectTodos(rows)
+}
+
 // Dashboard returns the todo counters in one conditional-aggregation query.
 // The reminder counters stay zero until ITER-0003 (D7).
 func (s *Store) Dashboard(ctx context.Context, workspaceID, ownerUserID string, now, dueTodayStart, dueTodayEnd time.Time) (dto.DashboardSummary, error) {

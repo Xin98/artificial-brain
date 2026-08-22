@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Export bundle todos",
+  "description": "The todos.json entry of an export bundle: every todo row — pending, completed, and deleted — with historical timestamps and versions; the wire shape of the portability module's TodoExportRecord. Optional fields are omitted, never null.",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": ["id", "title", "status", "reminderVersion", "createdAt", "updatedAt"],
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "title": {
+        "type": "string"
+      },
+      "description": {
+        "type": "string"
+      },
+      "dueAtUtc": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "timezoneAtInput": {
+        "type": "string"
+      },
+      "status": {
+        "type": "string",
+        "enum": ["pending", "completed", "deleted"]
+      },
+      "reminderVersion": {
+        "type": "integer"
+      },
+      "createdAt": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "updatedAt": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "completedAt": {
+        "type": "string",
+        "format": "date-time"
+      },
+      "deletedAt": {
+        "type": "string",
+        "format": "date-time"
+      }
+    }
+  }
+}

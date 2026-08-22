@@ -103,6 +103,8 @@ type fakeDeliveryStore struct {
 	plannedJobIDsErr            error
 	scheduledForSuppressionErr  error
 	scheduledForSuppressionArgs []suppressionScopeCall
+	imported                    []domain.ReminderDelivery
+	saveImportedErr             error
 }
 
 type suppressionScopeCall struct {
@@ -212,6 +214,24 @@ func (s *fakeDeliveryStore) Stats(context.Context, string) (dto.DeliveryCounts, 
 }
 
 func (s *fakeDeliveryStore) List(context.Context, string, dto.DeliveryFilter) ([]domain.ReminderDelivery, error) {
+	return nil, nil
+}
+
+// SaveImported mirrors the postgres adapter: it rejects duplicate idempotency
+// keys (the import key) and records the imported row.
+func (s *fakeDeliveryStore) SaveImported(_ context.Context, delivery domain.ReminderDelivery) error {
+	if s.saveImportedErr != nil {
+		return s.saveImportedErr
+	}
+	if _, exists := s.rows[delivery.IdempotencyKey]; exists {
+		return domain.ErrDeliveryExists
+	}
+	s.rows[delivery.IdempotencyKey] = delivery
+	s.imported = append(s.imported, delivery)
+	return nil
+}
+
+func (s *fakeDeliveryStore) Export(context.Context, string, int, int) ([]domain.ReminderDelivery, error) {
 	return nil, nil
 }
 

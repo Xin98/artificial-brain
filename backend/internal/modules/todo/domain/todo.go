@@ -46,6 +46,48 @@ func New(id, workspaceID, ownerUserID, title string, description *string, dueAtU
 	}, nil
 }
 
+// Restore rebuilds a todo in any status with its historical identity and
+// timestamps; it validates the title and status only — reminder planning is
+// the caller's concern and import never plans.
+func Restore(id, workspaceID, ownerUserID, title string, description *string,
+	dueAtUTC *time.Time, timezoneAtInput *string, status Status,
+	reminderVersion, version int, createdAt, updatedAt time.Time,
+	completedAt, deletedAt *time.Time) (Todo, error) {
+	if id == "" || workspaceID == "" || ownerUserID == "" {
+		return Todo{}, ErrMissingRestoreFields
+	}
+	if err := validateTitle(title); err != nil {
+		return Todo{}, err
+	}
+	switch status {
+	case StatusPending, StatusCompleted, StatusDeleted:
+	default:
+		return Todo{}, ErrInvalidStatus
+	}
+	if status == StatusCompleted && completedAt == nil {
+		return Todo{}, ErrInconsistentStatus
+	}
+	if status == StatusDeleted && deletedAt == nil {
+		return Todo{}, ErrInconsistentStatus
+	}
+	return Todo{
+		ID:              id,
+		WorkspaceID:     workspaceID,
+		OwnerUserID:     ownerUserID,
+		Title:           title,
+		Description:     description,
+		DueAtUTC:        dueAtUTC,
+		TimezoneAtInput: timezoneAtInput,
+		Status:          status,
+		ReminderVersion: reminderVersion,
+		Version:         version,
+		CreatedAt:       createdAt,
+		UpdatedAt:       updatedAt,
+		CompletedAt:     completedAt,
+		DeletedAt:       deletedAt,
+	}, nil
+}
+
 func validateTitle(title string) error {
 	if utf8.RuneCountInString(title) < 1 || utf8.RuneCountInString(title) > MaxTitleLength {
 		return ErrInvalidTitle

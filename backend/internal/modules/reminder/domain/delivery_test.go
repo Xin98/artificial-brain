@@ -380,6 +380,167 @@ func TestApplyReceiptRejectedOutsideSucceeded(t *testing.T) {
 	}
 }
 
+// restoreDeliveryArgs bundles the RestoreDelivery inputs so rejection cases
+// can mutate a single field against an otherwise valid baseline.
+type restoreDeliveryArgs struct {
+	id                  string
+	workspaceID         string
+	ownerUserID         string
+	todoID              string
+	todoReminderVersion int
+	channel             string
+	titleSnapshot       string
+	idempotencyKey      string
+	state               DeliveryState
+	suppressionReason   *SuppressionReason
+	attemptCount        int
+	providerMessageID   *string
+	lastErrorCode       *string
+	scheduledAt         time.Time
+	createdAt           time.Time
+	submittedAt         *time.Time
+	finalizedAt         *time.Time
+	receiptState        *ReceiptState
+	receiptAt           *time.Time
+	receiptErrorCode    *string
+}
+
+func defaultRestoreDeliveryArgs() restoreDeliveryArgs {
+	messageID := "provider-message-7"
+	submitted := testNow.Add(5 * time.Minute)
+	finalized := submitted
+	return restoreDeliveryArgs{
+		id:                  "del-9",
+		workspaceID:         "ws-1",
+		ownerUserID:         "user-1",
+		todoID:              "todo-1",
+		todoReminderVersion: 2,
+		channel:             "sms",
+		titleSnapshot:       "buy milk",
+		idempotencyKey:      "import:instance-a:record-1",
+		state:               StateSucceeded,
+		attemptCount:        1,
+		providerMessageID:   &messageID,
+		scheduledAt:         testNow.Add(time.Hour),
+		createdAt:           testNow,
+		submittedAt:         &submitted,
+		finalizedAt:         &finalized,
+	}
+}
+
+func (a restoreDeliveryArgs) build() (ReminderDelivery, error) {
+	return RestoreDelivery(a.id, a.workspaceID, a.ownerUserID, a.todoID, a.todoReminderVersion,
+		a.channel, a.titleSnapshot, a.idempotencyKey, a.state,
+		a.suppressionReason, a.attemptCount, a.providerMessageID, a.lastErrorCode,
+		a.scheduledAt, a.createdAt, a.submittedAt, a.finalizedAt,
+		a.receiptState, a.receiptAt, a.receiptErrorCode)
+}
+
+func TestRestoreDeliveryRebuildsHistoricalDelivery(t *testing.T) {
+	args := defaultRestoreDeliveryArgs()
+	receipt := ReceiptOK
+	receiptAt := testNow.Add(10 * time.Minute)
+	args.receiptState = &receipt
+	args.receiptAt = &receiptAt
+
+	delivery, err := args.build()
+	if err != nil {
+		t.Fatalf("RestoreDelivery() error = %v", err)
+	}
+	if delivery.ID != "del-9" || delivery.WorkspaceID != "ws-1" || delivery.OwnerUserID != "user-1" || delivery.TodoID != "todo-1" {
+		t.Fatalf("delivery identity = %#v", delivery)
+	}
+	if delivery.TodoReminderVersion != 2 || delivery.Channel != "sms" || delivery.TodoTitleSnapshot != "buy milk" {
+		t.Fatalf("delivery history fields = %#v", delivery)
+	}
+	if delivery.IdempotencyKey != "import:instance-a:record-1" {
+		t.Fatalf("delivery.IdempotencyKey = %q, want the caller's import key", delivery.IdempotencyKey)
+	}
+	if delivery.State != StateSucceeded || delivery.AttemptCount != 1 {
+		t.Fatalf("delivery state/attempts = %q/%d, want succeeded/1", delivery.State, delivery.AttemptCount)
+	}
+	if delivery.ProviderMessageID == nil || *delivery.ProviderMessageID != "provider-message-7" {
+		t.Fatalf("delivery.ProviderMessageID = %v, want provider-message-7", delivery.ProviderMessageID)
+	}
+	if !delivery.ScheduledAt.Equal(testNow.Add(time.Hour)) || !delivery.CreatedAt.Equal(testNow) {
+		t.Fatalf("delivery schedule/created = %v/%v", delivery.ScheduledAt, delivery.CreatedAt)
+	}
+	if delivery.SubmittedAt == nil || !delivery.SubmittedAt.Equal(testNow.Add(5*time.Minute)) || delivery.FinalizedAt == nil || !delivery.FinalizedAt.Equal(testNow.Add(5*time.Minute)) {
+		t.Fatalf("delivery submitted/finalized = %v/%v", delivery.SubmittedAt, delivery.FinalizedAt)
+	}
+	if delivery.ReceiptState == nil || *delivery.ReceiptState != ReceiptOK || delivery.ReceiptAt == nil || !delivery.ReceiptAt.Equal(testNow.Add(10*time.Minute)) || delivery.ReceiptErrorCode != nil {
+		t.Fatalf("delivery receipt = %#v", delivery)
+	}
+	if delivery.PlanID != "" {
+		t.Fatalf("delivery.PlanID = %q, want empty for a restored delivery", delivery.PlanID)
+	}
+	if delivery.Origin != OriginImported {
+		t.Fatalf("delivery.Origin = %q, want %q", delivery.Origin, OriginImported)
+	}
+	if delivery.ProviderJobID != nil || delivery.SuppressionReason != nil || delivery.LastErrorCode != nil {
+		t.Fatalf("delivery unset optionals not nil = %#v", delivery)
+	}
+}
+
+func TestRestoreDeliveryAcceptsEveryState(t *testing.T) {
+	for _, state := range []DeliveryState{StateScheduled, StateSending, StateSucceeded, StateFailed, StateSuppressed} {
+		t.Run(string(state), func(t *testing.T) {
+			args := defaultRestoreDeliveryArgs()
+			args.state = state
+			if state == StateSuppressed {
+				reason := ReasonTodoCompleted
+				args.suppressionReason = &reason
+			}
+			delivery, err := args.build()
+			if err != nil {
+				t.Fatalf("RestoreDelivery(state %q) error = %v", state, err)
+			}
+			if delivery.State != state {
+				t.Fatalf("delivery.State = %q, want %q", delivery.State, state)
+			}
+		})
+	}
+}
+
+func TestRestoreDeliveryRejectsInvalidInput(t *testing.T) {
+	cases := []struct {
+		name    string
+		mutate  func(*restoreDeliveryArgs)
+		wantErr error
+	}{
+		{"empty id", func(a *restoreDeliveryArgs) { a.id = "" }, ErrMissingDeliveryFields},
+		{"empty workspace", func(a *restoreDeliveryArgs) { a.workspaceID = "" }, ErrMissingDeliveryFields},
+		{"empty owner", func(a *restoreDeliveryArgs) { a.ownerUserID = "" }, ErrMissingDeliveryFields},
+		{"empty todo", func(a *restoreDeliveryArgs) { a.todoID = "" }, ErrMissingDeliveryFields},
+		{"empty title snapshot", func(a *restoreDeliveryArgs) { a.titleSnapshot = "" }, ErrMissingDeliveryFields},
+		{"empty idempotency key", func(a *restoreDeliveryArgs) { a.idempotencyKey = "" }, ErrMissingDeliveryFields},
+		{"unknown channel", func(a *restoreDeliveryArgs) { a.channel = "push" }, ErrInvalidDeliveryChannel},
+		{"empty channel", func(a *restoreDeliveryArgs) { a.channel = "" }, ErrInvalidDeliveryChannel},
+		{"negative attempt count", func(a *restoreDeliveryArgs) { a.attemptCount = -1 }, ErrInvalidDeliveryAttemptCount},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			args := defaultRestoreDeliveryArgs()
+			tc.mutate(&args)
+			if _, err := args.build(); !errors.Is(err, tc.wantErr) {
+				t.Fatalf("RestoreDelivery() error = %v, want %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestNewDeliveryLeavesOriginLocal(t *testing.T) {
+	delivery := newTestDelivery(t)
+	// The zero value is the local origin; NewDelivery must never stamp the
+	// imported origin, and existing construction sites stay untouched.
+	if delivery.Origin == OriginImported {
+		t.Fatalf("NewDelivery() stamped the imported origin")
+	}
+	if delivery.Origin != "" {
+		t.Fatalf("NewDelivery() origin = %q, want the zero value", delivery.Origin)
+	}
+}
+
 func TestNewSuppressionReasonAcceptsKnownReasons(t *testing.T) {
 	cases := []struct {
 		input string

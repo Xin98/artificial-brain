@@ -22,6 +22,39 @@ type DeliveryFilter struct {
 	Offset int
 }
 
+// ImportDeliveryRequest asks the import seam to restore one historical
+// delivery row from another instance's export bundle. SourceInstanceID and
+// SourceRecordID form the import idempotency key; every other field carries
+// the recorded history verbatim.
+type ImportDeliveryRequest struct {
+	WorkspaceID, OwnerUserID, TodoID                    string
+	TodoReminderVersion                                 int
+	Channel, State                                      string
+	SuppressionReason, ProviderMessageID, LastErrorCode *string
+	AttemptCount                                        int
+	TodoTitleSnapshot                                   string
+	ScheduledAt, CreatedAt                              time.Time
+	SubmittedAt, FinalizedAt                            *time.Time
+	ReceiptState, ReceiptErrorCode                      *string
+	ReceiptAt                                           *time.Time
+	SourceInstanceID, SourceRecordID                    string
+}
+
+// DeliveryExportRecord is one delivery row as carried by an export bundle;
+// the origin distinguishes plan-time rows from previously imported history.
+type DeliveryExportRecord struct {
+	ID, TodoID, Channel, State       string
+	SuppressionReason                *string `json:",omitempty"`
+	AttemptCount                     int
+	ProviderMessageID, LastErrorCode *string
+	TodoTitleSnapshot                string
+	ScheduledAt, CreatedAt           time.Time
+	SubmittedAt, FinalizedAt         *time.Time `json:",omitempty"`
+	ReceiptState, ReceiptErrorCode   *string    `json:",omitempty"`
+	ReceiptAt                        *time.Time `json:",omitempty"`
+	Origin                           string
+}
+
 // TodoView is the narrow slice of a todo the reminder execution path re-reads
 // at send time. Status carries the todo module's status string; a stale
 // ReminderVersion (newer than the plan's) means the todo was rescheduled and

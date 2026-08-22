@@ -48,6 +48,7 @@ All business routes return stable `{code, message, correlationId}` error envelop
 - `GET /api/v1/dashboard/summary?timezone=<IANA>`
 - `POST /api/v1/conversation/messages`, `POST /api/v1/confirmations`, `POST /api/v1/confirmations/{confirmationId}/confirm`
 - `GET /api/v1/reminders` (delivery records), `GET /api/v1/ops/reminder` (queue and delivery ops snapshot)
+- `POST /api/v1/portability/export` (full-history zip bundle download), `POST /api/v1/portability/imports` (multipart `bundle` upload; two-phase import answering `201 {importId, preview}`), `GET /api/v1/portability/imports/{importId}`, `POST /api/v1/portability/imports/{importId}/confirm` (final report; `409 import_conflict` once committed, `422 bundle_invalid` / `bundle_too_large` on rejected bundles)
 - `POST /api/v1/webhooks/receipts/sms` (no session cookie; authenticated by the shared `REMINDER_RECEIPT_SECRET` HMAC-SHA256 signature)
 - `GET /api/v1/dev/sms-inbox?address=<phone>` (unauthenticated, double-gated, dev only)
 - `GET /api/v1/dev/reminder-outbox?address=<email-or-phone>` (unauthenticated, double-gated, dev only)
@@ -74,9 +75,12 @@ Copy `.env.example` to an ignored `.env` only when local overrides are needed. N
 | `API_INTERNAL_URL` | `http://api:8080` | Server-only API base URL for Web; also baked into the Web rewrite destination at image build time |
 | `APP_ENV` | `development` | Deployment environment; the dev inbox requires a non-`production` value |
 | `DEV_INBOX_ENABLED` | `true` | Enables the fake SMS inbox route; `config.Load` fails if `true` with `APP_ENV=production` |
+| `DEPLOYMENT_MODE` | `cloud` | Deployment form: `cloud` (open login) or `private` (single fixed administrator, `PRIVATE_ADMIN_PHONE` required) |
+| `PRIVATE_ADMIN_PHONE` | unset | E.164 phone number of the fixed private-mode administrator; required when `DEPLOYMENT_MODE=private`, must stay unset in cloud mode |
 | `MODEL_ADAPTER` | `deterministic` | Conversation model adapter: `deterministic` (embedded corpus) or `openai_compatible` |
 | `MODEL_BASE_URL`, `MODEL_NAME`, `MODEL_API_KEY` | unset | Required when `MODEL_ADAPTER=openai_compatible`; never point CI or Compose at a real model |
 | `MODEL_TIMEOUT` | `15s` | Timeout for OpenAI-compatible model calls |
+| `PORTABILITY_MAX_BUNDLE_BYTES` | `33554432` | Maximum accepted portability export bundle size in bytes; configuration floor is `1048576` |
 | `SESSION_TTL` | `168h` | Session cookie lifetime |
 | `LOGIN_CHALLENGE_TTL` | `5m` | Login code lifetime |
 | `CHANNEL_CODE_TTL` | `10m` | Contact-channel verification code lifetime |
@@ -90,6 +94,17 @@ Copy `.env.example` to an ignored `.env` only when local overrides are needed. N
 | `REMINDER_JOB_MAX_ATTEMPTS` | `5` | Reminder job attempts before the delivery dead-letters |
 
 Integration tests for the PostgreSQL adapters additionally use `TEST_DATABASE_URL` (skipped when unset).
+
+## Private deployment
+
+The same Compose stack also runs as a single-host private deployment: one
+administrator identified by `PRIVATE_ADMIN_PHONE`, selected with
+`DEPLOYMENT_MODE=private`, and real model/SMTP/SMS adapters under
+`APP_ENV=production` (the fake adapters and dev inbox/outbox are forbidden
+there). Every phone number except the administrator's receives
+`registration_closed`. Quick start, network-exposure guidance, backup and
+restore, upgrade, and offline install:
+[`deploy/private/README.md`](deploy/private/README.md).
 
 ## Health semantics
 
@@ -115,8 +130,17 @@ make architecture-test
 make test             # Go race tests plus Web tests
 make build            # production Go and Web builds
 make verify           # all Docker-free, read-only pre-commit gates
-make migration-test   # isolated empty-schema, migration ownership, and adapter DB proof (schema v7)
-make smoke-test       # complete healthy/degraded/recovered Compose proof plus the authenticated end-to-end loop, including the reminder delivery, suppression, receipt, ops, and worker-restart recovery block
+make migration-test   # isolated empty-schema, migration ownership, and adapter DB proof (schema v8)
+make smoke-test       # complete healthy/degraded/recovered Compose proof plus the authenticated end-to-end loop, including the reminder delivery, suppression, receipt, ops, worker-restart recovery, portability, private-mode, backup/restore, and upgrade drill blocks
+```
+
+Local data operations wrap the guarded `deploy/private` operator scripts and
+the offline image bundle:
+
+```sh
+make backup                                   # pg_dump archive + sha256 sidecar under deploy/private/backups/
+make restore BACKUP=<archive> CONFIRM=restore # destructive, CONFIRM-gated restore of one archive
+make offline-bundle                           # docker save every stack image into .artifacts/offline/ with a load recipe
 ```
 
 `make verify` never calls `make format`, Docker, migration tests, or smoke tests. Run the complete local acceptance sequence as CI does:

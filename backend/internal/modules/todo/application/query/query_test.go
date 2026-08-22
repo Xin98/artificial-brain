@@ -3,6 +3,7 @@ package query
 import (
 	"context"
 	"errors"
+	"sort"
 	"testing"
 	"time"
 
@@ -23,6 +24,8 @@ type fakeTodoStore struct {
 	todos          map[string]domain.Todo
 	listFilters    dto.ListFilters
 	listLimit      int
+	listAllOffset  int
+	listAllLimit   int
 	dashboard      dashboardArgs
 	dashboardReply dto.DashboardSummary
 	candidateLimit int
@@ -57,6 +60,24 @@ func (s *fakeTodoStore) List(_ context.Context, _, _ string, filters dto.ListFil
 		if todo.Status != domain.StatusDeleted {
 			result = append(result, todo)
 		}
+	}
+	return result, nil
+}
+
+func (s *fakeTodoStore) ListAll(_ context.Context, _, _ string, offset, limit int) ([]domain.Todo, error) {
+	s.listAllOffset = offset
+	s.listAllLimit = limit
+	var result []domain.Todo
+	for _, todo := range s.todos {
+		result = append(result, todo)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].CreatedAt.Before(result[j].CreatedAt) })
+	if offset > len(result) {
+		return nil, nil
+	}
+	result = result[offset:]
+	if len(result) > limit {
+		result = result[:limit]
 	}
 	return result, nil
 }

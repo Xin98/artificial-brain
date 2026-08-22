@@ -7,10 +7,13 @@ import "errors"
 const MaxTitleLength = 200
 
 var (
-	ErrInvalidTitle     = errors.New("todo: title must be between 1 and 200 characters")
-	ErrConflict         = errors.New("todo: version conflict")
-	ErrTodoNotFound     = errors.New("todo: todo not found")
-	ErrTodoDeleted      = errors.New("todo: todo is deleted")
-	ErrAlreadyCompleted = errors.New("todo: todo already completed")
-	ErrInvalidTimezone  = errors.New("todo: timezone must be a valid IANA name")
+	ErrInvalidTitle         = errors.New("todo: title must be between 1 and 200 characters")
+	ErrConflict             = errors.New("todo: version conflict")
+	ErrTodoNotFound         = errors.New("todo: todo not found")
+	ErrTodoDeleted          = errors.New("todo: todo is deleted")
+	ErrAlreadyCompleted     = errors.New("todo: todo already completed")
+	ErrInvalidTimezone      = errors.New("todo: timezone must be a valid IANA name")
+	ErrInvalidStatus        = errors.New("todo: status must be pending, completed, or deleted")
+	ErrInconsistentStatus   = errors.New("todo: completed requires completedAt and deleted requires deletedAt")
+	ErrMissingRestoreFields = errors.New("todo: restore requires id, workspace, and owner")
 )

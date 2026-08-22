@@ -111,6 +111,14 @@ func (s *recordingDeliveryStore) List(context.Context, string, dto.DeliveryFilte
 	return nil, nil
 }
 
+func (s *recordingDeliveryStore) SaveImported(context.Context, domain.ReminderDelivery) error {
+	return nil
+}
+
+func (s *recordingDeliveryStore) Export(context.Context, string, int, int) ([]domain.ReminderDelivery, error) {
+	return nil, nil
+}
+
 // recordingNotifier records every message and fails with err when configured.
 type recordingNotifier struct {
 	messages []dto.ReminderMessage

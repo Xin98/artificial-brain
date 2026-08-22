@@ -18,4 +18,5 @@ var (
 	ErrChannelExists      = errors.New("identity: contact channel already exists")
 	ErrInvalidChannelKind = errors.New("identity: invalid contact channel kind")
 	ErrChannelCodeExpired = errors.New("identity: contact channel code expired")
+	ErrRegistrationClosed = errors.New("identity: registration is closed")
 )

@@ -6,9 +6,9 @@ import type {
 
 const statusContent: Record<HealthStatus, { heading: string; label: string }> =
   {
-    healthy: { heading: "All systems operational", label: "Healthy" },
-    degraded: { heading: "Some systems need attention", label: "Degraded" },
-    unavailable: { heading: "Health status unavailable", label: "Unavailable" },
+    healthy: { heading: "所有系统运行正常", label: "正常" },
+    degraded: { heading: "部分系统需要关注", label: "降级" },
+    unavailable: { heading: "健康状态暂不可用", label: "不可用" },
   };
 
 export function SystemHealthView({
@@ -30,7 +30,6 @@ export function SystemHealthView({
   return (
     <main className="system-health" data-system-status={report.status}>
       <header>
-        <p className="eyebrow">System health</p>
         <h1>{content.heading}</h1>
         <p>
           <span className={`status-badge status-${report.status}`}>
@@ -38,23 +37,27 @@ export function SystemHealthView({
           </span>
         </p>
         <p>
-          Checked{" "}
+          检查时间{" "}
           <time dateTime={report.checkedAt}>
             {new Date(report.checkedAt).toLocaleString()}
           </time>
         </p>
       </header>
-      <section aria-label="Service status" className="health-grid">
+      <section aria-label="服务状态" className="health-grid">
         {components.map(({ name, component }) => (
           <article className="health-card" key={name}>
             <h2>{name}</h2>
             <p>
-              <span className={`status-badge status-${component.status}`}>
-                {component.status === "healthy" ? "Available" : "Unavailable"}
+              <span
+                className={`status-badge status-${
+                  component.status === "healthy" ? "healthy" : "unavailable"
+                }`}
+              >
+                {component.status === "healthy" ? "正常" : "异常"}
               </span>
             </p>
             <p>
-              Updated{" "}
+              更新于{" "}
               <time dateTime={component.checkedAt}>
                 {new Date(component.checkedAt).toLocaleString()}
               </time>

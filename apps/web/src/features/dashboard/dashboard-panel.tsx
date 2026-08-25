@@ -63,10 +63,26 @@ export function DashboardPanel({
   }, [fetcher, timezoneProvider]);
 
   if (failed) {
-    return <p role="alert">仪表盘暂时不可用,请稍后再试。</p>;
+    return (
+      <p className="todo-error" role="alert">
+        仪表盘暂时不可用,请稍后再试。
+      </p>
+    );
   }
   if (!summary) {
-    return <p>加载中…</p>;
+    return (
+      <div className="dashboard-skeleton" role="status">
+        <span className="sr-only">加载中…</span>
+        <div className="dashboard-tiles">
+          {Array.from({ length: 5 }, (_unused, index) => (
+            <div className="stat-tile" key={index}>
+              <span className="skeleton skeleton-value" />
+              <span className="skeleton skeleton-line" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
   }
   return (
     <>

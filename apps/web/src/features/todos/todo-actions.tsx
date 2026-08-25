@@ -75,6 +75,7 @@ export function TodoActions({
     <span className="todo-actions">
       {todo.status === "pending" ? (
         <button
+          className="btn-ghost"
           disabled={busy}
           onClick={() => void handleComplete()}
           type="button"
@@ -84,6 +85,7 @@ export function TodoActions({
       ) : null}
       {confirming === null ? (
         <button
+          className="btn-danger-ghost"
           disabled={busy}
           onClick={() => void handleDeleteRequest()}
           type="button"
@@ -93,6 +95,7 @@ export function TodoActions({
       ) : (
         <span className="todo-confirm-step">
           <button
+            className="btn-danger"
             disabled={busy}
             onClick={() => void handleDeleteConfirm()}
             type="button"
@@ -100,6 +103,7 @@ export function TodoActions({
             确认删除
           </button>
           <button
+            className="btn-ghost"
             disabled={busy}
             onClick={() => setConfirming(null)}
             type="button"

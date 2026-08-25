@@ -786,6 +786,90 @@ func TestConversationEndToEndIntentPath(t *testing.T) {
 	}
 }
 
+// TestManualDeleteCompletedTodo proves the confirmation-gated manual delete
+// accepts completed todos: the UI offers delete for every listed todo, and
+// the domain Delete transition excludes only already-deleted rows.
+func TestManualDeleteCompletedTodo(t *testing.T) {
+	handler, pool := setupAPIHandlerWithPool(t, true)
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+	ctx := context.Background()
+
+	client, _ := loginViaDevInbox(t, srv, "+8613900004445")
+
+	created := doJSON(t, client, http.MethodPost, srv.URL+"/api/v1/todos", `{"title":"已完成待删除"}`)
+	createBody, _ := io.ReadAll(created.Body)
+	created.Body.Close()
+	if created.StatusCode != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201, body=%s", created.StatusCode, createBody)
+	}
+	var todo struct {
+		ID      string `json:"id"`
+		Version int    `json:"version"`
+	}
+	if err := json.Unmarshal(createBody, &todo); err != nil {
+		t.Fatal(err)
+	}
+
+	completeResp := doJSON(t, client, http.MethodPost, srv.URL+"/api/v1/todos/"+todo.ID+"/complete",
+		fmt.Sprintf(`{"version":%d}`, todo.Version))
+	completeBody, _ := io.ReadAll(completeResp.Body)
+	completeResp.Body.Close()
+	if completeResp.StatusCode != http.StatusOK {
+		t.Fatalf("complete status = %d, want 200, body=%s", completeResp.StatusCode, completeBody)
+	}
+
+	// The manual delete confirmation must accept the completed todo.
+	confirmationResp := doJSON(t, client, http.MethodPost, srv.URL+"/api/v1/confirmations",
+		`{"intent":"todo.delete","todoId":"`+todo.ID+`"}`)
+	confirmationBody, _ := io.ReadAll(confirmationResp.Body)
+	confirmationResp.Body.Close()
+	if confirmationResp.StatusCode != http.StatusCreated {
+		t.Fatalf("confirmation status = %d, want 201, body=%s", confirmationResp.StatusCode, confirmationBody)
+	}
+	var confirmation struct {
+		ConfirmationID string `json:"confirmationId"`
+	}
+	if err := json.Unmarshal(confirmationBody, &confirmation); err != nil {
+		t.Fatal(err)
+	}
+
+	confirmResp := doJSON(t, client, http.MethodPost, srv.URL+"/api/v1/confirmations/"+confirmation.ConfirmationID+"/confirm", "")
+	confirmBody, _ := io.ReadAll(confirmResp.Body)
+	confirmResp.Body.Close()
+	if confirmResp.StatusCode != http.StatusOK {
+		t.Fatalf("confirm status = %d, want 200, body=%s", confirmResp.StatusCode, confirmBody)
+	}
+	var confirmed map[string]any
+	if err := json.Unmarshal(confirmBody, &confirmed); err != nil {
+		t.Fatal(err)
+	}
+	if confirmed["kind"] != "todo_deleted" || confirmed["todoId"] != todo.ID {
+		t.Fatalf("confirm body = %#v", confirmed)
+	}
+
+	var status string
+	if err := pool.QueryRow(ctx, `select status from todo.todos where id = $1`, todo.ID).Scan(&status); err != nil {
+		t.Fatalf("todo status query error = %v", err)
+	}
+	if status != "deleted" {
+		t.Fatalf("todo status = %q, want deleted", status)
+	}
+
+	listResp, err := client.Get(srv.URL + "/api/v1/todos")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listBody, _ := io.ReadAll(listResp.Body)
+	listResp.Body.Close()
+	if listResp.StatusCode != http.StatusOK {
+		t.Fatalf("list status = %d, want 200", listResp.StatusCode)
+	}
+	if strings.Contains(string(listBody), "已完成待删除") {
+		t.Fatalf("list after delete still holds the todo: %s", listBody)
+	}
+}
+
 // bothChannelsProvider snapshots both channel kinds for every owner; it lets
 // the composition tests drive the delivery fan-out without identity rows.
 func bothChannelsProvider() func(context.Context, string, string) ([]string, error) {

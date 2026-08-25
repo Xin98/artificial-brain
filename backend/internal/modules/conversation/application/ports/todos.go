@@ -13,8 +13,10 @@ type TodoGateway interface {
 	CreateTodo(ctx context.Context, request tododto.CreateTodoRequest) (tododto.Todo, error)
 	ListTodos(ctx context.Context, workspaceID, ownerUserID string, filters tododto.ListFilters) ([]tododto.Todo, error)
 	SearchCandidates(ctx context.Context, workspaceID, ownerUserID, keyword string) ([]tododto.Candidate, error)
-	// GetTodo returns ErrTodoNotFound / ErrTodoNotPending (conversation-owned
-	// errors) rather than Todo's domain errors.
+	// GetTodo returns ErrTodoNotFound (conversation-owned) for missing and
+	// already-deleted todos rather than Todo's domain errors. Pending and
+	// completed todos are both returned so either can be deleted through the
+	// confirmation flow.
 	GetTodo(ctx context.Context, workspaceID, ownerUserID, todoID string) (tododto.Todo, error)
 	DeleteTodo(ctx context.Context, request tododto.DeleteTodoRequest) (tododto.Todo, error)
 }

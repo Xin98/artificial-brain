@@ -348,8 +348,11 @@ func (s *todoGatewayShim) GetTodo(ctx context.Context, workspaceID, ownerUserID,
 	if err != nil {
 		return tododto.Todo{}, err
 	}
-	if todo.Status != string(tododomain.StatusPending) {
-		return tododto.Todo{}, conversationdomain.ErrTodoNotPending
+	// Pending and completed todos are both deletable through the
+	// confirmation-gated flow; an already soft-deleted todo is
+	// indistinguishable from a missing one at this seam.
+	if todo.Status == string(tododomain.StatusDeleted) {
+		return tododto.Todo{}, conversationdomain.ErrTodoNotFound
 	}
 	return todo, nil
 }

@@ -7,10 +7,11 @@ import "time"
 const MaxVerifyAttempts = 5
 
 // LoginChallenge is a short-lived, single-use request to verify a phone number
-// with a six-digit code. Only the code hash is stored.
+// or an email address with a six-digit code. Only the code hash is stored.
 type LoginChallenge struct {
 	ID         string
 	Phone      string
+	Email      string
 	CodeHash   string
 	CreatedAt  time.Time
 	ExpiresAt  time.Time

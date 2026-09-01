@@ -18,26 +18,40 @@ type ProvisionAdminHandler struct {
 	Now        func() time.Time
 }
 
-// Handle idempotently provisions the fixed private admin: an existing user
-// for the phone is a no-op; otherwise a fresh personal workspace + user is
-// saved (workspace first, mirroring the first-login registration).
-func (h *ProvisionAdminHandler) Handle(ctx context.Context, phone string) error {
-	p, err := domain.NewPhone(phone)
-	if err != nil {
-		return err
+// Handle idempotently provisions the fixed private admin. Either identifier
+// may be empty; when both are configured they belong to the same admin user.
+// An existing user matching any configured identifier is a no-op; otherwise a
+// fresh personal workspace + user is saved (workspace first, mirroring the
+// first-login registration).
+func (h *ProvisionAdminHandler) Handle(ctx context.Context, phone, email string) error {
+	if phone == "" && email == "" {
+		return domain.ErrIdentifierInvalid
 	}
-	_, err = h.Users.ByPhone(ctx, p.String())
-	if err == nil {
-		return nil
+	if phone != "" {
+		if _, err := domain.NewPhone(phone); err != nil {
+			return err
+		}
+		if _, err := h.Users.ByPhone(ctx, phone); err == nil {
+			return nil
+		} else if !errors.Is(err, domain.ErrUserNotFound) {
+			return err
+		}
 	}
-	if !errors.Is(err, domain.ErrUserNotFound) {
-		return err
+	if email != "" {
+		if _, err := domain.NewEmail(email); err != nil {
+			return err
+		}
+		if _, err := h.Users.ByEmail(ctx, email); err == nil {
+			return nil
+		} else if !errors.Is(err, domain.ErrUserNotFound) {
+			return err
+		}
 	}
 	now := h.Now()
 	workspace := domain.PersonalWorkspace{ID: h.NewID(), CreatedAt: now}
 	if err := h.Workspaces.Save(ctx, workspace); err != nil {
 		return err
 	}
-	user := domain.User{ID: h.NewID(), WorkspaceID: workspace.ID, Phone: p.String(), CreatedAt: now}
+	user := domain.User{ID: h.NewID(), WorkspaceID: workspace.ID, Phone: phone, Email: email, CreatedAt: now}
 	return h.Users.Save(ctx, user)
 }

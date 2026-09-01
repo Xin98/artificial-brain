@@ -10,12 +10,20 @@ import (
 	"github.com/Xin98/artificial-brain/backend/internal/modules/identity/domain"
 )
 
-// MaxChallengesPerPhonePerHour bounds how many login codes a phone may request
-// in a rolling hour.
+// MaxChallengesPerPhonePerHour bounds how many login codes a single
+// identifier (phone or email) may request in a rolling hour. The name is
+// kept deliberately: it bounded phones historically and now bounds any one
+// identifier.
 const MaxChallengesPerPhonePerHour = 5
 
-// RequestLoginChallengeHandler creates a login challenge and sends its code via
-// the outbound message port.
+// validateIdentifier enforces that exactly one of phone or email is present
+// and well-formed, returning the normalized identifier.
+func validateIdentifier(identifier domain.LoginIdentifier) (domain.LoginIdentifier, error) {
+	return domain.NewLoginIdentifier(identifier.Phone, identifier.Email)
+}
+
+// RequestLoginChallengeHandler creates a login challenge and sends its code
+// via the outbound message port.
 type RequestLoginChallengeHandler struct {
 	Challenges   ports.ChallengeStore
 	Outbox       ports.MessageOutbox
@@ -23,22 +31,24 @@ type RequestLoginChallengeHandler struct {
 	NewID        func() string
 	Now          func() time.Time
 	ChallengeTTL time.Duration
-	// PrivateAdminPhone, when non-empty, restricts login to that single
-	// private-deployment admin phone; every other phone is rejected before
-	// any store or outbox interaction. Empty keeps public-cloud behavior.
+	// PrivateAdminPhone and PrivateAdminEmail restrict login to the fixed
+	// private-deployment admin identifiers; any other identifier is rejected
+	// before any store or outbox interaction. Both empty keeps public-cloud
+	// behavior.
 	PrivateAdminPhone string
+	PrivateAdminEmail string
 }
 
-func (h *RequestLoginChallengeHandler) Handle(ctx context.Context, phone string) error {
-	p, err := domain.NewPhone(phone)
+func (h *RequestLoginChallengeHandler) Handle(ctx context.Context, identifier domain.LoginIdentifier) error {
+	identifier, err := validateIdentifier(identifier)
 	if err != nil {
 		return err
 	}
-	if h.PrivateAdminPhone != "" && p.String() != h.PrivateAdminPhone {
+	if h.privateBlocked(identifier) {
 		return domain.ErrRegistrationClosed
 	}
 	now := h.Now()
-	count, err := h.Challenges.CountByPhoneSince(ctx, p.String(), now.Add(-time.Hour))
+	count, err := h.countRecent(ctx, identifier, now)
 	if err != nil {
 		return err
 	}
@@ -51,7 +61,8 @@ func (h *RequestLoginChallengeHandler) Handle(ctx context.Context, phone string)
 	}
 	challenge := domain.LoginChallenge{
 		ID:        h.NewID(),
-		Phone:     p.String(),
+		Phone:     identifier.Phone,
+		Email:     identifier.Email,
 		CodeHash:  domain.HashCode(code),
 		CreatedAt: now,
 		ExpiresAt: now.Add(h.ChallengeTTL),
@@ -60,11 +71,31 @@ func (h *RequestLoginChallengeHandler) Handle(ctx context.Context, phone string)
 		return err
 	}
 	return h.Outbox.Write(ctx, ports.OutboxMessage{
-		Address: p.String(),
-		Channel: "sms",
+		Address: identifier.Value(),
+		Channel: identifier.Channel(),
 		Purpose: "login",
 		Code:    code,
 	})
+}
+
+func (h *RequestLoginChallengeHandler) privateBlocked(identifier domain.LoginIdentifier) bool {
+	if h.PrivateAdminPhone == "" && h.PrivateAdminEmail == "" {
+		return false
+	}
+	if identifier.Phone != "" && identifier.Phone == h.PrivateAdminPhone {
+		return false
+	}
+	if identifier.Email != "" && identifier.Email == h.PrivateAdminEmail {
+		return false
+	}
+	return true
+}
+
+func (h *RequestLoginChallengeHandler) countRecent(ctx context.Context, identifier domain.LoginIdentifier, now time.Time) (int, error) {
+	if identifier.Phone != "" {
+		return h.Challenges.CountByPhoneSince(ctx, identifier.Phone, now.Add(-time.Hour))
+	}
+	return h.Challenges.CountByEmailSince(ctx, identifier.Email, now.Add(-time.Hour))
 }
 
 // VerifyLoginChallengeHandler validates a login code, registers the user and
@@ -78,25 +109,26 @@ type VerifyLoginChallengeHandler struct {
 	NewToken   func() (string, error)
 	Now        func() time.Time
 	SessionTTL time.Duration
-	// PrivateAdminPhone, when non-empty, restricts login to that single
-	// private-deployment admin phone; every other phone is rejected before
-	// any store interaction. Empty keeps public-cloud behavior.
+	// PrivateAdminPhone and PrivateAdminEmail restrict login to the fixed
+	// private-deployment admin identifiers; any other identifier is rejected
+	// before any store interaction. Both empty keeps public-cloud behavior.
 	PrivateAdminPhone string
+	PrivateAdminEmail string
 }
 
-func (h *VerifyLoginChallengeHandler) Handle(ctx context.Context, phone, code string) (dto.VerifyLoginChallengeResult, error) {
-	p, err := domain.NewPhone(phone)
+func (h *VerifyLoginChallengeHandler) Handle(ctx context.Context, identifier domain.LoginIdentifier, code string) (dto.VerifyLoginChallengeResult, error) {
+	identifier, err := validateIdentifier(identifier)
 	if err != nil {
 		return dto.VerifyLoginChallengeResult{}, err
 	}
-	if h.PrivateAdminPhone != "" && p.String() != h.PrivateAdminPhone {
+	if h.privateBlocked(identifier) {
 		return dto.VerifyLoginChallengeResult{}, domain.ErrRegistrationClosed
 	}
 	if _, err := domain.NewCode(code); err != nil {
 		return dto.VerifyLoginChallengeResult{}, err
 	}
 
-	challenge, err := h.Challenges.ActiveByPhone(ctx, p.String())
+	challenge, err := h.activeChallenge(ctx, identifier)
 	if err != nil {
 		return dto.VerifyLoginChallengeResult{}, domain.ErrChallengeNotFound
 	}
@@ -127,13 +159,13 @@ func (h *VerifyLoginChallengeHandler) Handle(ctx context.Context, phone, code st
 		return dto.VerifyLoginChallengeResult{}, err
 	}
 
-	user, err := h.Users.ByPhone(ctx, p.String())
+	user, err := h.existingUser(ctx, identifier)
 	if errors.Is(err, domain.ErrUserNotFound) {
 		workspace := domain.PersonalWorkspace{ID: h.NewID(), CreatedAt: now}
 		if err := h.Workspaces.Save(ctx, workspace); err != nil {
 			return dto.VerifyLoginChallengeResult{}, err
 		}
-		user = domain.User{ID: h.NewID(), WorkspaceID: workspace.ID, Phone: p.String(), CreatedAt: now}
+		user = domain.User{ID: h.NewID(), WorkspaceID: workspace.ID, Phone: identifier.Phone, Email: identifier.Email, CreatedAt: now}
 		if err := h.Users.Save(ctx, user); err != nil {
 			return dto.VerifyLoginChallengeResult{}, err
 		}
@@ -165,6 +197,33 @@ func (h *VerifyLoginChallengeHandler) Handle(ctx context.Context, phone, code st
 		},
 		ExpiresAt: session.ExpiresAt,
 	}, nil
+}
+
+func (h *VerifyLoginChallengeHandler) privateBlocked(identifier domain.LoginIdentifier) bool {
+	if h.PrivateAdminPhone == "" && h.PrivateAdminEmail == "" {
+		return false
+	}
+	if identifier.Phone != "" && identifier.Phone == h.PrivateAdminPhone {
+		return false
+	}
+	if identifier.Email != "" && identifier.Email == h.PrivateAdminEmail {
+		return false
+	}
+	return true
+}
+
+func (h *VerifyLoginChallengeHandler) activeChallenge(ctx context.Context, identifier domain.LoginIdentifier) (domain.LoginChallenge, error) {
+	if identifier.Phone != "" {
+		return h.Challenges.ActiveByPhone(ctx, identifier.Phone)
+	}
+	return h.Challenges.ActiveByEmail(ctx, identifier.Email)
+}
+
+func (h *VerifyLoginChallengeHandler) existingUser(ctx context.Context, identifier domain.LoginIdentifier) (domain.User, error) {
+	if identifier.Phone != "" {
+		return h.Users.ByPhone(ctx, identifier.Phone)
+	}
+	return h.Users.ByEmail(ctx, identifier.Email)
 }
 
 // LogoutHandler revokes a session.

@@ -118,6 +118,9 @@ type fakeUserStore struct {
 	// byPhoneErr, when set, makes ByPhone fail with this error so tests can
 	// exercise error propagation.
 	byPhoneErr error
+	// byEmailErr, when set, makes ByEmail fail with this error so tests can
+	// exercise error propagation.
+	byEmailErr error
 	// log, when set, records "user:<id>" on Save so tests can assert the
 	// cross-store save order.
 	log *[]string
@@ -146,8 +149,11 @@ func (s *fakeUserStore) ByPhone(_ context.Context, phone string) (domain.User, e
 }
 
 func (s *fakeUserStore) ByEmail(_ context.Context, email string) (domain.User, error) {
+	if s.byEmailErr != nil {
+		return domain.User{}, s.byEmailErr
+	}
 	for _, u := range s.users {
-		if u.Email == email {
+		if u.Email != "" && u.Email == email {
 			return u, nil
 		}
 	}

@@ -107,7 +107,7 @@ func registerIdentityRoutes(cfg config.Config, pool *pgxpool.Pool, mux *http.Ser
 	outbox := fakeoutbox.New(pool)
 
 	handler := &identityhttp.Handler{
-		RequestLoginChallenge: &command.RequestLoginChallengeHandler{
+		RequestLoginChallenge: phoneLoginRequester{request: &command.RequestLoginChallengeHandler{
 			Challenges:        challenges,
 			Outbox:            outbox,
 			NewCode:           newSixDigitCode,
@@ -115,8 +115,8 @@ func registerIdentityRoutes(cfg config.Config, pool *pgxpool.Pool, mux *http.Ser
 			Now:               time.Now,
 			ChallengeTTL:      cfg.LoginChallengeTTL,
 			PrivateAdminPhone: cfg.PrivateAdminPhone,
-		},
-		VerifyLoginChallenge: &command.VerifyLoginChallengeHandler{
+		}},
+		VerifyLoginChallenge: phoneLoginVerifier{verify: &command.VerifyLoginChallengeHandler{
 			Challenges:        challenges,
 			Users:             users,
 			Workspaces:        workspaces,
@@ -126,7 +126,7 @@ func registerIdentityRoutes(cfg config.Config, pool *pgxpool.Pool, mux *http.Ser
 			Now:               time.Now,
 			SessionTTL:        cfg.SessionTTL,
 			PrivateAdminPhone: cfg.PrivateAdminPhone,
-		},
+		}},
 		Logout: &command.LogoutHandler{Sessions: sessions, Now: time.Now},
 		AddChannel: &command.AddChannelHandler{
 			Channels: channels,
@@ -143,6 +143,26 @@ func registerIdentityRoutes(cfg config.Config, pool *pgxpool.Pool, mux *http.Ser
 	}
 
 	identityhttp.RegisterRoutes(mux, auth, handler)
+}
+
+// phoneLoginRequester adapts the dual-identifier request command to the
+// phone-only HTTP seam; the HTTP layer moves to identifiers in a later task.
+type phoneLoginRequester struct {
+	request *command.RequestLoginChallengeHandler
+}
+
+func (a phoneLoginRequester) Handle(ctx context.Context, phone string) error {
+	return a.request.Handle(ctx, identitydomain.LoginIdentifier{Phone: phone})
+}
+
+// phoneLoginVerifier adapts the dual-identifier verify command to the
+// phone-only HTTP seam; the HTTP layer moves to identifiers in a later task.
+type phoneLoginVerifier struct {
+	verify *command.VerifyLoginChallengeHandler
+}
+
+func (a phoneLoginVerifier) Handle(ctx context.Context, phone, code string) (identitydto.VerifyLoginChallengeResult, error) {
+	return a.verify.Handle(ctx, identitydomain.LoginIdentifier{Phone: phone}, code)
 }
 
 // newID returns a random RFC 4122 version 4 UUID string.

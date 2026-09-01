@@ -109,31 +109,39 @@ export function TodoForm({
       className="todo-form"
       onSubmit={submit}
     >
-      <label htmlFor="todo-title">标题</label>
-      <input
-        id="todo-title"
-        maxLength={200}
-        onChange={(event) => setTitle(event.target.value)}
-        type="text"
-        value={title}
-      />
-      <label htmlFor="todo-description">描述</label>
-      <input
-        id="todo-description"
-        onChange={(event) => setDescription(event.target.value)}
-        type="text"
-        value={description}
-      />
-      <label htmlFor="todo-due">到期时间</label>
-      <input
-        id="todo-due"
-        onChange={(event) => setDue(event.target.value)}
-        type="datetime-local"
-        value={due}
-      />
-      <button disabled={busy} type="submit">
-        {editing ? "保存" : "新建"}
-      </button>
+      <div className="field">
+        <label htmlFor="todo-title">标题</label>
+        <input
+          id="todo-title"
+          maxLength={200}
+          onChange={(event) => setTitle(event.target.value)}
+          type="text"
+          value={title}
+        />
+      </div>
+      <div className="field">
+        <label htmlFor="todo-description">描述</label>
+        <input
+          id="todo-description"
+          onChange={(event) => setDescription(event.target.value)}
+          type="text"
+          value={description}
+        />
+      </div>
+      <div className="form-row">
+        <div className="field">
+          <label htmlFor="todo-due">到期时间</label>
+          <input
+            id="todo-due"
+            onChange={(event) => setDue(event.target.value)}
+            type="datetime-local"
+            value={due}
+          />
+        </div>
+        <button className="btn-primary" disabled={busy} type="submit">
+          {editing ? "保存" : "新建"}
+        </button>
+      </div>
       {error ? (
         <p aria-live="polite" className="todo-error" role="alert">
           {error}

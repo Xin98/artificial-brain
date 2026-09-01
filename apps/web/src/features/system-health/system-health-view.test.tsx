@@ -29,9 +29,9 @@ describe("SystemHealthView", () => {
   afterEach(cleanup);
 
   test.each([
-    ["healthy", "All systems operational"],
-    ["degraded", "Some systems need attention"],
-    ["unavailable", "Health status unavailable"],
+    ["healthy", "所有系统运行正常"],
+    ["degraded", "部分系统需要关注"],
+    ["unavailable", "健康状态暂不可用"],
   ] as const)("renders %s status", (status, heading) => {
     render(<SystemHealthView report={reportWithStatus(status)} />);
 

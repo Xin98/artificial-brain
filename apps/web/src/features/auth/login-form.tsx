@@ -61,35 +61,40 @@ export function LoginForm({
     >
       {step === "phone" ? (
         <div className="login-step">
-          <label htmlFor="login-phone">手机号</label>
-          <input
-            autoComplete="tel"
-            id="login-phone"
-            name="phone"
-            onChange={(event) => setPhone(event.target.value)}
-            placeholder="+8613800138000"
-            type="tel"
-            value={phone}
-          />
-          <button disabled={busy} type="submit">
+          <div className="field">
+            <label htmlFor="login-phone">手机号</label>
+            <input
+              autoComplete="tel"
+              id="login-phone"
+              name="phone"
+              onChange={(event) => setPhone(event.target.value)}
+              placeholder="+8613800138000"
+              type="tel"
+              value={phone}
+            />
+          </div>
+          <button className="btn-primary" disabled={busy} type="submit">
             获取验证码
           </button>
         </div>
       ) : (
         <div className="login-step">
-          <label htmlFor="login-code">验证码</label>
-          <input
-            autoComplete="one-time-code"
-            id="login-code"
-            name="code"
-            onChange={(event) => setCode(event.target.value)}
-            type="text"
-            value={code}
-          />
-          <button disabled={busy} type="submit">
+          <div className="field">
+            <label htmlFor="login-code">验证码</label>
+            <input
+              autoComplete="one-time-code"
+              id="login-code"
+              name="code"
+              onChange={(event) => setCode(event.target.value)}
+              type="text"
+              value={code}
+            />
+          </div>
+          <button className="btn-primary" disabled={busy} type="submit">
             登录
           </button>
           <button
+            className="btn-ghost"
             onClick={() => {
               setStep("phone");
               setError(null);

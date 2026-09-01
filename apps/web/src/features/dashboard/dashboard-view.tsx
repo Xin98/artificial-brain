@@ -1,7 +1,30 @@
 import type { DashboardSummary } from "./fetch-dashboard";
-import type { ReminderDelivery } from "./fetch-reminders";
+import type { ReminderDelivery, ReminderState } from "./fetch-reminders";
 
-// DashboardView renders the nine deterministic stat tiles and, when the
+interface StatTile {
+  label: string;
+  value: number;
+  tone: "danger" | "warn" | null;
+}
+
+// Reminder states render as badges; terminal failures read as danger, the
+// in-flight retry window as warn, everything else as neutral metadata.
+const STATE_BADGES: Record<ReminderState, string> = {
+  scheduled: "badge badge-muted",
+  sending: "badge badge-warn",
+  succeeded: "badge badge-ok",
+  failed: "badge badge-danger",
+  suppressed: "badge badge-muted",
+};
+
+function tileClass(tile: StatTile): string {
+  if (tile.tone !== null && tile.value > 0) {
+    return `stat-tile stat-tile-${tile.tone}`;
+  }
+  return "stat-tile";
+}
+
+// DashboardView renders the todo and reminder clusters and, when the
 // delivery records are provided, the reminder records list. It stays
 // presentational: all data arrives via props, and an absent deliveries prop
 // means the records section is omitted (degraded summary-only view).
@@ -12,27 +35,45 @@ export function DashboardView({
   summary: DashboardSummary;
   deliveries?: ReminderDelivery[];
 }): React.JSX.Element {
-  const tiles = [
-    { label: "待处理", value: String(summary.pendingTotal) },
-    { label: "今日到期", value: String(summary.dueToday) },
-    { label: "已逾期", value: String(summary.overdue) },
-    { label: "无到期时间", value: String(summary.noDue) },
-    { label: "近 7 天完成", value: String(summary.completedLast7Days) },
-    { label: "提醒成功", value: String(summary.reminderSucceeded) },
-    { label: "重试中", value: String(summary.reminderRetrying) },
-    { label: "失败", value: String(summary.reminderFailed) },
-    { label: "被抑制", value: String(summary.reminderSuppressed) },
+  const todoTiles: StatTile[] = [
+    { label: "待处理", value: summary.pendingTotal, tone: null },
+    { label: "今日到期", value: summary.dueToday, tone: null },
+    { label: "已逾期", value: summary.overdue, tone: "danger" },
+    { label: "无到期时间", value: summary.noDue, tone: null },
+    { label: "近 7 天完成", value: summary.completedLast7Days, tone: null },
+  ];
+  const reminderTiles: StatTile[] = [
+    { label: "提醒成功", value: summary.reminderSucceeded, tone: null },
+    { label: "重试中", value: summary.reminderRetrying, tone: "warn" },
+    { label: "失败", value: summary.reminderFailed, tone: "danger" },
+    { label: "被抑制", value: summary.reminderSuppressed, tone: null },
   ];
 
   return (
     <>
-      <section aria-label="仪表盘" className="dashboard-grid">
-        {tiles.map((tile) => (
-          <article className="stat-tile" key={tile.label}>
-            <h2>{tile.label}</h2>
-            <p className="stat-value">{tile.value}</p>
-          </article>
-        ))}
+      <section aria-label="仪表盘" className="dashboard">
+        <div className="dashboard-cluster">
+          <h2 className="cluster-title">待办</h2>
+          <div className="dashboard-tiles">
+            {todoTiles.map((tile) => (
+              <article className={tileClass(tile)} key={tile.label}>
+                <p className="stat-value">{tile.value}</p>
+                <p className="stat-label">{tile.label}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+        <div className="dashboard-cluster dashboard-cluster-tinted">
+          <h2 className="cluster-title">提醒投递</h2>
+          <div className="dashboard-tiles">
+            {reminderTiles.map((tile) => (
+              <article className={tileClass(tile)} key={tile.label}>
+                <p className="stat-value">{tile.value}</p>
+                <p className="stat-label">{tile.label}</p>
+              </article>
+            ))}
+          </div>
+        </div>
         <p className="dashboard-checked">
           统计时间{" "}
           <time dateTime={summary.checkedAt}>
@@ -51,27 +92,24 @@ export function DashboardView({
                 <li className="reminder-record" key={delivery.id}>
                   <span className="reminder-record-title">
                     《{delivery.todoTitle}》
-                  </span>{" "}
-                  ·{" "}
-                  <span className="reminder-record-channel">
-                    {delivery.channel}
-                  </span>{" "}
-                  ·{" "}
-                  <span className="reminder-record-state">
+                  </span>
+                  <span className="badge badge-muted">{delivery.channel}</span>
+                  <span className={STATE_BADGES[delivery.state]}>
                     {delivery.state}
-                  </span>{" "}
-                  ·{" "}
+                  </span>
                   <time dateTime={delivery.scheduledAt}>
                     {new Date(delivery.scheduledAt).toLocaleString()}
                   </time>
                   {delivery.receiptState ? (
-                    <>
-                      {" "}
-                      ·{" "}
-                      <span className="reminder-record-receipt">
-                        {delivery.receiptState}
-                      </span>
-                    </>
+                    <span
+                      className={
+                        delivery.receiptState === "received_ok"
+                          ? "badge badge-ok"
+                          : "badge badge-danger"
+                      }
+                    >
+                      {delivery.receiptState}
+                    </span>
                   ) : null}
                 </li>
               ))}

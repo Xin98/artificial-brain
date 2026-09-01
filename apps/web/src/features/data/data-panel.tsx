@@ -68,7 +68,7 @@ function downloadBundle(blob: Blob): void {
 }
 
 // DataPanel walks the two data portability flows. Export downloads the
-// workspace bundle; import is two-phase — upload shows the preview, confirm
+// workspace bundle; import is two-phase: upload shows the preview, confirm
 // commits it. Every step fails closed with an inline message.
 export function DataPanel({
   fetcher = fetch,
@@ -145,6 +145,7 @@ export function DataPanel({
         <h2>导出数据</h2>
         <p>将本实例的全部数据(待办、提醒记录与联系渠道偏好)打包下载。</p>
         <button
+          className="btn-primary"
           disabled={exporting}
           onClick={() => void handleExport()}
           type="button"
@@ -157,14 +158,16 @@ export function DataPanel({
         <h2>导入数据</h2>
         {phase === "idle" || phase === "previewing" ? (
           <>
-            <label htmlFor="bundle-file">选择导出包(.zip)</label>
-            <input
-              accept=".zip"
-              disabled={phase === "previewing"}
-              id="bundle-file"
-              onChange={(event) => void handleBundleChange(event)}
-              type="file"
-            />
+            <div className="field">
+              <label htmlFor="bundle-file">选择导出包(.zip)</label>
+              <input
+                accept=".zip"
+                disabled={phase === "previewing"}
+                id="bundle-file"
+                onChange={(event) => void handleBundleChange(event)}
+                type="file"
+              />
+            </div>
             {phase === "previewing" ? (
               <p role="status">正在解析导出包…</p>
             ) : null}
@@ -178,10 +181,16 @@ export function DataPanel({
               <ul className="data-details">
                 {preview.details.slice(0, DETAILS_LIMIT).map((decision) => (
                   <li key={`${decision.kind}-${decision.sourceRecordId}`}>
-                    {KIND_LABELS[decision.kind] ?? decision.kind} ·{" "}
-                    {decision.sourceRecordId} ·{" "}
-                    {OUTCOME_LABELS[decision.outcome]}
-                    {decision.reason ? ` · ${decision.reason}` : ""}
+                    <span className="data-detail-kind">
+                      {KIND_LABELS[decision.kind] ?? decision.kind}
+                    </span>
+                    <span className="data-detail-id">
+                      {decision.sourceRecordId}
+                    </span>
+                    <span className="data-detail-outcome">
+                      {OUTCOME_LABELS[decision.outcome]}
+                    </span>
+                    {decision.reason ? <span>{decision.reason}</span> : null}
                   </li>
                 ))}
               </ul>
@@ -191,7 +200,11 @@ export function DataPanel({
                 明细较多,仅显示前 {DETAILS_LIMIT} 条。
               </p>
             ) : null}
-            <button onClick={() => void handleConfirm()} type="button">
+            <button
+              className="btn-primary"
+              onClick={() => void handleConfirm()}
+              type="button"
+            >
               确认导入
             </button>
           </>

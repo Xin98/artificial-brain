@@ -109,15 +109,18 @@ export function ChatPanel({
   return (
     <section aria-label="对话" className="chat-panel">
       <form className="chat-input" onSubmit={send}>
-        <label htmlFor="chat-text">消息</label>
+        <label className="sr-only" htmlFor="chat-text">
+          消息
+        </label>
         <input
           id="chat-text"
           maxLength={1000}
           onChange={(event) => setText(event.target.value)}
+          placeholder="例如:明天下午三点提醒我提交周报"
           type="text"
           value={text}
         />
-        <button disabled={busy} type="submit">
+        <button className="btn-primary" disabled={busy} type="submit">
           发送
         </button>
       </form>
@@ -126,9 +129,11 @@ export function ChatPanel({
           {error}
         </p>
       ) : null}
-      {response
-        ? renderResponse(response, (todoId) => void pickCandidate(todoId))
-        : null}
+      {response ? (
+        <div className="chat-turn">
+          {renderResponse(response, (todoId) => void pickCandidate(todoId))}
+        </div>
+      ) : null}
       {pending ? (
         <div className="chat-confirm">
           <p>
@@ -144,6 +149,7 @@ export function ChatPanel({
             ) : null}
           </p>
           <button
+            className="btn-danger"
             disabled={busy}
             onClick={() => void confirmPending()}
             type="button"
@@ -151,6 +157,7 @@ export function ChatPanel({
             确认删除
           </button>
           <button
+            className="btn-ghost"
             disabled={busy}
             onClick={() => setPending(null)}
             type="button"
@@ -197,6 +204,7 @@ function renderResponse(
             {(response.candidates ?? []).map((candidate) => (
               <li key={candidate.todoId}>
                 <button
+                  className="chat-candidate"
                   onClick={() => onPickCandidate(candidate.todoId)}
                   type="button"
                 >

@@ -1,7 +1,13 @@
 import { render, screen } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
 
 import { WorkbenchShell } from "./workbench-shell";
+
+// The shell reads the active route from the app router; unit tests render it
+// outside a router, so the hook is stubbed to a fixed path.
+vi.mock("next/navigation", () => ({
+  usePathname: () => "/",
+}));
 
 it("renders navigation to the workbench areas", () => {
   render(

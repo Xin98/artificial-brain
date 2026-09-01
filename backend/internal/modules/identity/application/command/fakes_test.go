@@ -61,6 +61,46 @@ func (s *fakeChallengeStore) ActiveByPhone(_ context.Context, phone string) (dom
 	return domain.LoginChallenge{}, domain.ErrChallengeNotFound
 }
 
+func (s *fakeChallengeStore) ActiveByEmail(_ context.Context, email string) (domain.LoginChallenge, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var latestUnconsumed *domain.LoginChallenge
+	var latestAny *domain.LoginChallenge
+	for i := range s.challenges {
+		c := s.challenges[i]
+		if c.Email != email {
+			continue
+		}
+		if latestAny == nil || !c.CreatedAt.Before(latestAny.CreatedAt) {
+			cc := c
+			latestAny = &cc
+		}
+		if !c.IsConsumed() && (latestUnconsumed == nil || !c.CreatedAt.Before(latestUnconsumed.CreatedAt)) {
+			cc := c
+			latestUnconsumed = &cc
+		}
+	}
+	if latestUnconsumed != nil {
+		return *latestUnconsumed, nil
+	}
+	if latestAny != nil {
+		return *latestAny, nil
+	}
+	return domain.LoginChallenge{}, domain.ErrChallengeNotFound
+}
+
+func (s *fakeChallengeStore) CountByEmailSince(_ context.Context, email string, since time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, c := range s.challenges {
+		if c.Email == email && !c.CreatedAt.Before(since) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (s *fakeChallengeStore) CountByPhoneSince(_ context.Context, phone string, since time.Time) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -99,6 +139,15 @@ func (s *fakeUserStore) ByPhone(_ context.Context, phone string) (domain.User, e
 	}
 	for _, u := range s.users {
 		if u.Phone == phone {
+			return u, nil
+		}
+	}
+	return domain.User{}, domain.ErrUserNotFound
+}
+
+func (s *fakeUserStore) ByEmail(_ context.Context, email string) (domain.User, error) {
+	for _, u := range s.users {
+		if u.Email == email {
 			return u, nil
 		}
 	}

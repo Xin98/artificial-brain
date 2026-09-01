@@ -68,10 +68,10 @@ const (
 	defaultReminderQueueSmsConcurrency   = 5
 	defaultReminderJobMaxAttempts        = 5
 
-	ReminderEmailAdapterFake = "fake"
-	ReminderEmailAdapterSmtp = "smtp"
-	ReminderSmsAdapterFake   = "fake"
-	ReminderSmsAdapterAliyun = "aliyun"
+	ReminderEmailAdapterFake   = "fake"
+	ReminderEmailAdapterSmtp   = "smtp"
+	ReminderSmsAdapterFake     = "fake"
+	ReminderSmsAdapterAliyun   = "aliyun"
 	ReminderSmsAdapterDisabled = "disabled"
 )
 
@@ -122,9 +122,9 @@ type Config struct {
 	ReminderQueueSmsConcurrency   int
 	ReminderJobMaxAttempts        int
 
-	DeploymentMode            string
-	PrivateAdminPhone         string
-	PrivateAdminEmail         string
+	DeploymentMode    string
+	PrivateAdminPhone string
+	PrivateAdminEmail string
 
 	SmtpHost     string
 	SmtpPort     int
@@ -425,12 +425,12 @@ func Load(role Role, lookup LookupEnv) (Config, error) {
 		DeploymentMode:            deploymentMode,
 		PrivateAdminPhone:         privateAdminPhone,
 		PrivateAdminEmail:         privateAdminEmail,
-		SmtpHost:          smtpHost,
-		SmtpPort:          smtpPort,
-		SmtpUsername:      smtpUsername,
-		SmtpPassword:      smtpPassword,
-		SmtpFrom:          smtpFrom,
-		SmtpTimeout:       smtpTimeout,
+		SmtpHost:                  smtpHost,
+		SmtpPort:                  smtpPort,
+		SmtpUsername:              smtpUsername,
+		SmtpPassword:              smtpPassword,
+		SmtpFrom:                  smtpFrom,
+		SmtpTimeout:               smtpTimeout,
 		PortabilityMaxBundleBytes: portabilityMaxBundleBytes,
 	}, nil
 }

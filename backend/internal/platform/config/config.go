@@ -33,6 +33,8 @@ const (
 	defaultModelAdapter      = "deterministic"
 	defaultModelTimeout      = 15 * time.Second
 
+	defaultIdentitySmtpTimeout = 10 * time.Second
+
 	ModelAdapterDeterministic    = "deterministic"
 	ModelAdapterOpenAICompatible = "openai_compatible"
 	AppEnvProduction             = "production"
@@ -52,6 +54,11 @@ const (
 // (ITER-0004 assumption A1).
 var e164PhonePattern = regexp.MustCompile(`^\+?[1-9][0-9]{6,14}$`)
 
+// adminEmailPattern duplicates the identity module's email validation
+// deliberately: the platform package must not import business modules
+// (ITER-0004 assumption A1).
+var adminEmailPattern = regexp.MustCompile(`^[^@\s]+@[^@\s]+\.[^@\s]+$`)
+
 const (
 	defaultReminderEmailAdapter          = "fake"
 	defaultReminderSmsAdapter            = "fake"
@@ -65,6 +72,7 @@ const (
 	ReminderEmailAdapterSmtp = "smtp"
 	ReminderSmsAdapterFake   = "fake"
 	ReminderSmsAdapterAliyun = "aliyun"
+	ReminderSmsAdapterDisabled = "disabled"
 )
 
 type Role string
@@ -116,6 +124,15 @@ type Config struct {
 
 	DeploymentMode            string
 	PrivateAdminPhone         string
+	PrivateAdminEmail         string
+
+	SmtpHost     string
+	SmtpPort     int
+	SmtpUsername string
+	SmtpPassword string
+	SmtpFrom     string
+	SmtpTimeout  time.Duration
+
 	PortabilityMaxBundleBytes int
 }
 
@@ -204,7 +221,7 @@ func Load(role Role, lookup LookupEnv) (Config, error) {
 	}
 	reminderSmsAdapter := valueOrDefault(lookup, "REMINDER_SMS_ADAPTER", defaultReminderSmsAdapter)
 	switch reminderSmsAdapter {
-	case ReminderSmsAdapterFake, ReminderSmsAdapterAliyun:
+	case ReminderSmsAdapterFake, ReminderSmsAdapterAliyun, ReminderSmsAdapterDisabled:
 	default:
 		return Config{}, fmt.Errorf("config: invalid REMINDER_SMS_ADAPTER")
 	}
@@ -244,6 +261,33 @@ func Load(role Role, lookup LookupEnv) (Config, error) {
 		}
 		if reminderSmtpFrom == "" {
 			return Config{}, fmt.Errorf("config: missing REMINDER_SMTP_FROM")
+		}
+	}
+
+	smtpHost := valueOrDefault(lookup, "SMTP_HOST", "")
+	smtpPort, err := intValue(lookup, "SMTP_PORT", 0)
+	if err != nil {
+		return Config{}, err
+	}
+	smtpUsername := valueOrDefault(lookup, "SMTP_USERNAME", "")
+	smtpPassword := valueOrDefault(lookup, "SMTP_PASSWORD", "")
+	smtpFrom := valueOrDefault(lookup, "SMTP_FROM", "")
+	smtpTimeout, err := duration(lookup, "SMTP_TIMEOUT", defaultIdentitySmtpTimeout)
+	if err != nil {
+		return Config{}, err
+	}
+	if smtpUsername != "" && smtpPassword == "" {
+		return Config{}, fmt.Errorf("config: SMTP_USERNAME requires SMTP_PASSWORD")
+	}
+	if appEnv == AppEnvProduction && role == RoleAPI {
+		if smtpHost == "" {
+			return Config{}, fmt.Errorf("config: missing SMTP_HOST")
+		}
+		if smtpPort < 1 {
+			return Config{}, fmt.Errorf("config: invalid SMTP_PORT")
+		}
+		if smtpFrom == "" {
+			return Config{}, fmt.Errorf("config: missing SMTP_FROM")
 		}
 	}
 
@@ -305,8 +349,9 @@ func Load(role Role, lookup LookupEnv) (Config, error) {
 		return Config{}, fmt.Errorf("config: invalid DEPLOYMENT_MODE")
 	}
 	privateAdminPhone := valueOrDefault(lookup, "PRIVATE_ADMIN_PHONE", "")
-	if deploymentMode == DeploymentModeCloud && privateAdminPhone != "" {
-		return Config{}, fmt.Errorf("config: PRIVATE_ADMIN_PHONE requires a private DEPLOYMENT_MODE")
+	privateAdminEmail := valueOrDefault(lookup, "PRIVATE_ADMIN_EMAIL", "")
+	if deploymentMode == DeploymentModeCloud && (privateAdminPhone != "" || privateAdminEmail != "") {
+		return Config{}, fmt.Errorf("config: PRIVATE_ADMIN_PHONE and PRIVATE_ADMIN_EMAIL require a private DEPLOYMENT_MODE")
 	}
 	if privateAdminPhone != "" && !e164PhonePattern.MatchString(privateAdminPhone) {
 		return Config{}, fmt.Errorf("config: invalid PRIVATE_ADMIN_PHONE")
@@ -319,8 +364,11 @@ func Load(role Role, lookup LookupEnv) (Config, error) {
 	if privateAdminPhone != "" && !strings.HasPrefix(privateAdminPhone, "+") {
 		return Config{}, fmt.Errorf("config: PRIVATE_ADMIN_PHONE must start with '+' (canonical E.164 form)")
 	}
-	if deploymentMode == DeploymentModePrivate && role == RoleAPI && privateAdminPhone == "" {
-		return Config{}, fmt.Errorf("config: missing PRIVATE_ADMIN_PHONE")
+	if privateAdminEmail != "" && !adminEmailPattern.MatchString(privateAdminEmail) {
+		return Config{}, fmt.Errorf("config: invalid PRIVATE_ADMIN_EMAIL")
+	}
+	if deploymentMode == DeploymentModePrivate && role == RoleAPI && privateAdminPhone == "" && privateAdminEmail == "" {
+		return Config{}, fmt.Errorf("config: private DEPLOYMENT_MODE requires PRIVATE_ADMIN_PHONE or PRIVATE_ADMIN_EMAIL")
 	}
 
 	portabilityMaxBundleBytes, err := intValue(lookup, "PORTABILITY_MAX_BUNDLE_BYTES", defaultPortabilityMaxBundleBytes)
@@ -376,6 +424,13 @@ func Load(role Role, lookup LookupEnv) (Config, error) {
 
 		DeploymentMode:            deploymentMode,
 		PrivateAdminPhone:         privateAdminPhone,
+		PrivateAdminEmail:         privateAdminEmail,
+		SmtpHost:          smtpHost,
+		SmtpPort:          smtpPort,
+		SmtpUsername:      smtpUsername,
+		SmtpPassword:      smtpPassword,
+		SmtpFrom:          smtpFrom,
+		SmtpTimeout:       smtpTimeout,
 		PortabilityMaxBundleBytes: portabilityMaxBundleBytes,
 	}, nil
 }

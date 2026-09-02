@@ -152,13 +152,11 @@ it("shows the invalid-code message on rejected verification", async () => {
 });
 
 it("shows the sms-unavailable message when phone login is rejected", async () => {
-  const fetcher = vi
-    .fn()
-    .mockResolvedValue(
-      new Response(JSON.stringify({ code: "sms_unavailable" }), {
-        status: 503,
-      }),
-    );
+  const fetcher = vi.fn().mockResolvedValue(
+    new Response(JSON.stringify({ code: "sms_unavailable" }), {
+      status: 503,
+    }),
+  );
   render(<LoginForm fetcher={fetcher as unknown as typeof fetch} />);
 
   fireEvent.change(screen.getByLabelText("手机号或邮箱"), {

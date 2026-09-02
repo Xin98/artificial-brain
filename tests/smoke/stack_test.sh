@@ -69,6 +69,8 @@ assert(api_env.fetch("DEPLOYMENT_MODE") == "${DEPLOYMENT_MODE:-cloud}", "api DEP
 assert(worker_env.fetch("DEPLOYMENT_MODE") == "${DEPLOYMENT_MODE:-cloud}", "worker DEPLOYMENT_MODE passthrough does not default to cloud")
 assert(api_env.key?("PRIVATE_ADMIN_PHONE"), "api does not receive PRIVATE_ADMIN_PHONE")
 assert(worker_env.key?("PRIVATE_ADMIN_PHONE"), "worker does not receive PRIVATE_ADMIN_PHONE")
+assert(api_env.key?("PRIVATE_ADMIN_EMAIL"), "api does not receive PRIVATE_ADMIN_EMAIL")
+assert(api_env.key?("SMTP_HOST"), "api does not receive SMTP_HOST")
 assert(api_env.key?("PORTABILITY_MAX_BUNDLE_BYTES"), "api does not receive PORTABILITY_MAX_BUNDLE_BYTES")
 
 backend = File.read(File.join(root, "backend/Dockerfile"))
@@ -246,6 +248,8 @@ full_stack_test() {
 		compose down --volumes --remove-orphans >/dev/null 2>&1 || true
 		docker compose --project-name "${project}-private" down \
 			--volumes --remove-orphans >/dev/null 2>&1 || true
+		docker compose --project-name "${project}-private-email" down \
+			--volumes --remove-orphans >/dev/null 2>&1 || true
 		exit "$exit_code"
 	}
 	trap cleanup EXIT HUP INT TERM
@@ -298,6 +302,36 @@ full_stack_test() {
 		--header "$e2e_auth" "http://127.0.0.1:${WEB_PORT}/")
 	printf '%s\n' "$e2e_home" | grep -F 'data-page="dashboard"' >/dev/null || \
 		fail "authenticated home did not render the dashboard page"
+
+	# Cloud-deploy iteration: email-identifier login through the same dev
+	# inbox (the fake outbox records email codes by address).
+	e2e_email="e2e@example.com"
+	e2e_email_request=$(curl --fail --silent --show-error --max-time 5 \
+		--output /dev/null --write-out '%{http_code}' \
+		--header 'Content-Type: application/json' \
+		--data "{\"email\":\"${e2e_email}\"}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/auth/login/request")
+	[ "$e2e_email_request" = 202 ] || fail "email login request status ${e2e_email_request}, want 202"
+
+	e2e_email_inbox=$(curl --fail --silent --show-error --max-time 5 \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/dev/sms-inbox?address=$(printf '%s' "$e2e_email" | jq -sRr @uri)")
+	e2e_email_code=$(printf '%s\n' "$e2e_email_inbox" | jq -r '.messages[0].code')
+	case "$e2e_email_code" in '' | *[!0-9]*) fail "dev inbox did not return a numeric email code" ;; esac
+
+	e2e_email_verify=$(curl --fail --silent --show-error --max-time 5 \
+		--output /dev/null --write-out '%{http_code}' \
+		--header 'Content-Type: application/json' \
+		--data "{\"email\":\"${e2e_email}\",\"code\":\"${e2e_email_code}\"}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/auth/login/verify")
+	[ "$e2e_email_verify" = 200 ] || fail "email login verify status ${e2e_email_verify}, want 200"
+
+	# A request carrying both identifiers is rejected as invalid.
+	e2e_both=$(curl --silent --show-error --max-time 5 \
+		--output /dev/null --write-out '%{http_code}' \
+		--header 'Content-Type: application/json' \
+		--data '{"phone":"+8613800137002","email":"both@example.com"}' \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/auth/login/request")
+	[ "$e2e_both" = 422 ] || fail "dual-identifier login request status ${e2e_both}, want 422"
 
 	e2e_due=$(date -u -d '+1 hour' +%Y-%m-%dT%H:%M:%SZ)
 	e2e_create=$(curl --fail --silent --show-error --max-time 5 \
@@ -944,6 +978,59 @@ full_stack_test() {
 
 	docker compose --project-name "$private_project" down --volumes --remove-orphans
 
+	# Cloud-deploy iteration: private mode with an email administrator.
+	private_email_project="${project}-private-email"
+	DEPLOYMENT_MODE=private \
+	PRIVATE_ADMIN_EMAIL="admin@example.com" \
+	APP_ENV=development \
+	DEV_INBOX_ENABLED=true \
+	API_PORT=0 \
+	WEB_PORT=0 \
+	docker compose --project-name "$private_email_project" up --build --detach --wait \
+		--wait-timeout "${STACK_WAIT_SECONDS:-180}"
+	private_email_web_mapping=$(docker compose --project-name "$private_email_project" port web 3000 | sed -n '1p')
+	private_email_web_port=${private_email_web_mapping##*:}
+	case "$private_email_web_port" in '' | *[!0-9]*) fail "private email Web has no Docker-assigned host port" ;; esac
+
+	private_email_admin="admin@example.com"
+	private_email_request_status=$(curl --fail --silent --show-error --max-time 5 \
+		--output /dev/null --write-out '%{http_code}' \
+		--header 'Content-Type: application/json' \
+		--data "{\"email\":\"${private_email_admin}\"}" \
+		"http://127.0.0.1:${private_email_web_port}/api/v1/auth/login/request")
+	[ "$private_email_request_status" = 202 ] || \
+		fail "private email admin login request status ${private_email_request_status}, want 202"
+
+	private_email_inbox=$(curl --fail --silent --show-error --max-time 5 \
+		"http://127.0.0.1:${private_email_web_port}/api/v1/dev/sms-inbox?address=$(printf '%s' "$private_email_admin" | jq -sRr @uri)")
+	private_email_code=$(printf '%s\n' "$private_email_inbox" | jq -r '.messages[0].code')
+	case "$private_email_code" in '' | *[!0-9]*) fail "private email dev inbox did not return a numeric code" ;; esac
+
+	private_email_verify_headers=$(curl --fail --silent --show-error --max-time 5 \
+		--dump-header - --output /dev/null \
+		--header 'Content-Type: application/json' \
+		--data "{\"email\":\"${private_email_admin}\",\"code\":\"${private_email_code}\"}" \
+		"http://127.0.0.1:${private_email_web_port}/api/v1/auth/login/verify")
+	private_email_session=$(printf '%s\n' "$private_email_verify_headers" |
+		sed -n 's/^[Ss]et-[Cc]ookie: ab_session=\([^;]*\).*$/\1/p' | sed -n '1p')
+	[ -n "$private_email_session" ] || fail "private email verify did not set the ab_session cookie"
+
+	private_email_home=$(curl --fail --silent --show-error --max-time 5 \
+		--header "Cookie: ab_session=${private_email_session}" \
+		"http://127.0.0.1:${private_email_web_port}/")
+	printf '%s\n' "$private_email_home" | grep -F 'data-page="dashboard"' >/dev/null || \
+		fail "private email admin home did not render the dashboard page"
+
+	private_email_stranger=$(curl --silent --show-error --max-time 5 \
+		--output /dev/null --write-out '%{http_code}' \
+		--header 'Content-Type: application/json' \
+		--data '{"email":"stranger@example.com"}' \
+		"http://127.0.0.1:${private_email_web_port}/api/v1/auth/login/request")
+	[ "$private_email_stranger" = 403 ] || \
+		fail "private email stranger login request status ${private_email_stranger}, want 403"
+
+	docker compose --project-name "$private_email_project" down --volumes --remove-orphans
+
 	# ITER-0004 backup/restore drill: archive the live database with
 	# deploy/private/backup.sh, soft-delete the portability-imported copy todo
 	# through the confirmation flow, restore the archive with
@@ -1053,8 +1140,8 @@ full_stack_test() {
 		--dbname "${POSTGRES_DB:-artificial_brain}" \
 		--tuples-only --no-align \
 		--command "select version from public.schema_version limit 1")
-	[ "$upgrade_schema_version" = 8 ] || \
-		fail "schema version after the upgrade is ${upgrade_schema_version}, want 8"
+	[ "$upgrade_schema_version" = 9 ] || \
+		fail "schema version after the upgrade is ${upgrade_schema_version}, want 9"
 	upgrade_todo_after=$(compose exec -T postgres psql \
 		--username "${POSTGRES_USER:-artificial_brain}" \
 		--dbname "${POSTGRES_DB:-artificial_brain}" \

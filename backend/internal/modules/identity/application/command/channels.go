@@ -9,8 +9,11 @@ import (
 	"github.com/Xin98/artificial-brain/backend/internal/modules/identity/domain"
 )
 
-// AddChannelHandler registers an unverified contact channel and sends a
-// verification code via the outbound message port.
+// AddChannelHandler sends a verification code via the outbound message port
+// and then registers the unverified contact channel. Sending first keeps the
+// production path free of orphan rows: a failed delivery (e.g. the SMS
+// adapter is unavailable) must not leave an unverified channel that retries
+// then collide with forever.
 type AddChannelHandler struct {
 	Channels ports.ChannelStore
 	Outbox   ports.MessageOutbox
@@ -36,6 +39,19 @@ func (h *AddChannelHandler) Handle(ctx context.Context, principal dto.Principal,
 		}
 	}
 
+	// Detect duplicates before the code is sent so a repeated request keeps
+	// the 409 semantics without spending a delivery; Save below still maps
+	// the unique violation and closes the race window.
+	existing, err := h.Channels.ListByUser(ctx, principal.WorkspaceID, principal.UserID)
+	if err != nil {
+		return dto.ContactChannelView{}, err
+	}
+	for _, channel := range existing {
+		if channel.Kind == k && channel.Address == address {
+			return dto.ContactChannelView{}, domain.ErrChannelExists
+		}
+	}
+
 	code, err := h.NewCode()
 	if err != nil {
 		return dto.ContactChannelView{}, err
@@ -54,9 +70,6 @@ func (h *AddChannelHandler) Handle(ctx context.Context, principal dto.Principal,
 		CodeExpiresAt: &expires,
 		CreatedAt:     now,
 	}
-	if err := h.Channels.Save(ctx, channel); err != nil {
-		return dto.ContactChannelView{}, err
-	}
 
 	outboxChannel := "email"
 	if k == domain.ChannelKindSMS {
@@ -68,6 +81,9 @@ func (h *AddChannelHandler) Handle(ctx context.Context, principal dto.Principal,
 		Purpose: "channel_verification",
 		Code:    code,
 	}); err != nil {
+		return dto.ContactChannelView{}, err
+	}
+	if err := h.Channels.Save(ctx, channel); err != nil {
 		return dto.ContactChannelView{}, err
 	}
 	return dto.ToChannelView(channel), nil

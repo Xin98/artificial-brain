@@ -10,6 +10,9 @@ import (
 // UserStore persists users.
 type UserStore interface {
 	Save(ctx context.Context, user domain.User) error
+	// Update replaces the mutable identifiers (phone/email) of an existing
+	// user, keeping the at-most-one-of-each identifier invariants.
+	Update(ctx context.Context, user domain.User) error
 	ByPhone(ctx context.Context, phone string) (domain.User, error)
 	ByEmail(ctx context.Context, email string) (domain.User, error)
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Xin98/artificial-brain/backend/internal/modules/identity/domain"
@@ -231,6 +232,35 @@ func TestUserStoreEmailIdentifier(t *testing.T) {
 	}
 	if _, err := store.ByPhone(ctx, "+8613800138000"); !errors.Is(err, domain.ErrUserNotFound) {
 		t.Fatalf("ByPhone(missing) = %v, want ErrUserNotFound", err)
+	}
+}
+
+// TestUserStoreEmailCaseInsensitiveUnique pins the lower(email) functional
+// unique index: two users whose emails differ only by case collide, so a
+// case variant can never fork a second user.
+func TestUserStoreEmailCaseInsensitiveUnique(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	store := NewUserStore(pool)
+
+	saveWith := func(email string) error {
+		t.Helper()
+		ws := domain.PersonalWorkspace{ID: randomID(t), CreatedAt: testNow}
+		if err := NewWorkspaceStore(pool).Save(ctx, ws); err != nil {
+			t.Fatalf("workspace save: %v", err)
+		}
+		return store.Save(ctx, domain.User{ID: randomID(t), WorkspaceID: ws.ID, Email: email, CreatedAt: testNow})
+	}
+	if err := saveWith("admin@example.com"); err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	err := saveWith("Admin@Example.com")
+	if err == nil {
+		t.Fatal("case-variant duplicate save succeeded, want the lower(email) unique index to reject it")
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		t.Fatalf("case-variant duplicate save error = %v, want unique violation 23505", err)
 	}
 }
 

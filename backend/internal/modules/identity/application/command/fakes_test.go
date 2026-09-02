@@ -121,6 +121,9 @@ type fakeUserStore struct {
 	// byEmailErr, when set, makes ByEmail fail with this error so tests can
 	// exercise error propagation.
 	byEmailErr error
+	// updateErr, when set, makes Update fail with this error so tests can
+	// exercise error propagation on the identifier-attach path.
+	updateErr error
 	// log, when set, records "user:<id>" on Save so tests can assert the
 	// cross-store save order.
 	log *[]string
@@ -131,6 +134,17 @@ func newFakeUserStore() *fakeUserStore { return &fakeUserStore{users: map[string
 func (s *fakeUserStore) Save(_ context.Context, u domain.User) error {
 	if s.log != nil {
 		*s.log = append(*s.log, "user:"+u.ID)
+	}
+	s.users[u.ID] = u
+	return nil
+}
+
+func (s *fakeUserStore) Update(_ context.Context, u domain.User) error {
+	if s.updateErr != nil {
+		return s.updateErr
+	}
+	if _, ok := s.users[u.ID]; !ok {
+		return domain.ErrUserNotFound
 	}
 	s.users[u.ID] = u
 	return nil
@@ -255,9 +269,15 @@ func (s *fakeChannelStore) ListByUser(_ context.Context, workspaceID, userID str
 
 type fakeOutbox struct {
 	messages []ports.OutboxMessage
+	// writeErr, when set, makes Write fail with this error so tests can
+	// exercise the send-before-save ordering.
+	writeErr error
 }
 
 func (o *fakeOutbox) Write(_ context.Context, m ports.OutboxMessage) error {
+	if o.writeErr != nil {
+		return o.writeErr
+	}
 	o.messages = append(o.messages, m)
 	return nil
 }

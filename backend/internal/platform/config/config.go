@@ -349,7 +349,10 @@ func Load(role Role, lookup LookupEnv) (Config, error) {
 		return Config{}, fmt.Errorf("config: invalid DEPLOYMENT_MODE")
 	}
 	privateAdminPhone := valueOrDefault(lookup, "PRIVATE_ADMIN_PHONE", "")
-	privateAdminEmail := valueOrDefault(lookup, "PRIVATE_ADMIN_EMAIL", "")
+	// Identifiers are case-normalized end to end (domain.NewEmail lowercases);
+	// the gate compares configured and presented identifiers by exact string,
+	// so the configured value must carry the same canonical form.
+	privateAdminEmail := strings.ToLower(valueOrDefault(lookup, "PRIVATE_ADMIN_EMAIL", ""))
 	if deploymentMode == DeploymentModeCloud && (privateAdminPhone != "" || privateAdminEmail != "") {
 		return Config{}, fmt.Errorf("config: PRIVATE_ADMIN_PHONE and PRIVATE_ADMIN_EMAIL require a private DEPLOYMENT_MODE")
 	}

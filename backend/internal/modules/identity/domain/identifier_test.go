@@ -12,6 +12,7 @@ func TestNewLoginIdentifier(t *testing.T) {
 	}{
 		{"phone only", "+8613800138000", "", LoginIdentifier{Phone: "+8613800138000"}, nil},
 		{"email only", "", "admin@example.com", LoginIdentifier{Email: "admin@example.com"}, nil},
+		{"email mixed case normalizes", "", "Admin@Example.COM", LoginIdentifier{Email: "admin@example.com"}, nil},
 		{"both present", "+8613800138000", "admin@example.com", LoginIdentifier{}, ErrIdentifierInvalid},
 		{"neither present", "", "", LoginIdentifier{}, ErrIdentifierInvalid},
 		{"invalid phone", "abc", "", LoginIdentifier{}, ErrInvalidPhone},

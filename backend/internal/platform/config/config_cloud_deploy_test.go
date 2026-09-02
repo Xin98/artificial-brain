@@ -109,6 +109,18 @@ func TestLoadWorkerRoleSkipsIdentitySmtp(t *testing.T) {
 	}
 }
 
+func TestLoadPrivateAdminEmailIsCaseNormalized(t *testing.T) {
+	cfg, err := Load(RoleAPI, cloudDeployEnv(map[string]string{
+		"PRIVATE_ADMIN_EMAIL": "Admin@Example.COM",
+	}))
+	if err != nil {
+		t.Fatalf("Load = %v", err)
+	}
+	if cfg.PrivateAdminEmail != "admin@example.com" {
+		t.Fatalf("PrivateAdminEmail = %q, want the lowercase canonical form", cfg.PrivateAdminEmail)
+	}
+}
+
 func TestLoadPrivatePhoneOnlyAdminStillWorks(t *testing.T) {
 	cfg, err := Load(RoleAPI, cloudDeployEnv(map[string]string{
 		"PRIVATE_ADMIN_EMAIL": "",

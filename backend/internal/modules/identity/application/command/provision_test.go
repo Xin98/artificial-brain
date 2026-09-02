@@ -121,6 +121,82 @@ func TestProvisionAdminBothIdentifiers(t *testing.T) {
 	}
 }
 
+// TestProvisionAdminAttachesMissingPhoneToEmailOnlyAdmin pins the no-fork
+// guarantee: an admin provisioned with one identifier gains the second when
+// the config later carries both, instead of forking a second user/workspace
+// on the first login with the new identifier.
+func TestProvisionAdminAttachesMissingPhoneToEmailOnlyAdmin(t *testing.T) {
+	users := newFakeUserStore()
+	workspaces := newFakeWorkspaceStore()
+	h := newProvisionHandler(users, workspaces)
+
+	if err := h.Handle(context.Background(), "", "admin@example.com"); err != nil {
+		t.Fatalf("provision email-only: %v", err)
+	}
+	if err := h.Handle(context.Background(), "+8613800137999", "admin@example.com"); err != nil {
+		t.Fatalf("re-provision with both: %v", err)
+	}
+	if len(users.users) != 1 || len(workspaces.workspaces) != 1 {
+		t.Fatalf("got %d users, %d workspaces, want 1 of each (no fork)", len(users.users), len(workspaces.workspaces))
+	}
+	user, err := users.ByPhone(context.Background(), "+8613800137999")
+	if err != nil {
+		t.Fatalf("ByPhone after attach: %v", err)
+	}
+	if user.Email != "admin@example.com" {
+		t.Fatalf("user = %#v, want both identifiers on the same user", user)
+	}
+	byEmail, err := users.ByEmail(context.Background(), "admin@example.com")
+	if err != nil || byEmail.ID != user.ID {
+		t.Fatalf("ByEmail = %#v, %v; want the same user", byEmail, err)
+	}
+	// Idempotent once both identifiers are attached.
+	if err := h.Handle(context.Background(), "+8613800137999", "admin@example.com"); err != nil {
+		t.Fatalf("idempotent re-run: %v", err)
+	}
+	if len(users.users) != 1 || len(workspaces.workspaces) != 1 {
+		t.Fatalf("idempotent re-run forked data: %d users, %d workspaces", len(users.users), len(workspaces.workspaces))
+	}
+}
+
+func TestProvisionAdminAttachesMissingEmailToPhoneOnlyAdmin(t *testing.T) {
+	users := newFakeUserStore()
+	workspaces := newFakeWorkspaceStore()
+	h := newProvisionHandler(users, workspaces)
+
+	if err := h.Handle(context.Background(), "+8613800137999", ""); err != nil {
+		t.Fatalf("provision phone-only: %v", err)
+	}
+	if err := h.Handle(context.Background(), "+8613800137999", "admin@example.com"); err != nil {
+		t.Fatalf("re-provision with both: %v", err)
+	}
+	if len(users.users) != 1 || len(workspaces.workspaces) != 1 {
+		t.Fatalf("got %d users, %d workspaces, want 1 of each (no fork)", len(users.users), len(workspaces.workspaces))
+	}
+	user, err := users.ByEmail(context.Background(), "admin@example.com")
+	if err != nil {
+		t.Fatalf("ByEmail after attach: %v", err)
+	}
+	if user.Phone != "+8613800137999" {
+		t.Fatalf("user = %#v, want both identifiers on the same user", user)
+	}
+}
+
+func TestProvisionAdminAttachErrorPropagates(t *testing.T) {
+	users := newFakeUserStore()
+	users.updateErr = errors.New("database unavailable")
+	workspaces := newFakeWorkspaceStore()
+	h := newProvisionHandler(users, workspaces)
+
+	if err := h.Handle(context.Background(), "", "admin@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	err := h.Handle(context.Background(), "+8613800137999", "admin@example.com")
+	if err == nil || err.Error() != "database unavailable" {
+		t.Fatalf("Handle() error = %v, want propagated Update error", err)
+	}
+}
+
 func TestProvisionAdminNoIdentifier(t *testing.T) {
 	h := newProvisionHandler(newFakeUserStore(), newFakeWorkspaceStore())
 

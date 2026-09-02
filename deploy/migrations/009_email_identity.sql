@@ -1,6 +1,9 @@
 alter table identity.users alter column phone drop not null;
 alter table identity.users add column email text;
-alter table identity.users add constraint users_email_unique unique (email);
+-- Email identifiers are case-normalized by domain.NewEmail; the unique
+-- index enforces the same canonical form so two spellings differing only
+-- by case cannot fork two users.
+create unique index users_email_unique on identity.users (lower(email));
 alter table identity.users add constraint users_identifier_present
   check (phone is not null or email is not null);
 
@@ -19,6 +22,6 @@ alter table identity.login_challenges drop constraint if exists login_challenges
 alter table identity.login_challenges drop column if exists email;
 alter table identity.login_challenges alter column phone set not null;
 alter table identity.users drop constraint if exists users_identifier_present;
-alter table identity.users drop constraint if exists users_email_unique;
+drop index if exists identity.users.users_email_unique;
 alter table identity.users drop column if exists email;
 alter table identity.users alter column phone set not null;

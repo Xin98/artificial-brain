@@ -45,7 +45,9 @@ func run() int {
 	logger := observability.NewLogger(os.Stderr, "worker", "unknown")
 	cfg, err := config.Load(config.RoleWorker, os.LookupEnv)
 	if err != nil {
-		logger.Error("invalid worker configuration")
+		// The runbook depends on operators seeing WHICH variable is missing
+		// or invalid, so the config error must reach the log line.
+		logger.Error("invalid worker configuration", "error", err)
 		return 1
 	}
 	logger = observability.NewLogger(os.Stderr, cfg.ServiceName, cfg.ServiceVersion)

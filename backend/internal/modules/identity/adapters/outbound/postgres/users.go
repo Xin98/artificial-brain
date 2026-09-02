@@ -27,6 +27,16 @@ func (s *UserStore) Save(ctx context.Context, user domain.User) error {
 	return err
 }
 
+func (s *UserStore) Update(ctx context.Context, user domain.User) error {
+	exec := database.ExecutorFromContextOr(ctx, s.pool)
+	_, err := exec.Exec(ctx, `
+		update identity.users
+		set phone = $2, email = $3
+		where id = $1
+	`, user.ID, nullIfEmpty(user.Phone), nullIfEmpty(user.Email))
+	return err
+}
+
 func (s *UserStore) ByPhone(ctx context.Context, phone string) (domain.User, error) {
 	return s.byIdentifier(ctx, "where phone = $1", phone)
 }

@@ -21,7 +21,9 @@ func main() {
 	logger := observability.NewLogger(os.Stderr, "api", "unknown")
 	cfg, err := config.Load(config.RoleAPI, os.LookupEnv)
 	if err != nil {
-		logger.Error("invalid api configuration")
+		// The runbook depends on operators seeing WHICH variable is missing
+		// or invalid, so the config error must reach the log line.
+		logger.Error("invalid api configuration", "error", err)
 		os.Exit(1)
 	}
 	logger = observability.NewLogger(os.Stderr, cfg.ServiceName, cfg.ServiceVersion)

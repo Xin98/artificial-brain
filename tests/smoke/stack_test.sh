@@ -1022,12 +1022,16 @@ full_stack_test() {
 		fail "private email admin home did not render the dashboard page"
 
 	private_email_stranger=$(curl --silent --show-error --max-time 5 \
-		--output /dev/null --write-out '%{http_code}' \
+		--write-out '\n%{http_code}' \
 		--header 'Content-Type: application/json' \
 		--data '{"email":"stranger@example.com"}' \
 		"http://127.0.0.1:${private_email_web_port}/api/v1/auth/login/request")
-	[ "$private_email_stranger" = 403 ] || \
-		fail "private email stranger login request status ${private_email_stranger}, want 403"
+	private_email_stranger_status=$(printf '%s\n' "$private_email_stranger" | tail -n 1)
+	private_email_stranger_body=$(printf '%s\n' "$private_email_stranger" | sed '$d')
+	[ "$private_email_stranger_status" = 403 ] || \
+		fail "private email stranger login request status ${private_email_stranger_status}, want 403: ${private_email_stranger_body}"
+	printf '%s\n' "$private_email_stranger_body" | jq -e '.code == "registration_closed"' >/dev/null || \
+		fail "private email stranger login code is not registration_closed: ${private_email_stranger_body}"
 
 	docker compose --project-name "$private_email_project" down --volumes --remove-orphans
 

@@ -9,7 +9,17 @@ import {
 } from "../validation";
 
 export type AuthErrorCode =
-  "validation_error" | "rate_limited" | "unauthenticated" | "unavailable";
+  | "validation_error"
+  | "rate_limited"
+  | "unauthenticated"
+  | "unavailable"
+  | "sms_unavailable"
+  | "verification_send_failed";
+
+export interface LoginIdentifier {
+  phone?: string;
+  email?: string;
+}
 
 export interface RequestChallengeOutcome {
   ok: boolean;
@@ -43,7 +53,7 @@ async function postJSON(
 export async function requestLoginChallenge(
   baseURL: string,
   fetcher: typeof fetch,
-  phone: string,
+  identifier: LoginIdentifier,
   timeoutMs = 5000,
 ): Promise<RequestChallengeOutcome> {
   try {
@@ -51,7 +61,7 @@ export async function requestLoginChallenge(
       baseURL,
       fetcher,
       "/api/v1/auth/login/request",
-      { phone },
+      identifier,
       timeoutMs,
     );
     if (response.status === 202) {
@@ -66,7 +76,7 @@ export async function requestLoginChallenge(
 export async function verifyLogin(
   baseURL: string,
   fetcher: typeof fetch,
-  phone: string,
+  identifier: LoginIdentifier,
   code: string,
   timeoutMs = 5000,
 ): Promise<VerifyOutcome> {
@@ -75,7 +85,7 @@ export async function verifyLogin(
       baseURL,
       fetcher,
       "/api/v1/auth/login/verify",
-      { phone, code },
+      { ...identifier, code },
       timeoutMs,
     );
     if (response.status === 200) {
@@ -132,6 +142,16 @@ async function classifyStatus(response: Response): Promise<AuthErrorCode> {
   }
   if (classified.code === "rate_limited") {
     return "rate_limited";
+  }
+  // classifyErrorPayload collapses unknown codes to "other", so inspect the
+  // raw payload's code field for the auth-specific codes it does not enum.
+  if (isRecord(payload) && typeof payload.code === "string") {
+    if (payload.code === "sms_unavailable") {
+      return "sms_unavailable";
+    }
+    if (payload.code === "verification_send_failed") {
+      return "verification_send_failed";
+    }
   }
   return "unavailable";
 }

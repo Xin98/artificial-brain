@@ -35,7 +35,7 @@ it("runs the two-step login with exact request bodies", async () => {
     />,
   );
 
-  fireEvent.change(screen.getByLabelText("手机号"), {
+  fireEvent.change(screen.getByLabelText("手机号或邮箱"), {
     target: { value: "+8613800138000" },
   });
   fireEvent.click(screen.getByRole("button", { name: "获取验证码" }));
@@ -63,6 +63,47 @@ it("runs the two-step login with exact request bodies", async () => {
   });
 });
 
+it("sends an email identifier when the input contains @", async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(challengeResponse())
+    .mockResolvedValueOnce(verifyResponse());
+  const onNavigate = vi.fn();
+  render(
+    <LoginForm
+      fetcher={fetcher as unknown as typeof fetch}
+      onNavigate={onNavigate}
+    />,
+  );
+
+  fireEvent.change(screen.getByLabelText("手机号或邮箱"), {
+    target: { value: "admin@example.com" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "获取验证码" }));
+
+  await waitFor(() =>
+    expect(screen.getByLabelText("验证码")).toBeInTheDocument(),
+  );
+  const [challengeUrl, challengeInit] = fetcher.mock.calls[0];
+  expect(challengeUrl).toBe("/api/v1/auth/login/request");
+  expect(JSON.parse(String(challengeInit?.body))).toEqual({
+    email: "admin@example.com",
+  });
+
+  fireEvent.change(screen.getByLabelText("验证码"), {
+    target: { value: "123456" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "登录" }));
+
+  await waitFor(() => expect(onNavigate).toHaveBeenCalledWith("/"));
+  const [verifyUrl, verifyInit] = fetcher.mock.calls[1];
+  expect(verifyUrl).toBe("/api/v1/auth/login/verify");
+  expect(JSON.parse(String(verifyInit?.body))).toEqual({
+    email: "admin@example.com",
+    code: "123456",
+  });
+});
+
 it("shows the rate-limit message when the API throttles", async () => {
   const fetcher = vi
     .fn()
@@ -71,7 +112,7 @@ it("shows the rate-limit message when the API throttles", async () => {
     );
   render(<LoginForm fetcher={fetcher as unknown as typeof fetch} />);
 
-  fireEvent.change(screen.getByLabelText("手机号"), {
+  fireEvent.change(screen.getByLabelText("手机号或邮箱"), {
     target: { value: "+8613800138000" },
   });
   fireEvent.click(screen.getByRole("button", { name: "获取验证码" }));
@@ -92,7 +133,7 @@ it("shows the invalid-code message on rejected verification", async () => {
     );
   render(<LoginForm fetcher={fetcher as unknown as typeof fetch} />);
 
-  fireEvent.change(screen.getByLabelText("手机号"), {
+  fireEvent.change(screen.getByLabelText("手机号或邮箱"), {
     target: { value: "+8613800138000" },
   });
   fireEvent.click(screen.getByRole("button", { name: "获取验证码" }));
@@ -107,5 +148,25 @@ it("shows the invalid-code message on rejected verification", async () => {
 
   await waitFor(() =>
     expect(screen.getByRole("alert")).toHaveTextContent("验证码不正确"),
+  );
+});
+
+it("shows the sms-unavailable message when phone login is rejected", async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(
+      new Response(JSON.stringify({ code: "sms_unavailable" }), {
+        status: 503,
+      }),
+    );
+  render(<LoginForm fetcher={fetcher as unknown as typeof fetch} />);
+
+  fireEvent.change(screen.getByLabelText("手机号或邮箱"), {
+    target: { value: "+8613800138000" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "获取验证码" }));
+
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("暂不支持手机号登录"),
   );
 });

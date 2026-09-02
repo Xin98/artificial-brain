@@ -75,8 +75,8 @@ Copy `.env.example` to an ignored `.env` only when local overrides are needed. N
 | `API_INTERNAL_URL` | `http://api:8080` | Server-only API base URL for Web; also baked into the Web rewrite destination at image build time |
 | `APP_ENV` | `development` | Deployment environment; the dev inbox requires a non-`production` value |
 | `DEV_INBOX_ENABLED` | `true` | Enables the fake SMS inbox route; `config.Load` fails if `true` with `APP_ENV=production` |
-| `DEPLOYMENT_MODE` | `cloud` | Deployment form: `cloud` (open login) or `private` (single fixed administrator, `PRIVATE_ADMIN_PHONE` required) |
-| `PRIVATE_ADMIN_PHONE` | unset | E.164 phone number of the fixed private-mode administrator; required when `DEPLOYMENT_MODE=private`, must stay unset in cloud mode |
+| `DEPLOYMENT_MODE` | `cloud` | Deployment form: `cloud` (open login) or `private` (single fixed administrator, `PRIVATE_ADMIN_PHONE` and/or `PRIVATE_ADMIN_EMAIL` required) |
+| `PRIVATE_ADMIN_PHONE` | unset | E.164 phone number of the fixed private-mode administrator; one of this or `PRIVATE_ADMIN_EMAIL` is required when `DEPLOYMENT_MODE=private`; both must stay unset in cloud mode |
 | `PRIVATE_ADMIN_EMAIL` | unset | Email address of the fixed private-mode administrator; private mode requires at least one of this or `PRIVATE_ADMIN_PHONE`, and it must stay unset in cloud mode |
 | `MODEL_ADAPTER` | `deterministic` | Conversation model adapter: `deterministic` (embedded corpus) or `openai_compatible` |
 | `MODEL_BASE_URL`, `MODEL_NAME`, `MODEL_API_KEY` | unset | Required when `MODEL_ADAPTER=openai_compatible`; never point CI or Compose at a real model |

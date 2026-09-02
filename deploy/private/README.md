@@ -34,7 +34,8 @@ codebase.
 
    The one-shot `migrate` service applies all migrations before `api` and
    `worker` start; on first boot the API provisions the fixed administrator
-   from `PRIVATE_ADMIN_PHONE`.
+   from the configured administrator identifier(s) (`PRIVATE_ADMIN_PHONE`
+   and/or `PRIVATE_ADMIN_EMAIL`).
 
 3. Verify:
 

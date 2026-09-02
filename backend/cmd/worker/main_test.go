@@ -1,6 +1,10 @@
 package main
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/Xin98/artificial-brain/backend/internal/platform/config"
+)
 
 func TestRunReturnsFailureForMissingDatabaseURL(t *testing.T) {
 	t.Setenv("DATABASE_URL", "")
@@ -51,5 +55,32 @@ func TestRunReturnsFailureForUnparsableReminderJobMaxAttempts(t *testing.T) {
 
 	if got := run(); got != 1 {
 		t.Fatalf("run() = %d, want 1", got)
+	}
+}
+
+func TestReminderQueuesDisabledSms(t *testing.T) {
+	queues := reminderQueues(config.Config{
+		ReminderSmsAdapter:            config.ReminderSmsAdapterDisabled,
+		ReminderQueueEmailConcurrency: 2,
+		ReminderQueueSmsConcurrency:   3,
+	})
+	if _, ok := queues["reminder_sms"]; ok {
+		t.Fatalf("reminder_sms queue present while the sms adapter is disabled")
+	}
+	email, ok := queues["reminder_email"]
+	if !ok || email.MaxWorkers != 2 {
+		t.Fatalf("reminder_email queue = %#v", queues)
+	}
+}
+
+func TestReminderQueuesDefaultSms(t *testing.T) {
+	queues := reminderQueues(config.Config{
+		ReminderSmsAdapter:            config.ReminderSmsAdapterFake,
+		ReminderQueueEmailConcurrency: 2,
+		ReminderQueueSmsConcurrency:   3,
+	})
+	sms, ok := queues["reminder_sms"]
+	if !ok || sms.MaxWorkers != 3 {
+		t.Fatalf("reminder_sms queue = %#v", queues)
 	}
 }

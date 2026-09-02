@@ -144,7 +144,7 @@ import (
 // every fail-closed rule; individual tests override one variable at a time.
 func cloudDeployEnv(overrides map[string]string) LookupEnv {
 	base := map[string]string{
-		"DATABASE_URL":            "postgresql://user:pass@localhost:5432/db",
+		"DATABASE_URL":            "postgresql://user:secret@localhost:5432/db",
 		"APP_ENV":                 "production",
 		"DEPLOYMENT_MODE":         "private",
 		"PRIVATE_ADMIN_EMAIL":     "admin@example.com",

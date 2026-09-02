@@ -63,6 +63,7 @@ assert(services.dig("backend-test", "profiles") == ["test"], "backend-test is no
 assert(config.fetch("volumes").keys == ["postgres-data"], "unexpected named volumes")
 assert(services.dig("migrate", "volumes").include?("./deploy/migrations:/migrations:ro"), "migrations are not mounted read-only")
 
+migrate_env = services.dig("migrate", "environment")
 api_env = services.dig("api", "environment")
 worker_env = services.dig("worker", "environment")
 assert(api_env.fetch("DEPLOYMENT_MODE") == "${DEPLOYMENT_MODE:-cloud}", "api DEPLOYMENT_MODE passthrough does not default to cloud")
@@ -72,6 +73,13 @@ assert(worker_env.key?("PRIVATE_ADMIN_PHONE"), "worker does not receive PRIVATE_
 assert(api_env.key?("PRIVATE_ADMIN_EMAIL"), "api does not receive PRIVATE_ADMIN_EMAIL")
 assert(api_env.key?("SMTP_HOST"), "api does not receive SMTP_HOST")
 assert(api_env.key?("PORTABILITY_MAX_BUNDLE_BYTES"), "api does not receive PORTABILITY_MAX_BUNDLE_BYTES")
+# config.Load validates the reminder adapter and SMTP rules for every role,
+# so all three backend services must receive the adapter selection and the
+# SMTP endpoint; otherwise a production .env fails at migrate boot.
+assert(migrate_env.key?("REMINDER_EMAIL_ADAPTER"), "migrate does not receive REMINDER_EMAIL_ADAPTER")
+assert(migrate_env.key?("REMINDER_SMS_ADAPTER"), "migrate does not receive REMINDER_SMS_ADAPTER")
+assert(api_env.key?("REMINDER_SMTP_HOST"), "api does not receive REMINDER_SMTP_HOST")
+assert(worker_env.key?("REMINDER_SMTP_HOST"), "worker does not receive REMINDER_SMTP_HOST")
 
 backend = File.read(File.join(root, "backend/Dockerfile"))
 assert(backend.include?("FROM golang:1.26.5-alpine AS build"), "Go build image is not pinned")

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"net"
 	"net/smtp"
-	"net/textproto"
 	"strconv"
 	"time"
 
@@ -121,11 +120,4 @@ func renderCodeMessage(from string, message ports.OutboxMessage) []byte {
 		"From: %s\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\n\r\n验证码：%s\r\n如非本人操作，请忽略本邮件。\r\n",
 		from, message.Address, subject, time.Now().UTC().Format(time.RFC1123Z), message.Code,
 	))
-}
-
-// IsPermanent reports whether the underlying SMTP refusal was a 5xx, for
-// logging; delivery semantics stay uniform for the caller.
-func IsPermanent(err error) bool {
-	var protoErr *textproto.Error
-	return errors.As(err, &protoErr) && protoErr.Code >= 500 && protoErr.Code <= 599
 }

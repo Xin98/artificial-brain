@@ -70,9 +70,7 @@ create index login_challenges_email_created_at_idx
 
 | 输入 | 响应 |
 | --- | --- |
-| 两者都填 / 都不填 | 422 `identifier_invalid` |
-| 邮箱格式非法 | 422 `invalid_email` |
-| 手机号格式非法 | 422 `invalid_phone`（沿用现有语义） |
+| 标识缺失/重复/格式非法 | 422 `validation_error`（沿用代码库单一校验错误码约定） |
 | 非管理员标识（private 模式） | `registration_closed`（沿用） |
 | 生产环境手机号请求验证码 | 503 `sms_unavailable`（见 §4） |
 | 验证码发送失败（SMTP 瞬时错误） | 502 `verification_send_failed` |
@@ -213,8 +211,7 @@ SMTP_HOST / SMTP_PORT / SMTP_USERNAME / SMTP_PASSWORD / SMTP_FROM / SMTP_TIMEOUT
 
 | 场景 | 行为 |
 | --- | --- |
-| 登录标识零个/两个 | 422 `identifier_invalid` |
-| 邮箱/手机号非法 | 422 `invalid_email` / `invalid_phone` |
+| 登录标识缺失/重复/格式非法 | 422 `validation_error`（沿用代码库单一校验错误码约定） |
 | 生产手机号请求验证码 | 503 `sms_unavailable` |
 | SMTP 瞬时失败（4xx/超时/拨号） | 502 `verification_send_failed`，可重试 |
 | SMTP 永久失败（5xx） | 502 `verification_send_failed`，日志记录永久错误 |

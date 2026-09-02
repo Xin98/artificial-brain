@@ -1,12 +1,15 @@
 // Package smtp is the ITER-0003 real email notifier behind
-// ports.EmailNotifier: it submits one reminder through a plain SMTP server
-// using the standard library. 5xx protocol refusals are permanent; 4xx, dial,
-// and deadline failures are transient and retried by the queue.
+// ports.EmailNotifier: it submits one reminder through an SMTP server using
+// the standard library. Port 465 is dialed with implicit TLS (SMTPS); other
+// ports upgrade with STARTTLS when the server advertises it. 5xx protocol
+// refusals are permanent; 4xx, dial, TLS, and deadline failures are
+// transient and retried by the queue.
 package smtp
 
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -26,6 +29,10 @@ const subject = "工作台提醒"
 // fallbackTimeout bounds a send when the config carries no timeout.
 const fallbackTimeout = 30 * time.Second
 
+// implicitTLSPort is the SMTPS port: the connection is TLS-encrypted from
+// the first byte, so no STARTTLS upgrade happens or is needed.
+const implicitTLSPort = 465
+
 // Config carries the SMTP endpoint and credentials. Auth is PLAIN and only
 // attempted when Username is set.
 type Config struct {
@@ -40,28 +47,46 @@ type Config struct {
 // Notifier submits reminder emails over SMTP.
 type Notifier struct {
 	cfg Config
-	// dial is injectable so tests never need a real SMTP server; the default
-	// is a plain timeout-bounded TCP dial.
-	dial func(network, addr string, timeout time.Duration) (net.Conn, error)
+	// dial and dialTLS are injectable so tests never need a real SMTP
+	// server; the defaults are timeout-bounded plain and TLS dials.
+	dial    func(network, addr string, timeout time.Duration) (net.Conn, error)
+	dialTLS func(network, addr string, timeout time.Duration) (net.Conn, error)
+	// startTLS is injectable so tests can observe or stub the STARTTLS
+	// upgrade without a real TLS handshake; the default is client.StartTLS.
+	startTLS func(client *smtp.Client, config *tls.Config) error
 }
 
 var _ ports.EmailNotifier = (*Notifier)(nil)
 
 // New returns an SMTP notifier for cfg.
 func New(cfg Config) *Notifier {
-	return &Notifier{cfg: cfg, dial: net.DialTimeout}
+	notifier := &Notifier{cfg: cfg, dial: net.DialTimeout}
+	notifier.dialTLS = func(network, addr string, timeout time.Duration) (net.Conn, error) {
+		dialer := &net.Dialer{Timeout: timeout}
+		return tls.DialWithDialer(dialer, network, addr, &tls.Config{ServerName: cfg.Host})
+	}
+	notifier.startTLS = func(client *smtp.Client, config *tls.Config) error {
+		return client.StartTLS(config)
+	}
+	return notifier
 }
 
 // Send delivers one reminder email. SMTP 5xx refusals are returned as
-// *ports.PermanentError carrying the reply code; 4xx replies, dial failures,
-// and deadline overruns are plain transient errors.
+// *ports.PermanentError carrying the reply code; 4xx replies, dial, TLS, and
+// deadline failures are plain transient errors.
 func (n *Notifier) Send(ctx context.Context, message dto.ReminderMessage) (dto.SendResult, error) {
 	timeout := n.cfg.Timeout
 	if timeout <= 0 {
 		timeout = fallbackTimeout
 	}
 	addr := net.JoinHostPort(n.cfg.Host, strconv.Itoa(n.cfg.Port))
-	conn, err := n.dial("tcp", addr, timeout)
+	var conn net.Conn
+	var err error
+	if n.cfg.Port == implicitTLSPort {
+		conn, err = n.dialTLS("tcp", addr, timeout)
+	} else {
+		conn, err = n.dial("tcp", addr, timeout)
+	}
 	if err != nil {
 		return dto.SendResult{}, fmt.Errorf("smtp: dial %s: %w", addr, err)
 	}
@@ -81,8 +106,26 @@ func (n *Notifier) Send(ctx context.Context, message dto.ReminderMessage) (dto.S
 		return dto.SendResult{}, classify(fmt.Errorf("smtp: handshake %s: %w", addr, err))
 	}
 	defer client.Close()
+	// The 465 connection is encrypted from the first byte; every other port
+	// upgrades with STARTTLS when the server advertises it, and stays plain
+	// otherwise (auth then fails closed below).
+	if n.cfg.Port != implicitTLSPort {
+		if ok, _ := client.Extension("STARTTLS"); ok {
+			if err := n.startTLS(client, &tls.Config{ServerName: n.cfg.Host}); err != nil {
+				return dto.SendResult{}, classify(fmt.Errorf("smtp: starttls: %w", err))
+			}
+		}
+	}
 	if n.cfg.Username != "" {
-		if err := client.Auth(smtp.PlainAuth("", n.cfg.Username, n.cfg.Password, n.cfg.Host)); err != nil {
+		var auth smtp.Auth
+		if n.cfg.Port == implicitTLSPort {
+			// smtp.PlainAuth only trusts STARTTLS-upgraded connections; the
+			// implicitly-encrypted 465 path needs the local PLAIN auth.
+			auth = plainAuth{username: n.cfg.Username, password: n.cfg.Password, host: n.cfg.Host}
+		} else {
+			auth = smtp.PlainAuth("", n.cfg.Username, n.cfg.Password, n.cfg.Host)
+		}
+		if err := client.Auth(auth); err != nil {
 			return dto.SendResult{}, classify(fmt.Errorf("smtp: auth: %w", err))
 		}
 	}
@@ -113,8 +156,35 @@ func (n *Notifier) Send(ctx context.Context, message dto.ReminderMessage) (dto.S
 	return dto.SendResult{ProviderMessageID: id}, nil
 }
 
+// plainAuth is a PLAIN smtp.Auth for the implicit-TLS (port 465) path only.
+// The standard library's smtp.PlainAuth refuses to emit credentials unless
+// the connection was upgraded by STARTTLS — client TLS state is set
+// exclusively by StartTLS, so an implicitly-encrypted connection never
+// qualifies even though it is encrypted from the first byte. This type drops
+// that guard while keeping the host-name check; it is never used on a plain
+// connection.
+type plainAuth struct {
+	username string
+	password string
+	host     string
+}
+
+func (a plainAuth) Start(server *smtp.ServerInfo) (string, []byte, error) {
+	if server.Name != a.host {
+		return "", nil, fmt.Errorf("smtp: implicit-TLS PLAIN auth for %s got server %s", a.host, server.Name)
+	}
+	return "PLAIN", []byte("\x00" + a.username + "\x00" + a.password), nil
+}
+
+func (plainAuth) Next(_ []byte, more bool) ([]byte, error) {
+	if more {
+		return nil, errors.New("smtp: unexpected server challenge during PLAIN auth")
+	}
+	return nil, nil
+}
+
 // classify wraps 5xx SMTP replies into a permanent error carrying the reply
-// code; everything else (4xx, transport, deadline) stays transient.
+// code; everything else (4xx, transport, TLS, deadline) stays transient.
 func classify(err error) error {
 	var protoErr *textproto.Error
 	if errors.As(err, &protoErr) && protoErr.Code >= 500 && protoErr.Code <= 599 {

@@ -123,15 +123,6 @@ export function LoginForm({
           >
             返回
           </button>
-          <p className="login-hint">
-            本地开发可以从
-            <a
-              href={`/api/v1/dev/sms-inbox?address=${encodeURIComponent(identifier)}`}
-            >
-              开发收件箱
-            </a>
-            查看验证码。
-          </p>
         </div>
       )}
       {error ? (

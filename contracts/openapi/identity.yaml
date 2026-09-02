@@ -64,7 +64,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '422':
-          description: Malformed request.
+          description: Invalid or missing identifier.
           content:
             application/json:
               schema:

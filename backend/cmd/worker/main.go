@@ -139,7 +139,8 @@ func reminderQueues(cfg config.Config) map[string]riverqueue.QueueConfig {
 }
 
 // buildRiverClient composes the reminder delivery command and registers its
-// River worker on the reminder_email and reminder_sms queues.
+// River worker on the delivery queues selected by reminderQueues (the SMS
+// queue is conditional on the SMS adapter being enabled).
 func buildRiverClient(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) (*riverqueue.Client[pgx.Tx], error) {
 	workers := riverqueue.NewWorkers()
 	riverqueue.AddWorker(workers, &reminderworker.SendWorker{
@@ -222,9 +223,12 @@ func selectSmsNotifier(cfg config.Config, pool *pgxpool.Pool) reminderports.SmsN
 }
 
 // disabledSmsNotifier fails closed if an SMS delivery job ever executes while
-// the adapter is disabled. channelsProvider never plans SMS in this state, so
-// reaching this path means the job predates the switch; it dead-letters after
-// its attempts exhaust instead of touching a nonexistent provider.
+// the adapter is disabled. New jobs are not planned in this state
+// (channelsProvider omits sms), and reminderQueues unregisters the SMS
+// queue, so existing SMS jobs simply sit pending and are never worked; this
+// notifier only runs if the adapter is re-enabled with such jobs still
+// queued, and then each execution fails until the job dead-letters instead
+// of touching a nonexistent provider.
 type disabledSmsNotifier struct{}
 
 func (disabledSmsNotifier) Send(_ context.Context, _ reminderdto.ReminderMessage) (reminderdto.SendResult, error) {

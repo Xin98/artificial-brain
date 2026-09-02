@@ -81,7 +81,7 @@ Copy `.env.example` to an ignored `.env` only when local overrides are needed. N
 | `MODEL_ADAPTER` | `deterministic` | Conversation model adapter: `deterministic` (embedded corpus) or `openai_compatible` |
 | `MODEL_BASE_URL`, `MODEL_NAME`, `MODEL_API_KEY` | unset | Required when `MODEL_ADAPTER=openai_compatible`; never point CI or Compose at a real model |
 | `MODEL_TIMEOUT` | `15s` | Timeout for OpenAI-compatible model calls |
-| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM` | unset | Identity verification-code SMTP endpoint; required under `APP_ENV=production` |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM` | unset | Identity verification-code SMTP endpoint; required under `APP_ENV=production` (API role) |
 | `SMTP_TIMEOUT` | `10s` | Timeout for identity verification-code SMTP sends |
 | `PORTABILITY_MAX_BUNDLE_BYTES` | `33554432` | Maximum accepted portability export bundle size in bytes; configuration floor is `1048576` |
 | `SESSION_TTL` | `168h` | Session cookie lifetime |

@@ -28,7 +28,7 @@ func identityRoutes() []struct {
 		{"/api/v1/settings/contact-channels", "get",
 			map[string]string{"200": "ChannelList", "401": "ErrorEnvelope"}, ""},
 		{"/api/v1/settings/contact-channels", "post",
-			map[string]string{"201": "ContactChannel", "401": "ErrorEnvelope", "409": "ErrorEnvelope", "422": "ErrorEnvelope", "429": "ErrorEnvelope"}, "AddChannelRequest"},
+			map[string]string{"201": "ContactChannel", "401": "ErrorEnvelope", "409": "ErrorEnvelope", "422": "ErrorEnvelope", "429": "ErrorEnvelope", "502": "ErrorEnvelope", "503": "ErrorEnvelope"}, "AddChannelRequest"},
 		{"/api/v1/settings/contact-channels/{channelId}/verify", "post",
 			map[string]string{"200": "ChannelVerified", "401": "ErrorEnvelope", "404": "ErrorEnvelope", "422": "ErrorEnvelope"}, "VerifyCodeRequest"},
 		{"/api/v1/settings/contact-channels/{channelId}", "patch",

@@ -19,13 +19,25 @@ paths:
               schema:
                 $ref: '#/components/schemas/EmptyObject'
         '422':
-          description: Invalid phone number.
+          description: Invalid or missing identifier.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '429':
-          description: Too many challenges for this phone.
+          description: Too many challenges for this identifier.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '502':
+          description: Verification code delivery failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: SMS delivery unavailable.
           content:
             application/json:
               schema:
@@ -52,7 +64,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '422':
-          description: Malformed request.
+          description: Invalid or missing identifier.
           content:
             application/json:
               schema:
@@ -145,6 +157,18 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '429':
           description: Too many verification codes requested.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '502':
+          description: Verification code delivery failed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '503':
+          description: SMS delivery unavailable.
           content:
             application/json:
               schema:
@@ -257,19 +281,24 @@ components:
     LoginRequest:
       type: object
       additionalProperties: false
-      required: [phone]
       properties:
         phone:
           type: string
           maxLength: 16
+        email:
+          type: string
+          maxLength: 254
     LoginVerifyRequest:
       type: object
       additionalProperties: false
-      required: [phone, code]
+      required: [code]
       properties:
         phone:
           type: string
           maxLength: 16
+        email:
+          type: string
+          maxLength: 254
         code:
           type: string
           maxLength: 6

@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -14,17 +15,17 @@ import (
 )
 
 type fakeLoginRequester struct {
-	err   error
-	phone string
+	err        error
+	identifier domain.LoginIdentifier
 	// privateAdminPhone, when non-empty, mirrors the private-deployment gate
 	// of command.RequestLoginChallengeHandler: every other phone is rejected
 	// with domain.ErrRegistrationClosed before any other behavior.
 	privateAdminPhone string
 }
 
-func (f *fakeLoginRequester) Handle(_ context.Context, phone string) error {
-	f.phone = phone
-	if f.privateAdminPhone != "" && phone != f.privateAdminPhone {
+func (f *fakeLoginRequester) Handle(_ context.Context, identifier domain.LoginIdentifier) error {
+	f.identifier = identifier
+	if f.privateAdminPhone != "" && identifier.Phone != f.privateAdminPhone {
 		return domain.ErrRegistrationClosed
 	}
 	return f.err
@@ -38,8 +39,8 @@ type fakeLoginVerifier struct {
 	privateAdminPhone string
 }
 
-func (f *fakeLoginVerifier) Handle(_ context.Context, phone, _ string) (dto.VerifyLoginChallengeResult, error) {
-	if f.privateAdminPhone != "" && phone != f.privateAdminPhone {
+func (f *fakeLoginVerifier) Handle(_ context.Context, identifier domain.LoginIdentifier, _ string) (dto.VerifyLoginChallengeResult, error) {
+	if f.privateAdminPhone != "" && identifier.Phone != f.privateAdminPhone {
 		return dto.VerifyLoginChallengeResult{}, domain.ErrRegistrationClosed
 	}
 	return f.result, f.err
@@ -116,8 +117,75 @@ func TestRequestLogin(t *testing.T) {
 	if rr.Code != http.StatusAccepted {
 		t.Fatalf("status = %d, want 202", rr.Code)
 	}
-	if requester.phone != "+8613800137000" {
-		t.Fatalf("phone = %q", requester.phone)
+	if requester.identifier.Phone != "+8613800137000" {
+		t.Fatalf("identifier = %#v", requester.identifier)
+	}
+}
+
+func TestRequestLoginRejectsDualIdentifiers(t *testing.T) {
+	handler := &Handler{RequestLoginChallenge: &fakeLoginRequester{}, SessionTTL: time.Hour}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/request",
+		strings.NewReader(`{"phone":"+8613800138000","email":"admin@example.com"}`))
+	recorder := httptest.NewRecorder()
+	handler.requestLogin(recorder, request)
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", recorder.Code)
+	}
+}
+
+func TestRequestLoginRejectsMissingIdentifier(t *testing.T) {
+	handler := &Handler{RequestLoginChallenge: &fakeLoginRequester{}, SessionTTL: time.Hour}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/request",
+		strings.NewReader(`{}`))
+	recorder := httptest.NewRecorder()
+	handler.requestLogin(recorder, request)
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want 422", recorder.Code)
+	}
+}
+
+func TestRequestLoginAcceptsEmailIdentifier(t *testing.T) {
+	requester := &fakeLoginRequester{}
+	handler := &Handler{RequestLoginChallenge: requester, SessionTTL: time.Hour}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/request",
+		strings.NewReader(`{"email":"admin@example.com"}`))
+	recorder := httptest.NewRecorder()
+	handler.requestLogin(recorder, request)
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", recorder.Code)
+	}
+	if requester.identifier.Email != "admin@example.com" || requester.identifier.Phone != "" {
+		t.Fatalf("identifier = %#v", requester.identifier)
+	}
+}
+
+func TestRequestLoginMapsSmsUnavailable(t *testing.T) {
+	handler := &Handler{RequestLoginChallenge: &fakeLoginRequester{err: domain.ErrSmsUnavailable}, SessionTTL: time.Hour}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/request",
+		strings.NewReader(`{"phone":"+8613800138000"}`))
+	handler.requestLogin(recorder, request)
+	if recorder.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), `"code":"sms_unavailable"`) {
+		t.Fatalf("body = %s", recorder.Body.String())
+	}
+}
+
+func TestRequestLoginMapsDeliveryFailure(t *testing.T) {
+	handler := &Handler{RequestLoginChallenge: &fakeLoginRequester{
+		err: fmt.Errorf("%w: dial", domain.ErrCodeDeliveryFailed),
+	}, SessionTTL: time.Hour}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/request",
+		strings.NewReader(`{"email":"admin@example.com"}`))
+	handler.requestLogin(recorder, request)
+	if recorder.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want 502", recorder.Code)
+	}
+	if !strings.Contains(recorder.Body.String(), `"code":"verification_send_failed"`) {
+		t.Fatalf("body = %s", recorder.Body.String())
 	}
 }
 
@@ -221,8 +289,8 @@ func TestPrivateModeLoginGateMapsTo403RegistrationClosed(t *testing.T) {
 	if rr.Code != http.StatusAccepted {
 		t.Fatalf("admin request status = %d, want 202", rr.Code)
 	}
-	if requester.phone != adminPhone {
-		t.Fatalf("admin request phone = %q", requester.phone)
+	if requester.identifier.Phone != adminPhone {
+		t.Fatalf("admin request identifier = %#v", requester.identifier)
 	}
 
 	// The admin phone still proceeds on the verify route.

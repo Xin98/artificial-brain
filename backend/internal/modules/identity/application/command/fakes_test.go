@@ -61,6 +61,46 @@ func (s *fakeChallengeStore) ActiveByPhone(_ context.Context, phone string) (dom
 	return domain.LoginChallenge{}, domain.ErrChallengeNotFound
 }
 
+func (s *fakeChallengeStore) ActiveByEmail(_ context.Context, email string) (domain.LoginChallenge, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var latestUnconsumed *domain.LoginChallenge
+	var latestAny *domain.LoginChallenge
+	for i := range s.challenges {
+		c := s.challenges[i]
+		if c.Email != email {
+			continue
+		}
+		if latestAny == nil || !c.CreatedAt.Before(latestAny.CreatedAt) {
+			cc := c
+			latestAny = &cc
+		}
+		if !c.IsConsumed() && (latestUnconsumed == nil || !c.CreatedAt.Before(latestUnconsumed.CreatedAt)) {
+			cc := c
+			latestUnconsumed = &cc
+		}
+	}
+	if latestUnconsumed != nil {
+		return *latestUnconsumed, nil
+	}
+	if latestAny != nil {
+		return *latestAny, nil
+	}
+	return domain.LoginChallenge{}, domain.ErrChallengeNotFound
+}
+
+func (s *fakeChallengeStore) CountByEmailSince(_ context.Context, email string, since time.Time) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	count := 0
+	for _, c := range s.challenges {
+		if c.Email == email && !c.CreatedAt.Before(since) {
+			count++
+		}
+	}
+	return count, nil
+}
+
 func (s *fakeChallengeStore) CountByPhoneSince(_ context.Context, phone string, since time.Time) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -78,6 +118,12 @@ type fakeUserStore struct {
 	// byPhoneErr, when set, makes ByPhone fail with this error so tests can
 	// exercise error propagation.
 	byPhoneErr error
+	// byEmailErr, when set, makes ByEmail fail with this error so tests can
+	// exercise error propagation.
+	byEmailErr error
+	// updateErr, when set, makes Update fail with this error so tests can
+	// exercise error propagation on the identifier-attach path.
+	updateErr error
 	// log, when set, records "user:<id>" on Save so tests can assert the
 	// cross-store save order.
 	log *[]string
@@ -93,12 +139,35 @@ func (s *fakeUserStore) Save(_ context.Context, u domain.User) error {
 	return nil
 }
 
+func (s *fakeUserStore) Update(_ context.Context, u domain.User) error {
+	if s.updateErr != nil {
+		return s.updateErr
+	}
+	if _, ok := s.users[u.ID]; !ok {
+		return domain.ErrUserNotFound
+	}
+	s.users[u.ID] = u
+	return nil
+}
+
 func (s *fakeUserStore) ByPhone(_ context.Context, phone string) (domain.User, error) {
 	if s.byPhoneErr != nil {
 		return domain.User{}, s.byPhoneErr
 	}
 	for _, u := range s.users {
 		if u.Phone == phone {
+			return u, nil
+		}
+	}
+	return domain.User{}, domain.ErrUserNotFound
+}
+
+func (s *fakeUserStore) ByEmail(_ context.Context, email string) (domain.User, error) {
+	if s.byEmailErr != nil {
+		return domain.User{}, s.byEmailErr
+	}
+	for _, u := range s.users {
+		if u.Email != "" && u.Email == email {
 			return u, nil
 		}
 	}
@@ -200,9 +269,15 @@ func (s *fakeChannelStore) ListByUser(_ context.Context, workspaceID, userID str
 
 type fakeOutbox struct {
 	messages []ports.OutboxMessage
+	// writeErr, when set, makes Write fail with this error so tests can
+	// exercise the send-before-save ordering.
+	writeErr error
 }
 
 func (o *fakeOutbox) Write(_ context.Context, m ports.OutboxMessage) error {
+	if o.writeErr != nil {
+		return o.writeErr
+	}
 	o.messages = append(o.messages, m)
 	return nil
 }

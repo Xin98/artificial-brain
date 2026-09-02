@@ -45,7 +45,7 @@ func TestRequestLoginChallengeWritesOutbox(t *testing.T) {
 	outbox := &fakeOutbox{}
 	h := newRequestHandler(challenges, outbox, fixedNow)
 
-	if err := h.Handle(context.Background(), "+8613800137000"); err != nil {
+	if err := h.Handle(context.Background(), domain.LoginIdentifier{Phone: "+8613800137000"}); err != nil {
 		t.Fatalf("Handle() error = %v", err)
 	}
 	if len(outbox.messages) != 1 {
@@ -66,7 +66,7 @@ func TestRequestLoginChallengeRejectsInvalidPhone(t *testing.T) {
 	outbox := &fakeOutbox{}
 	h := newRequestHandler(challenges, outbox, fixedNow)
 
-	if err := h.Handle(context.Background(), "not-a-phone"); !errors.Is(err, domain.ErrInvalidPhone) {
+	if err := h.Handle(context.Background(), domain.LoginIdentifier{Phone: "not-a-phone"}); !errors.Is(err, domain.ErrInvalidPhone) {
 		t.Fatalf("Handle() error = %v, want ErrInvalidPhone", err)
 	}
 	if len(outbox.messages) != 0 {
@@ -80,11 +80,11 @@ func TestRequestLoginChallengeRateLimits(t *testing.T) {
 	h := newRequestHandler(challenges, outbox, fixedNow)
 
 	for i := 0; i < MaxChallengesPerPhonePerHour; i++ {
-		if err := h.Handle(context.Background(), "+8613800137000"); err != nil {
+		if err := h.Handle(context.Background(), domain.LoginIdentifier{Phone: "+8613800137000"}); err != nil {
 			t.Fatalf("request %d error = %v", i, err)
 		}
 	}
-	if err := h.Handle(context.Background(), "+8613800137000"); !errors.Is(err, domain.ErrRateLimited) {
+	if err := h.Handle(context.Background(), domain.LoginIdentifier{Phone: "+8613800137000"}); !errors.Is(err, domain.ErrRateLimited) {
 		t.Fatalf("6th request error = %v, want ErrRateLimited", err)
 	}
 }
@@ -97,10 +97,10 @@ func TestVerifyLoginChallengeRegistersUserAndWorkspace(t *testing.T) {
 	outbox := &fakeOutbox{}
 	phone := "+8613800137000"
 
-	if err := newRequestHandler(challenges, outbox, fixedNow).Handle(context.Background(), phone); err != nil {
+	if err := newRequestHandler(challenges, outbox, fixedNow).Handle(context.Background(), domain.LoginIdentifier{Phone: phone}); err != nil {
 		t.Fatalf("request error = %v", err)
 	}
-	result, err := newVerifyHandler(challenges, users, workspaces, sessions, fixedNow).Handle(context.Background(), phone, "123456")
+	result, err := newVerifyHandler(challenges, users, workspaces, sessions, fixedNow).Handle(context.Background(), domain.LoginIdentifier{Phone: phone}, "123456")
 	if err != nil {
 		t.Fatalf("Handle() error = %v", err)
 	}
@@ -131,17 +131,17 @@ func TestVerifyLoginChallengeReusesExistingUser(t *testing.T) {
 	verify := newVerifyHandler(challenges, users, workspaces, sessions, fixedNow)
 	request := newRequestHandler(challenges, outbox, fixedNow)
 
-	if err := request.Handle(context.Background(), phone); err != nil {
+	if err := request.Handle(context.Background(), domain.LoginIdentifier{Phone: phone}); err != nil {
 		t.Fatal(err)
 	}
-	first, err := verify.Handle(context.Background(), phone, "123456")
+	first, err := verify.Handle(context.Background(), domain.LoginIdentifier{Phone: phone}, "123456")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := request.Handle(context.Background(), phone); err != nil {
+	if err := request.Handle(context.Background(), domain.LoginIdentifier{Phone: phone}); err != nil {
 		t.Fatal(err)
 	}
-	second, err := verify.Handle(context.Background(), phone, "123456")
+	second, err := verify.Handle(context.Background(), domain.LoginIdentifier{Phone: phone}, "123456")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -161,17 +161,17 @@ func TestVerifyLoginChallengeWrongCodeIncrementsAttempts(t *testing.T) {
 	outbox := &fakeOutbox{}
 	phone := "+8613800137000"
 
-	if err := newRequestHandler(challenges, outbox, fixedNow).Handle(context.Background(), phone); err != nil {
+	if err := newRequestHandler(challenges, outbox, fixedNow).Handle(context.Background(), domain.LoginIdentifier{Phone: phone}); err != nil {
 		t.Fatal(err)
 	}
 	verify := newVerifyHandler(challenges, users, workspaces, sessions, fixedNow)
 
 	for i := 0; i < domain.MaxVerifyAttempts; i++ {
-		if _, err := verify.Handle(context.Background(), phone, "000000"); err == nil {
+		if _, err := verify.Handle(context.Background(), domain.LoginIdentifier{Phone: phone}, "000000"); err == nil {
 			t.Fatalf("wrong code %d accepted", i)
 		}
 	}
-	if _, err := verify.Handle(context.Background(), phone, "123456"); !errors.Is(err, domain.ErrTooManyAttempts) {
+	if _, err := verify.Handle(context.Background(), domain.LoginIdentifier{Phone: phone}, "123456"); !errors.Is(err, domain.ErrTooManyAttempts) {
 		t.Fatalf("after exhaustion error = %v, want ErrTooManyAttempts", err)
 	}
 }
@@ -184,11 +184,11 @@ func TestVerifyLoginChallengeExpired(t *testing.T) {
 	outbox := &fakeOutbox{}
 	phone := "+8613800137000"
 
-	if err := newRequestHandler(challenges, outbox, fixedNow).Handle(context.Background(), phone); err != nil {
+	if err := newRequestHandler(challenges, outbox, fixedNow).Handle(context.Background(), domain.LoginIdentifier{Phone: phone}); err != nil {
 		t.Fatal(err)
 	}
 	later := func() time.Time { return testNow.Add(6 * time.Minute) }
-	if _, err := newVerifyHandler(challenges, users, workspaces, sessions, later).Handle(context.Background(), phone, "123456"); !errors.Is(err, domain.ErrChallengeExpired) {
+	if _, err := newVerifyHandler(challenges, users, workspaces, sessions, later).Handle(context.Background(), domain.LoginIdentifier{Phone: phone}, "123456"); !errors.Is(err, domain.ErrChallengeExpired) {
 		t.Fatalf("error = %v, want ErrChallengeExpired", err)
 	}
 }
@@ -201,14 +201,14 @@ func TestVerifyLoginChallengeSingleUse(t *testing.T) {
 	outbox := &fakeOutbox{}
 	phone := "+8613800137000"
 
-	if err := newRequestHandler(challenges, outbox, fixedNow).Handle(context.Background(), phone); err != nil {
+	if err := newRequestHandler(challenges, outbox, fixedNow).Handle(context.Background(), domain.LoginIdentifier{Phone: phone}); err != nil {
 		t.Fatal(err)
 	}
 	verify := newVerifyHandler(challenges, users, workspaces, sessions, fixedNow)
-	if _, err := verify.Handle(context.Background(), phone, "123456"); err != nil {
+	if _, err := verify.Handle(context.Background(), domain.LoginIdentifier{Phone: phone}, "123456"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := verify.Handle(context.Background(), phone, "123456"); !errors.Is(err, domain.ErrChallengeConsumed) {
+	if _, err := verify.Handle(context.Background(), domain.LoginIdentifier{Phone: phone}, "123456"); !errors.Is(err, domain.ErrChallengeConsumed) {
 		t.Fatalf("reuse error = %v, want ErrChallengeConsumed", err)
 	}
 }
@@ -218,7 +218,7 @@ func TestVerifyLoginChallengeStoresHashNotPlaintext(t *testing.T) {
 	outbox := &fakeOutbox{}
 	phone := "+8613800137000"
 
-	if err := newRequestHandler(challenges, outbox, fixedNow).Handle(context.Background(), phone); err != nil {
+	if err := newRequestHandler(challenges, outbox, fixedNow).Handle(context.Background(), domain.LoginIdentifier{Phone: phone}); err != nil {
 		t.Fatal(err)
 	}
 	challenge, err := challenges.ActiveByPhone(context.Background(), phone)
@@ -240,7 +240,7 @@ func TestRequestLoginChallengeGateAllowsAdminPhoneUnchanged(t *testing.T) {
 	h := newRequestHandler(challenges, outbox, fixedNow)
 	h.PrivateAdminPhone = "+8613800137000"
 
-	if err := h.Handle(context.Background(), "+8613800137000"); err != nil {
+	if err := h.Handle(context.Background(), domain.LoginIdentifier{Phone: "+8613800137000"}); err != nil {
 		t.Fatalf("Handle() error = %v", err)
 	}
 	if len(outbox.messages) != 1 || outbox.messages[0].Purpose != "login" {
@@ -258,7 +258,7 @@ func TestRequestLoginChallengeGateRejectsOtherPhonesBeforeAnyStore(t *testing.T)
 	h := newRequestHandler(challenges, outbox, fixedNow)
 	h.PrivateAdminPhone = "+8613800137000"
 
-	if err := h.Handle(context.Background(), "+8613800139999"); !errors.Is(err, domain.ErrRegistrationClosed) {
+	if err := h.Handle(context.Background(), domain.LoginIdentifier{Phone: "+8613800139999"}); !errors.Is(err, domain.ErrRegistrationClosed) {
 		t.Fatalf("Handle() error = %v, want ErrRegistrationClosed", err)
 	}
 	if len(challenges.challenges) != 0 {
@@ -279,13 +279,13 @@ func TestVerifyLoginChallengeGateAllowsAdminPhoneUnchanged(t *testing.T) {
 
 	request := newRequestHandler(challenges, outbox, fixedNow)
 	request.PrivateAdminPhone = phone
-	if err := request.Handle(context.Background(), phone); err != nil {
+	if err := request.Handle(context.Background(), domain.LoginIdentifier{Phone: phone}); err != nil {
 		t.Fatal(err)
 	}
 	verify := newVerifyHandler(challenges, users, workspaces, sessions, fixedNow)
 	verify.PrivateAdminPhone = phone
 
-	result, err := verify.Handle(context.Background(), phone, "123456")
+	result, err := verify.Handle(context.Background(), domain.LoginIdentifier{Phone: phone}, "123456")
 	if err != nil {
 		t.Fatalf("Handle() error = %v", err)
 	}
@@ -302,7 +302,7 @@ func TestVerifyLoginChallengeGateRejectsOtherPhonesBeforeAnyStore(t *testing.T) 
 	verify := newVerifyHandler(challenges, users, workspaces, sessions, fixedNow)
 	verify.PrivateAdminPhone = "+8613800137000"
 
-	result, err := verify.Handle(context.Background(), "+8613800139999", "123456")
+	result, err := verify.Handle(context.Background(), domain.LoginIdentifier{Phone: "+8613800139999"}, "123456")
 	if !errors.Is(err, domain.ErrRegistrationClosed) {
 		t.Fatalf("Handle() error = %v, want ErrRegistrationClosed", err)
 	}
@@ -323,10 +323,10 @@ func TestLogoutRevokesSession(t *testing.T) {
 	outbox := &fakeOutbox{}
 	phone := "+8613800137000"
 
-	if err := newRequestHandler(challenges, outbox, fixedNow).Handle(context.Background(), phone); err != nil {
+	if err := newRequestHandler(challenges, outbox, fixedNow).Handle(context.Background(), domain.LoginIdentifier{Phone: phone}); err != nil {
 		t.Fatal(err)
 	}
-	result, err := newVerifyHandler(challenges, users, workspaces, sessions, fixedNow).Handle(context.Background(), phone, "123456")
+	result, err := newVerifyHandler(challenges, users, workspaces, sessions, fixedNow).Handle(context.Background(), domain.LoginIdentifier{Phone: phone}, "123456")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -341,5 +341,62 @@ func TestLogoutRevokesSession(t *testing.T) {
 	}
 	if !session.IsRevoked() {
 		t.Fatal("session not revoked after logout")
+	}
+}
+
+// The dual-identifier tests below cover email login alongside the phone
+// flows above.
+
+func TestRequestLoginChallengeEmail(t *testing.T) {
+	challenges := newFakeChallengeStore()
+	outbox := &fakeOutbox{}
+	h := newRequestHandler(challenges, outbox, fixedNow)
+
+	if err := h.Handle(context.Background(), domain.LoginIdentifier{Email: "admin@example.com"}); err != nil {
+		t.Fatalf("Handle = %v", err)
+	}
+	if len(outbox.messages) != 1 {
+		t.Fatalf("outbox messages = %d, want 1", len(outbox.messages))
+	}
+	message := outbox.messages[0]
+	if message.Address != "admin@example.com" || message.Channel != "email" || message.Purpose != "login" {
+		t.Fatalf("outbox message = %#v", message)
+	}
+}
+
+func TestRequestLoginChallengePrivateEmailGate(t *testing.T) {
+	h := newRequestHandler(newFakeChallengeStore(), &fakeOutbox{}, fixedNow)
+	h.PrivateAdminEmail = "admin@example.com"
+
+	if err := h.Handle(context.Background(), domain.LoginIdentifier{Email: "stranger@example.com"}); !errors.Is(err, domain.ErrRegistrationClosed) {
+		t.Fatalf("stranger email = %v, want ErrRegistrationClosed", err)
+	}
+	if err := h.Handle(context.Background(), domain.LoginIdentifier{Phone: "+8613800138000"}); !errors.Is(err, domain.ErrRegistrationClosed) {
+		t.Fatalf("stranger phone = %v, want ErrRegistrationClosed", err)
+	}
+	if err := h.Handle(context.Background(), domain.LoginIdentifier{Email: "admin@example.com"}); err != nil {
+		t.Fatalf("admin email = %v", err)
+	}
+}
+
+func TestVerifyLoginChallengeEmailFirstLogin(t *testing.T) {
+	challenges := newFakeChallengeStore()
+	users := newFakeUserStore()
+	workspaces := newFakeWorkspaceStore()
+	sessions := newFakeSessionStore()
+	identifier := domain.LoginIdentifier{Email: "admin@example.com"}
+
+	if err := newRequestHandler(challenges, &fakeOutbox{}, fixedNow).Handle(context.Background(), identifier); err != nil {
+		t.Fatalf("request: %v", err)
+	}
+	result, err := newVerifyHandler(challenges, users, workspaces, sessions, fixedNow).Handle(context.Background(), identifier, "123456")
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if result.Principal.UserID == "" || result.Principal.WorkspaceID == "" {
+		t.Fatalf("result = %#v", result)
+	}
+	if _, err := users.ByEmail(context.Background(), "admin@example.com"); err != nil {
+		t.Fatalf("user not registered by email: %v", err)
 	}
 }

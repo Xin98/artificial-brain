@@ -14,10 +14,10 @@ import (
 // command/query handlers satisfy these interfaces.
 type (
 	loginRequester interface {
-		Handle(ctx context.Context, phone string) error
+		Handle(ctx context.Context, identifier domain.LoginIdentifier) error
 	}
 	loginVerifier interface {
-		Handle(ctx context.Context, phone, code string) (dto.VerifyLoginChallengeResult, error)
+		Handle(ctx context.Context, identifier domain.LoginIdentifier, code string) (dto.VerifyLoginChallengeResult, error)
 	}
 	logoutHandler interface {
 		Handle(ctx context.Context, sessionID string) error
@@ -64,18 +64,28 @@ func RegisterRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, h 
 func (h *Handler) requestLogin(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Phone string `json:"phone"`
+		Email string `json:"email"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	if err := h.RequestLoginChallenge.Handle(r.Context(), body.Phone); err != nil {
+	identifier, err := domain.NewLoginIdentifier(body.Phone, body.Email)
+	if err != nil {
+		writeValidationError(w, r)
+		return
+	}
+	if err := h.RequestLoginChallenge.Handle(r.Context(), identifier); err != nil {
 		switch {
-		case errors.Is(err, domain.ErrInvalidPhone):
+		case errors.Is(err, domain.ErrInvalidPhone), errors.Is(err, domain.ErrInvalidEmail), errors.Is(err, domain.ErrIdentifierInvalid):
 			writeValidationError(w, r)
 		case errors.Is(err, domain.ErrRateLimited):
 			writeError(w, r, http.StatusTooManyRequests, "rate_limited", "too many requests")
 		case errors.Is(err, domain.ErrRegistrationClosed):
 			writeError(w, r, http.StatusForbidden, "registration_closed", "registration is closed")
+		case errors.Is(err, domain.ErrSmsUnavailable):
+			writeError(w, r, http.StatusServiceUnavailable, "sms_unavailable", "sms delivery is unavailable")
+		case errors.Is(err, domain.ErrCodeDeliveryFailed):
+			writeError(w, r, http.StatusBadGateway, "verification_send_failed", "verification code delivery failed")
 		default:
 			writeError(w, r, http.StatusInternalServerError, "internal_error", "internal server error")
 		}
@@ -87,15 +97,21 @@ func (h *Handler) requestLogin(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) verifyLogin(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Phone string `json:"phone"`
+		Email string `json:"email"`
 		Code  string `json:"code"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	result, err := h.VerifyLoginChallenge.Handle(r.Context(), body.Phone, body.Code)
+	identifier, err := domain.NewLoginIdentifier(body.Phone, body.Email)
+	if err != nil {
+		writeValidationError(w, r)
+		return
+	}
+	result, err := h.VerifyLoginChallenge.Handle(r.Context(), identifier, body.Code)
 	if err != nil {
 		switch {
-		case errors.Is(err, domain.ErrInvalidPhone):
+		case errors.Is(err, domain.ErrInvalidPhone), errors.Is(err, domain.ErrInvalidEmail), errors.Is(err, domain.ErrIdentifierInvalid):
 			writeValidationError(w, r)
 		case errors.Is(err, domain.ErrRegistrationClosed):
 			writeError(w, r, http.StatusForbidden, "registration_closed", "registration is closed")
@@ -190,6 +206,10 @@ func (h *Handler) addChannel(w http.ResponseWriter, r *http.Request) {
 			errors.Is(err, domain.ErrInvalidEmail),
 			errors.Is(err, domain.ErrInvalidPhone):
 			writeValidationError(w, r)
+		case errors.Is(err, domain.ErrSmsUnavailable):
+			writeError(w, r, http.StatusServiceUnavailable, "sms_unavailable", "sms delivery is unavailable")
+		case errors.Is(err, domain.ErrCodeDeliveryFailed):
+			writeError(w, r, http.StatusBadGateway, "verification_send_failed", "verification code delivery failed")
 		case errors.Is(err, domain.ErrChannelExists):
 			writeError(w, r, http.StatusConflict, "conflict", "contact channel already exists")
 		default:

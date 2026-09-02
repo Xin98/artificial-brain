@@ -32,6 +32,16 @@ func TestNewEmail(t *testing.T) {
 	}
 }
 
+func TestNewEmailCaseNormalized(t *testing.T) {
+	got, err := NewEmail("User@Example.COM")
+	if err != nil {
+		t.Fatalf("NewEmail() error = %v", err)
+	}
+	if got.String() != "user@example.com" {
+		t.Fatalf("NewEmail(mixed case) = %q, want lowercase canonical form", got.String())
+	}
+}
+
 func TestCodeValidationAndHash(t *testing.T) {
 	if _, err := NewCode("123456"); err != nil {
 		t.Fatalf("NewCode(valid) error = %v", err)

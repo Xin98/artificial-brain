@@ -579,12 +579,6 @@ main[data-page="login"] {
   width: 100%;
 }
 
-.login-hint {
-  color: var(--text-3);
-  font-size: 0.8125rem;
-  margin: 0;
-}
-
 /* ----- dashboard -------------------------------------------------------------- */
 
 .dashboard {

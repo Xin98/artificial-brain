@@ -18,7 +18,7 @@ func identityRoutes() []struct {
 		body    string
 	}{
 		{"/api/v1/auth/login/request", "post",
-			map[string]string{"202": "EmptyObject", "422": "ErrorEnvelope", "429": "ErrorEnvelope"}, "LoginRequest"},
+			map[string]string{"202": "EmptyObject", "422": "ErrorEnvelope", "429": "ErrorEnvelope", "502": "ErrorEnvelope", "503": "ErrorEnvelope"}, "LoginRequest"},
 		{"/api/v1/auth/login/verify", "post",
 			map[string]string{"200": "LoginResult", "401": "ErrorEnvelope", "422": "ErrorEnvelope", "429": "ErrorEnvelope"}, "LoginVerifyRequest"},
 		{"/api/v1/auth/logout", "post",
@@ -28,7 +28,7 @@ func identityRoutes() []struct {
 		{"/api/v1/settings/contact-channels", "get",
 			map[string]string{"200": "ChannelList", "401": "ErrorEnvelope"}, ""},
 		{"/api/v1/settings/contact-channels", "post",
-			map[string]string{"201": "ContactChannel", "401": "ErrorEnvelope", "409": "ErrorEnvelope", "422": "ErrorEnvelope", "429": "ErrorEnvelope"}, "AddChannelRequest"},
+			map[string]string{"201": "ContactChannel", "401": "ErrorEnvelope", "409": "ErrorEnvelope", "422": "ErrorEnvelope", "429": "ErrorEnvelope", "502": "ErrorEnvelope", "503": "ErrorEnvelope"}, "AddChannelRequest"},
 		{"/api/v1/settings/contact-channels/{channelId}/verify", "post",
 			map[string]string{"200": "ChannelVerified", "401": "ErrorEnvelope", "404": "ErrorEnvelope", "422": "ErrorEnvelope"}, "VerifyCodeRequest"},
 		{"/api/v1/settings/contact-channels/{channelId}", "patch",
@@ -54,11 +54,16 @@ func TestIdentityContractRoutesCodesAndSchemas(t *testing.T) {
 	}
 
 	login := schemas["LoginRequest"]
-	if !docClosedObject(login, []string{"phone"}) || !docIsString(login.Properties["phone"]) || !docMaxLength(login.Properties["phone"], 16) {
+	if !docClosedObject(login, nil) ||
+		!docIsString(login.Properties["phone"]) || !docMaxLength(login.Properties["phone"], 16) ||
+		!docIsString(login.Properties["email"]) || !docMaxLength(login.Properties["email"], 254) {
 		t.Fatalf("LoginRequest = %#v", login)
 	}
 	verify := schemas["LoginVerifyRequest"]
-	if !docClosedObject(verify, []string{"phone", "code"}) || !docMaxLength(verify.Properties["phone"], 16) || !docMaxLength(verify.Properties["code"], 6) {
+	if !docClosedObject(verify, []string{"code"}) ||
+		!docIsString(verify.Properties["phone"]) || !docMaxLength(verify.Properties["phone"], 16) ||
+		!docIsString(verify.Properties["email"]) || !docMaxLength(verify.Properties["email"], 254) ||
+		!docMaxLength(verify.Properties["code"], 6) {
 		t.Fatalf("LoginVerifyRequest = %#v", verify)
 	}
 	result := schemas["LoginResult"]
@@ -161,11 +166,16 @@ func identityContractValid(document docDocument) bool {
 		return false
 	}
 	login := schemas["LoginRequest"]
-	if !docClosedObject(login, []string{"phone"}) || !docMaxLength(login.Properties["phone"], 16) {
+	if !docClosedObject(login, nil) ||
+		!docIsString(login.Properties["phone"]) || !docMaxLength(login.Properties["phone"], 16) ||
+		!docIsString(login.Properties["email"]) || !docMaxLength(login.Properties["email"], 254) {
 		return false
 	}
 	verify := schemas["LoginVerifyRequest"]
-	if !docClosedObject(verify, []string{"phone", "code"}) || !docMaxLength(verify.Properties["code"], 6) {
+	if !docClosedObject(verify, []string{"code"}) ||
+		!docIsString(verify.Properties["phone"]) || !docMaxLength(verify.Properties["phone"], 16) ||
+		!docIsString(verify.Properties["email"]) || !docMaxLength(verify.Properties["email"], 254) ||
+		!docMaxLength(verify.Properties["code"], 6) {
 		return false
 	}
 	if !docClosedObject(schemas["LoginResult"], []string{"userId", "workspaceId", "expiresAt"}) ||

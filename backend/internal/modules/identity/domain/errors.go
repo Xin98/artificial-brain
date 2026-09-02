@@ -19,4 +19,7 @@ var (
 	ErrInvalidChannelKind = errors.New("identity: invalid contact channel kind")
 	ErrChannelCodeExpired = errors.New("identity: contact channel code expired")
 	ErrRegistrationClosed = errors.New("identity: registration is closed")
+	ErrIdentifierInvalid  = errors.New("identity: exactly one of phone or email is required")
+	ErrSmsUnavailable     = errors.New("identity: sms delivery is unavailable")
+	ErrCodeDeliveryFailed = errors.New("identity: verification code delivery failed")
 )

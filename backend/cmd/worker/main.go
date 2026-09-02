@@ -45,7 +45,9 @@ func run() int {
 	logger := observability.NewLogger(os.Stderr, "worker", "unknown")
 	cfg, err := config.Load(config.RoleWorker, os.LookupEnv)
 	if err != nil {
-		logger.Error("invalid worker configuration")
+		// The runbook depends on operators seeing WHICH variable is missing
+		// or invalid, so the config error must reach the log line.
+		logger.Error("invalid worker configuration", "error", err)
 		return 1
 	}
 	logger = observability.NewLogger(os.Stderr, cfg.ServiceName, cfg.ServiceVersion)
@@ -123,8 +125,22 @@ func run() int {
 	return 0
 }
 
+// reminderQueues selects the delivery queues this worker serves: the SMS
+// queue disappears when the SMS adapter is disabled, so SMS jobs are never
+// worked into a provider that does not exist.
+func reminderQueues(cfg config.Config) map[string]riverqueue.QueueConfig {
+	queues := map[string]riverqueue.QueueConfig{
+		"reminder_email": {MaxWorkers: cfg.ReminderQueueEmailConcurrency},
+	}
+	if cfg.ReminderSmsAdapter != config.ReminderSmsAdapterDisabled {
+		queues["reminder_sms"] = riverqueue.QueueConfig{MaxWorkers: cfg.ReminderQueueSmsConcurrency}
+	}
+	return queues
+}
+
 // buildRiverClient composes the reminder delivery command and registers its
-// River worker on the reminder_email and reminder_sms queues.
+// River worker on the delivery queues selected by reminderQueues (the SMS
+// queue is conditional on the SMS adapter being enabled).
 func buildRiverClient(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) (*riverqueue.Client[pgx.Tx], error) {
 	workers := riverqueue.NewWorkers()
 	riverqueue.AddWorker(workers, &reminderworker.SendWorker{
@@ -133,10 +149,7 @@ func buildRiverClient(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger
 	})
 	return riverqueue.NewClient(riverpgxv5.New(pool), &riverqueue.Config{
 		Workers: workers,
-		Queues: map[string]riverqueue.QueueConfig{
-			"reminder_email": {MaxWorkers: cfg.ReminderQueueEmailConcurrency},
-			"reminder_sms":   {MaxWorkers: cfg.ReminderQueueSmsConcurrency},
-		},
+		Queues:  reminderQueues(cfg),
 	})
 }
 
@@ -193,6 +206,9 @@ func selectEmailNotifier(cfg config.Config, pool *pgxpool.Pool) reminderports.Em
 // selectSmsNotifier resolves the configured SMS provider; config.Load already
 // validated the choice, so the fallback is the fake adapter.
 func selectSmsNotifier(cfg config.Config, pool *pgxpool.Pool) reminderports.SmsNotifier {
+	if cfg.ReminderSmsAdapter == config.ReminderSmsAdapterDisabled {
+		return disabledSmsNotifier{}
+	}
 	if cfg.ReminderSmsAdapter == config.ReminderSmsAdapterAliyun {
 		return aliyunprovider.New(aliyunprovider.Config{
 			Endpoint:        cfg.ReminderAliyunEndpoint,
@@ -204,6 +220,19 @@ func selectSmsNotifier(cfg config.Config, pool *pgxpool.Pool) reminderports.SmsN
 	}
 	outbox := fakeprovider.NewOutbox(pool)
 	return fakeprovider.NewSms(outbox)
+}
+
+// disabledSmsNotifier fails closed if an SMS delivery job ever executes while
+// the adapter is disabled. New jobs are not planned in this state
+// (channelsProvider omits sms), and reminderQueues unregisters the SMS
+// queue, so existing SMS jobs simply sit pending and are never worked; this
+// notifier only runs if the adapter is re-enabled with such jobs still
+// queued, and then each execution fails until the job dead-letters instead
+// of touching a nonexistent provider.
+type disabledSmsNotifier struct{}
+
+func (disabledSmsNotifier) Send(_ context.Context, _ reminderdto.ReminderMessage) (reminderdto.SendResult, error) {
+	return reminderdto.SendResult{}, errors.New("reminder: sms adapter is disabled")
 }
 
 // todoReaderShim adapts Todo's postgres store to Reminder's TodoReader port.

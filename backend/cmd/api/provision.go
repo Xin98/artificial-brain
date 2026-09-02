@@ -51,7 +51,7 @@ func provisionPrivateAdmin(ctx context.Context, cfg config.Config, pool *pgxpool
 		NewID:      newID,
 		Now:        time.Now,
 	}
-	if err := handler.Handle(ctx, cfg.PrivateAdminPhone); err != nil {
+	if err := handler.Handle(ctx, cfg.PrivateAdminPhone, cfg.PrivateAdminEmail); err != nil {
 		return err
 	}
 	slog.Info("private admin provisioned")

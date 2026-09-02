@@ -27,8 +27,10 @@ import (
 	identityhttp "github.com/Xin98/artificial-brain/backend/internal/modules/identity/adapters/inbound/http"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/identity/adapters/outbound/fakeoutbox"
 	identitypostgres "github.com/Xin98/artificial-brain/backend/internal/modules/identity/adapters/outbound/postgres"
+	"github.com/Xin98/artificial-brain/backend/internal/modules/identity/adapters/outbound/smtpoutbox"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/identity/application/command"
 	identitydto "github.com/Xin98/artificial-brain/backend/internal/modules/identity/application/dto"
+	identityports "github.com/Xin98/artificial-brain/backend/internal/modules/identity/application/ports"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/identity/application/query"
 	identitydomain "github.com/Xin98/artificial-brain/backend/internal/modules/identity/domain"
 	portabilityhttp "github.com/Xin98/artificial-brain/backend/internal/modules/portability/adapters/inbound/http"
@@ -75,7 +77,7 @@ func buildHandler(cfg config.Config, pool *pgxpool.Pool, ready server.Readiness,
 		panic(fmt.Sprintf("wiring: invalid river client configuration: %v", err))
 	}
 	todos := buildTodoHandlers(pool, riversched.New(riverClient),
-		channelsProvider(identitypostgres.NewChannelStore(pool)), time.Now)
+		channelsProvider(cfg, identitypostgres.NewChannelStore(pool)), time.Now)
 	registerTodoRoutes(mux, auth, todos)
 	registerConversationRoutes(cfg, pool, mux, auth, todos)
 	registerReminderRoutes(cfg, pool, mux, auth, todos.Deliveries)
@@ -104,7 +106,7 @@ func registerIdentityRoutes(cfg config.Config, pool *pgxpool.Pool, mux *http.Ser
 	challenges := identitypostgres.NewChallengeStore(pool)
 	sessions := identitypostgres.NewSessionStore(pool)
 	channels := identitypostgres.NewChannelStore(pool)
-	outbox := fakeoutbox.New(pool)
+	outbox := selectCodeOutbox(cfg, pool)
 
 	handler := &identityhttp.Handler{
 		RequestLoginChallenge: &command.RequestLoginChallengeHandler{
@@ -115,6 +117,7 @@ func registerIdentityRoutes(cfg config.Config, pool *pgxpool.Pool, mux *http.Ser
 			Now:               time.Now,
 			ChallengeTTL:      cfg.LoginChallengeTTL,
 			PrivateAdminPhone: cfg.PrivateAdminPhone,
+			PrivateAdminEmail: cfg.PrivateAdminEmail,
 		},
 		VerifyLoginChallenge: &command.VerifyLoginChallengeHandler{
 			Challenges:        challenges,
@@ -126,6 +129,7 @@ func registerIdentityRoutes(cfg config.Config, pool *pgxpool.Pool, mux *http.Ser
 			Now:               time.Now,
 			SessionTTL:        cfg.SessionTTL,
 			PrivateAdminPhone: cfg.PrivateAdminPhone,
+			PrivateAdminEmail: cfg.PrivateAdminEmail,
 		},
 		Logout: &command.LogoutHandler{Sessions: sessions, Now: time.Now},
 		AddChannel: &command.AddChannelHandler{
@@ -143,6 +147,37 @@ func registerIdentityRoutes(cfg config.Config, pool *pgxpool.Pool, mux *http.Ser
 	}
 
 	identityhttp.RegisterRoutes(mux, auth, handler)
+}
+
+// selectCodeOutbox resolves the identity verification-code delivery adapter:
+// the dev outbox outside production (the dev inbox keeps working), and a
+// channel-routing production adapter inside it.
+func selectCodeOutbox(cfg config.Config, pool *pgxpool.Pool) identityports.MessageOutbox {
+	if cfg.AppEnv == config.AppEnvProduction {
+		return productionCodeOutbox{email: smtpoutbox.New(smtpoutbox.Config{
+			Host:     cfg.SmtpHost,
+			Port:     cfg.SmtpPort,
+			Username: cfg.SmtpUsername,
+			Password: cfg.SmtpPassword,
+			From:     cfg.SmtpFrom,
+			Timeout:  cfg.SmtpTimeout,
+		})}
+	}
+	return fakeoutbox.New(pool)
+}
+
+// productionCodeOutbox routes verification codes by channel: email reaches
+// the real SMTP sender; phone has no real SMS provider yet and fails closed
+// so a phone login attempt reports sms_unavailable instead of hanging.
+type productionCodeOutbox struct {
+	email identityports.MessageOutbox
+}
+
+func (o productionCodeOutbox) Write(ctx context.Context, message identityports.OutboxMessage) error {
+	if message.Channel == "email" {
+		return o.email.Write(ctx, message)
+	}
+	return identitydomain.ErrSmsUnavailable
 }
 
 // newID returns a random RFC 4122 version 4 UUID string.
@@ -207,8 +242,10 @@ func buildTodoHandlers(pool *pgxpool.Pool, scheduler reminderports.JobScheduler,
 
 // channelsProvider snapshots the owner's usable (verified+enabled) contact
 // channel kinds, workspace+user scoped and deterministically sorted, so
-// reminder plans carry a stable requested-channel snapshot.
-func channelsProvider(channels *identitypostgres.ChannelStore) todoports.ChannelsProvider {
+// reminder plans carry a stable requested-channel snapshot. When the SMS
+// reminder adapter is disabled, sms never joins the snapshot, so plans never
+// fan out into SMS deliveries.
+func channelsProvider(cfg config.Config, channels *identitypostgres.ChannelStore) todoports.ChannelsProvider {
 	return func(ctx context.Context, workspaceID, ownerUserID string) ([]string, error) {
 		rows, err := channels.ListByUser(ctx, workspaceID, ownerUserID)
 		if err != nil {
@@ -222,6 +259,9 @@ func channelsProvider(channels *identitypostgres.ChannelStore) todoports.Channel
 		}
 		snapshot := make([]string, 0, len(usable))
 		for kind := range usable {
+			if kind == "sms" && cfg.ReminderSmsAdapter == config.ReminderSmsAdapterDisabled {
+				continue
+			}
 			snapshot = append(snapshot, kind)
 		}
 		sort.Strings(snapshot)

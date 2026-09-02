@@ -33,6 +33,9 @@ func reminderRealAdapterEnv() map[string]string {
 		"REMINDER_ALIYUN_SIGN_NAME":         "workbench",
 		"REMINDER_ALIYUN_TEMPLATE_CODE":     "SMS_123456",
 		"REMINDER_RECEIPT_SECRET":           "receipt-test-secret",
+		"SMTP_HOST":                         "smtp.example.com",
+		"SMTP_PORT":                         "587",
+		"SMTP_FROM":                         "noreply@example.com",
 	}
 }
 

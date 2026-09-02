@@ -34,7 +34,7 @@ Web proxies `/api/v1/:path*` to the API, so the browser only ever talks to the W
 
 ### Logging in locally
 
-Compose runs in cloud mode with a fake SMS outbox. Login is a two-step flow: request a code for a phone number, then read the code from the double-gated dev inbox (`GET /api/v1/dev/sms-inbox?address=<phone>` — present only when `APP_ENV` is not `production` **and** `DEV_INBOX_ENABLED=true`), and verify it to receive the `ab_session` cookie. Every workbench route redirects to `/login` without a validated session.
+Compose runs in cloud mode with a fake outbox. Login is a two-step flow: request a code for a phone number or email address, then read the code from the double-gated dev inbox (`GET /api/v1/dev/sms-inbox?address=<identifier>` — present only when `APP_ENV` is not `production` **and** `DEV_INBOX_ENABLED=true`), and verify it to receive the `ab_session` cookie. Every workbench route redirects to `/login` without a validated session.
 
 Reminder delivery has its own double-gated dev outbox: messages sent by the fake reminder adapters land in `GET /api/v1/dev/reminder-outbox?address=<email-or-phone>` (present only when `APP_ENV` is not `production` **and** `REMINDER_DEV_OUTBOX_ENABLED=true`). It returns the latest rendered message bodies for that address — plaintext, dev-only, same exception class as the login dev inbox.
 
@@ -75,18 +75,21 @@ Copy `.env.example` to an ignored `.env` only when local overrides are needed. N
 | `API_INTERNAL_URL` | `http://api:8080` | Server-only API base URL for Web; also baked into the Web rewrite destination at image build time |
 | `APP_ENV` | `development` | Deployment environment; the dev inbox requires a non-`production` value |
 | `DEV_INBOX_ENABLED` | `true` | Enables the fake SMS inbox route; `config.Load` fails if `true` with `APP_ENV=production` |
-| `DEPLOYMENT_MODE` | `cloud` | Deployment form: `cloud` (open login) or `private` (single fixed administrator, `PRIVATE_ADMIN_PHONE` required) |
-| `PRIVATE_ADMIN_PHONE` | unset | E.164 phone number of the fixed private-mode administrator; required when `DEPLOYMENT_MODE=private`, must stay unset in cloud mode |
+| `DEPLOYMENT_MODE` | `cloud` | Deployment form: `cloud` (open login) or `private` (single fixed administrator, `PRIVATE_ADMIN_PHONE` and/or `PRIVATE_ADMIN_EMAIL` required) |
+| `PRIVATE_ADMIN_PHONE` | unset | E.164 phone number of the fixed private-mode administrator; one of this or `PRIVATE_ADMIN_EMAIL` is required when `DEPLOYMENT_MODE=private`; both must stay unset in cloud mode |
+| `PRIVATE_ADMIN_EMAIL` | unset | Email address of the fixed private-mode administrator; private mode requires at least one of this or `PRIVATE_ADMIN_PHONE`, and it must stay unset in cloud mode |
 | `MODEL_ADAPTER` | `deterministic` | Conversation model adapter: `deterministic` (embedded corpus) or `openai_compatible` |
 | `MODEL_BASE_URL`, `MODEL_NAME`, `MODEL_API_KEY` | unset | Required when `MODEL_ADAPTER=openai_compatible`; never point CI or Compose at a real model |
 | `MODEL_TIMEOUT` | `15s` | Timeout for OpenAI-compatible model calls |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM` | unset | Identity verification-code SMTP endpoint; required under `APP_ENV=production` (API role) |
+| `SMTP_TIMEOUT` | `10s` | Timeout for identity verification-code SMTP sends |
 | `PORTABILITY_MAX_BUNDLE_BYTES` | `33554432` | Maximum accepted portability export bundle size in bytes; configuration floor is `1048576` |
 | `SESSION_TTL` | `168h` | Session cookie lifetime |
 | `LOGIN_CHALLENGE_TTL` | `5m` | Login code lifetime |
 | `CHANNEL_CODE_TTL` | `10m` | Contact-channel verification code lifetime |
 | `CONFIRMATION_TTL` | `5m` | Delete-confirmation lifetime |
 | `REMINDER_EMAIL_ADAPTER` | `fake` | Reminder email provider adapter: `fake` (dev outbox) or `smtp`; `config.Load` fails on `fake` with `APP_ENV=production` |
-| `REMINDER_SMS_ADAPTER` | `fake` | Reminder SMS provider adapter: `fake` or `aliyun`; `config.Load` fails on `fake` with `APP_ENV=production` |
+| `REMINDER_SMS_ADAPTER` | `fake` | Reminder SMS provider adapter: `fake` (dev outbox), `aliyun`, or `disabled` (no SMS deliveries); `fake` fails config.Load with `APP_ENV=production` |
 | `REMINDER_RECEIPT_SECRET` | `local-development-only` | Shared HMAC-SHA256 secret signing the receipt webhook; required for the API role |
 | `REMINDER_DEV_OUTBOX_ENABLED` | `true` | Enables the reminder dev outbox route; `config.Load` fails if `true` with `APP_ENV=production` |
 | `REMINDER_QUEUE_EMAIL_CONCURRENCY` | `2` | Worker River email queue concurrency |

@@ -70,6 +70,40 @@ func TestAddChannelRejectsDuplicate(t *testing.T) {
 	}
 }
 
+func TestAddChannelOutboxFailurePersistsNothing(t *testing.T) {
+	channels := newFakeChannelStore()
+	outbox := &fakeOutbox{writeErr: domain.ErrSmsUnavailable}
+	h := newAddChannelHandler(channels, outbox, fixedNow)
+
+	_, err := h.Handle(context.Background(), testPrincipal, "sms", "+8613800137001")
+	if !errors.Is(err, domain.ErrSmsUnavailable) {
+		t.Fatalf("Handle() error = %v, want the outbox failure", err)
+	}
+	if list, _ := channels.ListByUser(context.Background(), testPrincipal.WorkspaceID, testPrincipal.UserID); len(list) != 0 {
+		t.Fatalf("persisted %d channels after a failed send, want none (no orphan row)", len(list))
+	}
+	if len(outbox.messages) != 0 {
+		t.Fatalf("outbox recorded %d messages on failure, want none", len(outbox.messages))
+	}
+}
+
+func TestAddChannelDuplicateRejectsBeforeSend(t *testing.T) {
+	channels := newFakeChannelStore()
+	outbox := &fakeOutbox{}
+	h := newAddChannelHandler(channels, outbox, fixedNow)
+
+	if _, err := h.Handle(context.Background(), testPrincipal, "email", "user@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	sent := len(outbox.messages)
+	if _, err := h.Handle(context.Background(), testPrincipal, "email", "user@example.com"); !errors.Is(err, domain.ErrChannelExists) {
+		t.Fatalf("duplicate error = %v, want ErrChannelExists", err)
+	}
+	if len(outbox.messages) != sent {
+		t.Fatalf("duplicate request sent another code: %d messages, want %d", len(outbox.messages), sent)
+	}
+}
+
 func TestVerifyChannelMarksVerified(t *testing.T) {
 	channels := newFakeChannelStore()
 	outbox := &fakeOutbox{}

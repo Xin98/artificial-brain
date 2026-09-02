@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/Xin98/artificial-brain/backend/internal/modules/identity/domain"
@@ -204,6 +205,92 @@ func TestChannelStoreEnforcesUniqueKindAddress(t *testing.T) {
 	list, err := store.ListByUser(ctx, channel.WorkspaceID, userID)
 	if err != nil || len(list) != 1 {
 		t.Fatalf("ListByUser() = %d, err = %v, want 1", len(list), err)
+	}
+}
+
+func TestUserStoreEmailIdentifier(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+
+	wsID := randomID(t)
+	workspace := domain.PersonalWorkspace{ID: wsID, CreatedAt: testNow}
+	if err := NewWorkspaceStore(pool).Save(ctx, workspace); err != nil {
+		t.Fatalf("workspace save: %v", err)
+	}
+	user := domain.User{ID: randomID(t), WorkspaceID: workspace.ID, Email: "admin@example.com", CreatedAt: testNow}
+	store := NewUserStore(pool)
+	if err := store.Save(ctx, user); err != nil {
+		t.Fatalf("user save: %v", err)
+	}
+
+	got, err := store.ByEmail(ctx, "admin@example.com")
+	if err != nil {
+		t.Fatalf("ByEmail: %v", err)
+	}
+	if got.Email != "admin@example.com" || got.Phone != "" {
+		t.Fatalf("ByEmail = %#v", got)
+	}
+	if _, err := store.ByPhone(ctx, "+8613800138000"); !errors.Is(err, domain.ErrUserNotFound) {
+		t.Fatalf("ByPhone(missing) = %v, want ErrUserNotFound", err)
+	}
+}
+
+// TestUserStoreEmailCaseInsensitiveUnique pins the lower(email) functional
+// unique index: two users whose emails differ only by case collide, so a
+// case variant can never fork a second user.
+func TestUserStoreEmailCaseInsensitiveUnique(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	store := NewUserStore(pool)
+
+	saveWith := func(email string) error {
+		t.Helper()
+		ws := domain.PersonalWorkspace{ID: randomID(t), CreatedAt: testNow}
+		if err := NewWorkspaceStore(pool).Save(ctx, ws); err != nil {
+			t.Fatalf("workspace save: %v", err)
+		}
+		return store.Save(ctx, domain.User{ID: randomID(t), WorkspaceID: ws.ID, Email: email, CreatedAt: testNow})
+	}
+	if err := saveWith("admin@example.com"); err != nil {
+		t.Fatalf("first save: %v", err)
+	}
+	err := saveWith("Admin@Example.com")
+	if err == nil {
+		t.Fatal("case-variant duplicate save succeeded, want the lower(email) unique index to reject it")
+	}
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		t.Fatalf("case-variant duplicate save error = %v, want unique violation 23505", err)
+	}
+}
+
+func TestChallengeStoreEmailRoundTrip(t *testing.T) {
+	pool := setupTestDB(t)
+	ctx := context.Background()
+	store := NewChallengeStore(pool)
+
+	challenge := domain.LoginChallenge{
+		ID:        randomID(t),
+		Email:     "admin@example.com",
+		CodeHash:  domain.HashCode("123456"),
+		CreatedAt: testNow,
+		ExpiresAt: testNow.Add(5 * time.Minute),
+	}
+	if err := store.Save(ctx, challenge); err != nil {
+		t.Fatalf("save: %v", err)
+	}
+
+	got, err := store.ActiveByEmail(ctx, "admin@example.com")
+	if err != nil {
+		t.Fatalf("ActiveByEmail: %v", err)
+	}
+	if got.Email != "admin@example.com" || got.Phone != "" || !got.Matches(domain.HashCode("123456")) {
+		t.Fatalf("ActiveByEmail = %#v", got)
+	}
+
+	count, err := store.CountByEmailSince(ctx, "admin@example.com", challenge.CreatedAt.Add(-time.Minute))
+	if err != nil || count != 1 {
+		t.Fatalf("CountByEmailSince = %d, %v", count, err)
 	}
 }
 

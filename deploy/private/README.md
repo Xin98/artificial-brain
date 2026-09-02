@@ -16,13 +16,15 @@ codebase.
    Required edits:
 
    - `DEPLOYMENT_MODE=private` (already set in the template)
-   - `PRIVATE_ADMIN_PHONE` — the administrator's E.164 phone number; it is
-     the only account that can ever log in, and the API refuses to start
-     without it.
+   - `PRIVATE_ADMIN_PHONE` and/or `PRIVATE_ADMIN_EMAIL` — the administrator's
+     E.164 phone number and/or email address (at least one; when both are set
+     they belong to the same admin user). These are the only identifiers that
+     can ever log in, and the API refuses to start without at least one.
    - `POSTGRES_PASSWORD` and `REMINDER_RECEIPT_SECRET` — real random values.
-   - Real model/SMTP/SMS configuration (`MODEL_*`, `REMINDER_SMTP_*`,
-     `REMINDER_ALIYUN_*`); the fake adapters and dev inbox/outbox are
-     forbidden under `APP_ENV=production`.
+   - Real model/SMTP configuration (`MODEL_*`, `SMTP_*`, `REMINDER_SMTP_*`);
+     the fake adapters and dev inbox/outbox are forbidden under
+     `APP_ENV=production`. SMS reminders stay `disabled` until an SMS
+     provider is configured.
 
 2. Build and start the stack:
 
@@ -42,8 +44,9 @@ codebase.
    ```
 
    Then open `http://127.0.0.1:3000/`, log in with the administrator phone
-   number, and enter the verification code delivered through your configured
-   SMS adapter. Every other phone number receives `registration_closed`.
+   number or email address, and enter the verification code delivered through
+   your configured SMS/SMTP adapter. Every other identifier receives
+   `registration_closed`.
 
 ## No reverse proxy in the box
 
@@ -92,3 +95,9 @@ failure) is in [`docs/runbooks/upgrade.md`](../../docs/runbooks/upgrade.md).
 (`postgres:18.4-alpine` plus the built service images) to
 `.artifacts/offline/artificial-brain-images.tar` with a `docker load`
 recipe README. Artifacts are never committed.
+
+## Cloud deployment
+
+For the Alibaba Cloud ECS form of this private deployment (public-IP access
+behind a locked-down security group, personal-mailbox SMTP, DashScope model),
+follow [`docs/runbooks/cloud-ecs.md`](../../docs/runbooks/cloud-ecs.md).

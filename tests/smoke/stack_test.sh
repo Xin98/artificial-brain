@@ -80,6 +80,7 @@ assert(migrate_env.key?("REMINDER_EMAIL_ADAPTER"), "migrate does not receive REM
 assert(migrate_env.key?("REMINDER_SMS_ADAPTER"), "migrate does not receive REMINDER_SMS_ADAPTER")
 assert(api_env.key?("REMINDER_SMTP_HOST"), "api does not receive REMINDER_SMTP_HOST")
 assert(worker_env.key?("REMINDER_SMTP_HOST"), "worker does not receive REMINDER_SMTP_HOST")
+assert(worker_env.key?("REMINDER_ALIYUN_ENDPOINT"), "worker does not receive REMINDER_ALIYUN_ENDPOINT")
 
 backend = File.read(File.join(root, "backend/Dockerfile"))
 assert(backend.include?("FROM golang:1.26.5-alpine AS build"), "Go build image is not pinned")

@@ -46,6 +46,12 @@ type Handler struct {
 	SetChannelEnabled     channelEnabledSetter
 	Channels              channelsLister
 	SessionTTL            time.Duration
+	// CookieSecure controls the Secure attribute of the session cookie.
+	// Keep true unless the deployment serves plain HTTP with no TLS anywhere
+	// in front (private single-host form, see docs/runbooks/cloud-ecs.md);
+	// browsers reject Secure cookies on insecure origins, which would break
+	// login entirely.
+	CookieSecure bool
 }
 
 // RegisterRoutes registers the identity routes on mux. Protected routes are
@@ -134,7 +140,7 @@ func (h *Handler) setSessionCookie(w http.ResponseWriter, token string) {
 		Value:    token,
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   h.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   int(h.SessionTTL.Seconds()),
 	})
@@ -152,7 +158,7 @@ func (h *Handler) logout(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
-		Secure:   true,
+		Secure:   h.CookieSecure,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})

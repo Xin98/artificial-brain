@@ -93,6 +93,12 @@ type Config struct {
 	AppEnv            string
 	DevInboxEnabled   bool
 	SessionTTL        time.Duration
+	// SessionCookieSecure controls the Secure attribute of the session
+	// cookie. Defaults to true (fail-closed); deployments that serve plain
+	// HTTP with no TLS anywhere in front (private single-host form, see
+	// docs/runbooks/cloud-ecs.md) must set SESSION_COOKIE_SECURE=false or
+	// browsers will reject the cookie and login will never complete.
+	SessionCookieSecure bool
 	LoginChallengeTTL time.Duration
 	ChannelCodeTTL    time.Duration
 	ConfirmationTTL   time.Duration
@@ -173,6 +179,10 @@ func Load(role Role, lookup LookupEnv) (Config, error) {
 	}
 
 	sessionTTL, err := duration(lookup, "SESSION_TTL", defaultSessionTTL)
+	if err != nil {
+		return Config{}, err
+	}
+	sessionCookieSecure, err := boolValue(lookup, "SESSION_COOKIE_SECURE", true)
 	if err != nil {
 		return Config{}, err
 	}
@@ -393,9 +403,10 @@ func Load(role Role, lookup LookupEnv) (Config, error) {
 		HeartbeatInterval: heartbeatInterval,
 		WorkerLeaseTTL:    workerLeaseTTL,
 
-		AppEnv:            appEnv,
-		DevInboxEnabled:   devInboxEnabled,
-		SessionTTL:        sessionTTL,
+		AppEnv:              appEnv,
+		DevInboxEnabled:     devInboxEnabled,
+		SessionTTL:          sessionTTL,
+		SessionCookieSecure: sessionCookieSecure,
 		LoginChallengeTTL: loginChallengeTTL,
 		ChannelCodeTTL:    channelCodeTTL,
 		ConfirmationTTL:   confirmationTTL,

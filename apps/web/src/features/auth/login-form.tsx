@@ -99,6 +99,9 @@ export function LoginForm({
         </div>
       ) : (
         <div className="login-step">
+          <p className="login-account">
+            验证码已发送至 <strong>{identifier}</strong>
+          </p>
           <div className="field">
             <label htmlFor="login-code">验证码</label>
             <input

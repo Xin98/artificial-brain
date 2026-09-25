@@ -579,6 +579,13 @@ main[data-page="login"] {
   width: 100%;
 }
 
+.login-account {
+  color: var(--text-2);
+  font-size: 0.9375rem;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
 /* ----- dashboard -------------------------------------------------------------- */
 
 .dashboard {

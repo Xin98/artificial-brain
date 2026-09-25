@@ -211,7 +211,7 @@ func TestVerifyLoginSetsCookie(t *testing.T) {
 		Principal: testPrincipal,
 		ExpiresAt: time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC),
 	}}
-	mux := newTestRouter(&Handler{VerifyLoginChallenge: verifier, SessionTTL: 168 * time.Hour})
+	mux := newTestRouter(&Handler{VerifyLoginChallenge: verifier, SessionTTL: 168 * time.Hour, CookieSecure: true})
 
 	rr := httptest.NewRecorder()
 	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/verify", strings.NewReader(`{"phone":"+8613800137000","code":"123456"}`)))
@@ -234,6 +234,33 @@ func TestVerifyLoginSetsCookie(t *testing.T) {
 	}
 	if body["userId"] != "u1" || body["workspaceId"] != "w1" {
 		t.Fatalf("body = %#v", body)
+	}
+}
+
+// Plain-HTTP private deployments (no TLS anywhere in front) must be able to
+// opt out of the Secure attribute: browsers reject Secure cookies on insecure
+// origins, which would make login impossible (cloud-ecs runbook form).
+func TestVerifyLoginCookieSecureFlagConfigurable(t *testing.T) {
+	verifier := &fakeLoginVerifier{result: dto.VerifyLoginChallengeResult{
+		Token:     "session-token",
+		Principal: testPrincipal,
+		ExpiresAt: time.Date(2026, 8, 24, 12, 0, 0, 0, time.UTC),
+	}}
+	mux := newTestRouter(&Handler{VerifyLoginChallenge: verifier, SessionTTL: 168 * time.Hour, CookieSecure: false})
+
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/api/v1/auth/login/verify", strings.NewReader(`{"phone":"+8613800137000","code":"123456"}`)))
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rr.Code)
+	}
+	var session *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == SessionCookieName {
+			session = c
+		}
+	}
+	if session == nil || !session.HttpOnly || session.Secure {
+		t.Fatalf("session cookie = %#v, want HttpOnly and not Secure", session)
 	}
 }
 

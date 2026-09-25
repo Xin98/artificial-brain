@@ -43,6 +43,7 @@ it("runs the two-step login with exact request bodies", async () => {
   await waitFor(() =>
     expect(screen.getByLabelText("验证码")).toBeInTheDocument(),
   );
+  expect(screen.getByText("+8613800138000")).toBeInTheDocument();
   const [challengeUrl, challengeInit] = fetcher.mock.calls[0];
   expect(challengeUrl).toBe("/api/v1/auth/login/request");
   expect(JSON.parse(String(challengeInit?.body))).toEqual({
@@ -84,6 +85,7 @@ it("sends an email identifier when the input contains @", async () => {
   await waitFor(() =>
     expect(screen.getByLabelText("验证码")).toBeInTheDocument(),
   );
+  expect(screen.getByText("admin@example.com")).toBeInTheDocument();
   const [challengeUrl, challengeInit] = fetcher.mock.calls[0];
   expect(challengeUrl).toBe("/api/v1/auth/login/request");
   expect(JSON.parse(String(challengeInit?.body))).toEqual({

@@ -64,6 +64,7 @@ services:
       APP_ENV: ${APP_ENV:-development}
       DEPLOYMENT_MODE: ${DEPLOYMENT_MODE:-cloud}
       DEV_INBOX_ENABLED: ${DEV_INBOX_ENABLED:-true}
+      SESSION_COOKIE_SECURE: ${SESSION_COOKIE_SECURE:-true}
       MODEL_ADAPTER: ${MODEL_ADAPTER:-deterministic}
       MODEL_BASE_URL: ${MODEL_BASE_URL:-}
       MODEL_NAME: ${MODEL_NAME:-}

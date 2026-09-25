@@ -144,6 +144,7 @@ func registerIdentityRoutes(cfg config.Config, pool *pgxpool.Pool, mux *http.Ser
 		SetChannelEnabled: &command.SetChannelEnabledHandler{Channels: channels},
 		Channels:          &query.ChannelsQuery{Channels: channels},
 		SessionTTL:        cfg.SessionTTL,
+		CookieSecure:      cfg.SessionCookieSecure,
 	}
 
 	identityhttp.RegisterRoutes(mux, auth, handler)

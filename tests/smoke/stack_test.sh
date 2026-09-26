@@ -129,7 +129,12 @@ RUBY
 }
 
 compose() {
-	docker compose --project-name "$project" "$@"
+	# --env-file /dev/null keeps the smoke stack hermetic: a developer's
+	# local `.env` (for example a live private deployment with
+	# DEPLOYMENT_MODE=private) must not leak into interpolation and change
+	# what the gates exercise. Exported shell variables still take
+	# precedence over the empty env file.
+	docker compose --project-name "$project" --env-file /dev/null "$@"
 }
 
 redact_logs() {
@@ -363,6 +368,83 @@ full_stack_test() {
 		"http://127.0.0.1:${WEB_PORT}/api/v1/conversation/messages")
 	printf '%s\n' "$e2e_message" | jq -e '.kind == "todo_created"' >/dev/null || \
 		fail "conversation did not create the todo: ${e2e_message}"
+
+	# ITER-0005 conversation sessions: the todo turn auto-created a session;
+	# free chat echoes deterministically (never a real provider), and the
+	# session lifecycle (create -> scoped message -> list -> history ->
+	# rename -> delete -> 404) runs through the same authenticated rewrite.
+	e2e_message_session=$(printf '%s\n' "$e2e_message" | jq -r '.sessionId')
+	[ -n "$e2e_message_session" ] && [ "$e2e_message_session" != null ] || \
+		fail "conversation turn did not return a sessionId: ${e2e_message}"
+
+	e2e_chat=$(curl --fail --silent --show-error --max-time 10 \
+		--header "$e2e_auth" --header 'Content-Type: application/json' \
+		--data '{"text":"今天天气怎么样","timezone":"Asia/Shanghai"}' \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/conversation/messages")
+	printf '%s\n' "$e2e_chat" | jq -e '.kind == "chat"' >/dev/null || \
+		fail "free chat did not return the chat kind: ${e2e_chat}"
+	printf '%s\n' "$e2e_chat" | jq -e '.reply | contains("你说的是")' >/dev/null || \
+		fail "free chat reply is not the deterministic echo: ${e2e_chat}"
+
+	e2e_session_create=$(curl --silent --show-error --max-time 5 \
+		--write-out '\n%{http_code}' \
+		--header "$e2e_auth" --header 'Content-Type: application/json' \
+		--data '{"title":"冒烟会话"}' \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/conversation/sessions")
+	e2e_session_status=$(printf '%s\n' "$e2e_session_create" | tail -n 1)
+	e2e_session_body=$(printf '%s\n' "$e2e_session_create" | sed '$d')
+	[ "$e2e_session_status" = 201 ] || \
+		fail "session create status ${e2e_session_status}, want 201: ${e2e_session_body}"
+	e2e_session_id=$(printf '%s\n' "$e2e_session_body" | jq -r '.id')
+	[ -n "$e2e_session_id" ] && [ "$e2e_session_id" != null ] || \
+		fail "session create did not return an id: ${e2e_session_body}"
+
+	e2e_scoped=$(curl --fail --silent --show-error --max-time 10 \
+		--header "$e2e_auth" --header 'Content-Type: application/json' \
+		--data "{\"text\":\"列出我的待办\",\"timezone\":\"Asia/Shanghai\",\"sessionId\":\"${e2e_session_id}\"}" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/conversation/messages")
+	printf '%s\n' "$e2e_scoped" | jq -e --arg id "$e2e_session_id" \
+		'.kind == "todo_list" and .sessionId == $id' >/dev/null || \
+		fail "scoped turn did not stay in the session: ${e2e_scoped}"
+
+	e2e_sessions=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/conversation/sessions")
+	printf '%s\n' "$e2e_sessions" | jq -e --arg id "$e2e_session_id" \
+		'.sessions | map(.id) | index($id) != null' >/dev/null || \
+		fail "session list did not include the created session: ${e2e_sessions}"
+
+	e2e_history=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/conversation/sessions/${e2e_session_id}/messages")
+	printf '%s\n' "$e2e_history" | jq -e '.title == "冒烟会话"' >/dev/null || \
+		fail "history did not return the session title: ${e2e_history}"
+	printf '%s\n' "$e2e_history" | jq -e \
+		'[.messages[].role] == ["user", "assistant"]' >/dev/null || \
+		fail "history did not replay the user/assistant pair: ${e2e_history}"
+	printf '%s\n' "$e2e_history" | jq -e \
+		'.messages[1].body | contains("已列出")' >/dev/null || \
+		fail "history assistant summary is missing: ${e2e_history}"
+
+	e2e_rename=$(curl --fail --silent --show-error --max-time 5 \
+		--header "$e2e_auth" --header 'Content-Type: application/json' \
+		--request PATCH --data '{"title":"冒烟重命名"}' \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/conversation/sessions/${e2e_session_id}")
+	printf '%s\n' "$e2e_rename" | jq -e '.title == "冒烟重命名"' >/dev/null || \
+		fail "session rename did not take effect: ${e2e_rename}"
+
+	e2e_delete=$(curl --silent --show-error --max-time 5 \
+		--output /dev/null --write-out '%{http_code}' \
+		--header "$e2e_auth" --request DELETE \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/conversation/sessions/${e2e_session_id}")
+	[ "$e2e_delete" = 204 ] || fail "session delete status ${e2e_delete}, want 204"
+
+	e2e_deleted=$(curl --silent --show-error --max-time 5 \
+		--output /dev/null --write-out '%{http_code}' \
+		--header "$e2e_auth" \
+		"http://127.0.0.1:${WEB_PORT}/api/v1/conversation/sessions/${e2e_session_id}/messages")
+	[ "$e2e_deleted" = 404 ] || \
+		fail "deleted session history status ${e2e_deleted}, want 404"
 
 	plan_count=$(compose exec -T postgres psql \
 		--username "${POSTGRES_USER:-artificial_brain}" \
@@ -937,7 +1019,8 @@ full_stack_test() {
 	DEV_INBOX_ENABLED=true \
 	API_PORT=0 \
 	WEB_PORT=0 \
-	docker compose --project-name "$private_project" up --build --detach --wait \
+	docker compose --project-name "$private_project" --env-file /dev/null \
+		up --build --detach --wait \
 		--wait-timeout "${STACK_WAIT_SECONDS:-180}"
 	private_web_mapping=$(docker compose --project-name "$private_project" port web 3000 | sed -n '1p')
 	private_web_port=${private_web_mapping##*:}
@@ -995,7 +1078,8 @@ full_stack_test() {
 	DEV_INBOX_ENABLED=true \
 	API_PORT=0 \
 	WEB_PORT=0 \
-	docker compose --project-name "$private_email_project" up --build --detach --wait \
+	docker compose --project-name "$private_email_project" --env-file /dev/null \
+		up --build --detach --wait \
 		--wait-timeout "${STACK_WAIT_SECONDS:-180}"
 	private_email_web_mapping=$(docker compose --project-name "$private_email_project" port web 3000 | sed -n '1p')
 	private_email_web_port=${private_email_web_mapping##*:}

@@ -33,6 +33,13 @@ const (
 	defaultModelAdapter      = "deterministic"
 	defaultModelTimeout      = 15 * time.Second
 
+	// defaultConversationHistoryTurns is how many stored transcript rows
+	// (user+assistant) feed the model as multi-turn context; 0 disables
+	// history and maximumConversationHistoryTurns bounds the window
+	// fail-closed.
+	defaultConversationHistoryTurns = 10
+	maximumConversationHistoryTurns = 50
+
 	defaultIdentitySmtpTimeout = 10 * time.Second
 
 	ModelAdapterDeterministic    = "deterministic"
@@ -90,24 +97,26 @@ type Config struct {
 	HeartbeatInterval time.Duration
 	WorkerLeaseTTL    time.Duration
 
-	AppEnv            string
-	DevInboxEnabled   bool
-	SessionTTL        time.Duration
+	AppEnv          string
+	DevInboxEnabled bool
+	SessionTTL      time.Duration
 	// SessionCookieSecure controls the Secure attribute of the session
 	// cookie. Defaults to true (fail-closed); deployments that serve plain
 	// HTTP with no TLS anywhere in front (private single-host form, see
 	// docs/runbooks/cloud-ecs.md) must set SESSION_COOKIE_SECURE=false or
 	// browsers will reject the cookie and login will never complete.
 	SessionCookieSecure bool
-	LoginChallengeTTL time.Duration
-	ChannelCodeTTL    time.Duration
-	ConfirmationTTL   time.Duration
+	LoginChallengeTTL   time.Duration
+	ChannelCodeTTL      time.Duration
+	ConfirmationTTL     time.Duration
 
 	ModelAdapter string
 	ModelBaseURL string
 	ModelAPIKey  string
 	ModelName    string
 	ModelTimeout time.Duration
+
+	ConversationHistoryTurns int
 
 	ReminderEmailAdapter          string
 	ReminderSmsAdapter            string
@@ -221,6 +230,14 @@ func Load(role Role, lookup LookupEnv) (Config, error) {
 		}
 	default:
 		return Config{}, fmt.Errorf("config: invalid MODEL_ADAPTER")
+	}
+
+	conversationHistoryTurns, err := intValue(lookup, "CONVERSATION_HISTORY_TURNS", defaultConversationHistoryTurns)
+	if err != nil {
+		return Config{}, err
+	}
+	if conversationHistoryTurns < 0 || conversationHistoryTurns > maximumConversationHistoryTurns {
+		return Config{}, fmt.Errorf("config: invalid CONVERSATION_HISTORY_TURNS")
 	}
 
 	reminderEmailAdapter := valueOrDefault(lookup, "REMINDER_EMAIL_ADAPTER", defaultReminderEmailAdapter)
@@ -407,15 +424,17 @@ func Load(role Role, lookup LookupEnv) (Config, error) {
 		DevInboxEnabled:     devInboxEnabled,
 		SessionTTL:          sessionTTL,
 		SessionCookieSecure: sessionCookieSecure,
-		LoginChallengeTTL: loginChallengeTTL,
-		ChannelCodeTTL:    channelCodeTTL,
-		ConfirmationTTL:   confirmationTTL,
+		LoginChallengeTTL:   loginChallengeTTL,
+		ChannelCodeTTL:      channelCodeTTL,
+		ConfirmationTTL:     confirmationTTL,
 
 		ModelAdapter: modelAdapter,
 		ModelBaseURL: modelBaseURL,
 		ModelAPIKey:  modelAPIKey,
 		ModelName:    modelName,
 		ModelTimeout: modelTimeout,
+
+		ConversationHistoryTurns: conversationHistoryTurns,
 
 		ReminderEmailAdapter:          reminderEmailAdapter,
 		ReminderSmsAdapter:            reminderSmsAdapter,

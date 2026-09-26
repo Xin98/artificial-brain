@@ -24,8 +24,128 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: The requested conversation session does not exist or belongs to someone else.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         '422':
           description: Missing or oversized text, or missing timezone.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/conversation/sessions:
+    get:
+      operationId: listConversationSessions
+      responses:
+        '200':
+          description: The caller's conversation sessions, most recently active first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionListResponse'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    post:
+      operationId: createConversationSession
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionCreateRequest'
+      responses:
+        '201':
+          description: The created conversation session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionView'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Title is blank or oversized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/conversation/sessions/{sessionId}/messages:
+    get:
+      operationId: getConversationHistory
+      responses:
+        '200':
+          description: The session transcript, oldest message first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionHistoryResponse'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Session not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+  /api/v1/conversation/sessions/{sessionId}:
+    patch:
+      operationId: renameConversationSession
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SessionRenameRequest'
+      responses:
+        '200':
+          description: The renamed conversation session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SessionView'
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Session not found.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Title is blank or oversized.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+    delete:
+      operationId: deleteConversationSession
+      responses:
+        '204':
+          description: Session and its messages deleted.
+        '401':
+          description: Missing or invalid session.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '404':
+          description: Session not found.
           content:
             application/json:
               schema:
@@ -120,6 +240,8 @@ components:
           maxLength: 1000
         timezone:
           type: string
+        sessionId:
+          type: string
     ConfirmationRequest:
       type: object
       additionalProperties: false
@@ -156,7 +278,13 @@ components:
             - todo_deleted
             - not_found
             - unsupported
+            - chat
         correlationId:
+          type: string
+        reply:
+          type: string
+          maxLength: 2000
+        sessionId:
           type: string
         todo:
           $ref: '#/components/schemas/TodoView'
@@ -236,5 +364,77 @@ components:
           type: string
           format: date-time
         deletedAt:
+          type: string
+          format: date-time
+    SessionView:
+      type: object
+      additionalProperties: false
+      required: [id, title, createdAt, updatedAt]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+          maxLength: 50
+        createdAt:
+          type: string
+          format: date-time
+        updatedAt:
+          type: string
+          format: date-time
+    SessionListResponse:
+      type: object
+      additionalProperties: false
+      required: [sessions]
+      properties:
+        sessions:
+          type: array
+          items:
+            $ref: '#/components/schemas/SessionView'
+    SessionCreateRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 50
+    SessionRenameRequest:
+      type: object
+      additionalProperties: false
+      required: [title]
+      properties:
+        title:
+          type: string
+          minLength: 1
+          maxLength: 50
+    SessionHistoryResponse:
+      type: object
+      additionalProperties: false
+      required: [sessionId, title, messages]
+      properties:
+        sessionId:
+          type: string
+        title:
+          type: string
+        messages:
+          type: array
+          items:
+            $ref: '#/components/schemas/MessageView'
+    MessageView:
+      type: object
+      additionalProperties: false
+      required: [id, role, body, createdAt]
+      properties:
+        id:
+          type: string
+        role:
+          type: string
+          enum: [user, assistant]
+        body:
+          type: string
+        resolvedIntent:
+          type: string
+        createdAt:
           type: string
           format: date-time

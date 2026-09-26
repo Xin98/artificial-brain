@@ -18,9 +18,10 @@ type docDocument struct {
 }
 
 type docPathItem struct {
-	Get   docOperation `yaml:"get"`
-	Post  docOperation `yaml:"post"`
-	Patch docOperation `yaml:"patch"`
+	Get    docOperation `yaml:"get"`
+	Post   docOperation `yaml:"post"`
+	Patch  docOperation `yaml:"patch"`
+	Delete docOperation `yaml:"delete"`
 }
 
 type docOperation struct {
@@ -53,6 +54,7 @@ type docSchema struct {
 	Required             []string             `yaml:"required"`
 	AdditionalProperties *bool                `yaml:"additionalProperties"`
 	Enum                 []string             `yaml:"enum"`
+	MinLength            *int                 `yaml:"minLength"`
 	MaxLength            *int                 `yaml:"maxLength"`
 	Items                *docSchema           `yaml:"items"`
 }
@@ -78,6 +80,8 @@ func opFor(item docPathItem, method string) docOperation {
 		return item.Post
 	case "patch":
 		return item.Patch
+	case "delete":
+		return item.Delete
 	}
 	return docOperation{}
 }
@@ -112,6 +116,14 @@ func assertDocRoutes(t *testing.T, document docDocument, routes []struct {
 		}
 		assertExactSet(t, route.method+" "+route.path+" responses", mapKeys(operation.Responses), codes)
 		for code, schema := range route.schemas {
+			// An empty schema name pins a content-less response (e.g. 204):
+			// the code must exist and carry no content representations.
+			if schema == "" {
+				if len(operation.Responses[code].Content) != 0 {
+					t.Fatalf("%s %s response %s must carry no content, got %#v", route.method, route.path, code, operation.Responses[code].Content)
+				}
+				continue
+			}
 			if got := operation.Responses[code].Content["application/json"].Schema.Ref; got != "#/components/schemas/"+schema {
 				t.Fatalf("%s %s response %s schema = %q, want %s", route.method, route.path, code, got, schema)
 			}
@@ -148,6 +160,10 @@ func docIsString(value docSchema) bool { return value.Type == "string" }
 func docIsInteger(value docSchema) bool { return value.Type == "integer" }
 
 func docIsBoolean(value docSchema) bool { return value.Type == "boolean" }
+
+func docMinLength(value docSchema, limit int) bool {
+	return value.MinLength != nil && *value.MinLength == limit
+}
 
 func docMaxLength(value docSchema, limit int) bool {
 	return value.MaxLength != nil && *value.MaxLength == limit

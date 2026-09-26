@@ -66,7 +66,10 @@ else
 		postgres_running=$(docker inspect -f '{{.State.Running}}' "$postgres_id")
 	fi
 	if [ "$postgres_running" = "true" ]; then
-		archive=$(make backup) || fail "backup failed; refusing to deploy without one"
+		# -s (silent) also implies --no-print-directory, so the nested make
+		# adds no Entering/Leaving lines to stdout — the last line stays the
+		# archive path printed by backup.sh.
+		archive=$(make -s backup) || fail "backup failed; refusing to deploy without one"
 		archive=$(printf '%s\n' "$archive" | tail -n 1)
 		[ -n "$archive" ] && [ -f "$archive" ] || fail "backup produced no archive"
 	else
@@ -101,7 +104,9 @@ migrate_timeout=${DEPLOY_MIGRATE_TIMEOUT:-300}
 elapsed=0
 migrate_done=0
 while [ "$elapsed" -lt "$migrate_timeout" ]; do
-	migrate_id=$(docker compose ps -q migrate | head -n 1)
+	# -a: migrate exits 0 by design, and `docker compose ps` hides stopped
+	# containers, so without it the gate never sees the finished job.
+	migrate_id=$(docker compose ps -aq migrate | head -n 1)
 	if [ -n "$migrate_id" ]; then
 		state=$(docker inspect -f '{{.State.Status}}' "$migrate_id")
 		case "$state" in
@@ -155,7 +160,8 @@ wait_for_http "http://${api_addr}/health/ready" ||
 wait_for_http "http://${web_addr}/health/live" ||
 	fail "web did not become live within ${health_timeout}s: http://${web_addr}/health/live"
 
-worker_id=$(docker compose ps -q worker | head -n 1)
+# -a: a crashed (exited) worker must fail the probe, not be silently skipped.
+worker_id=$(docker compose ps -aq worker | head -n 1)
 if [ -n "$worker_id" ]; then
 	status=unknown
 	elapsed=0

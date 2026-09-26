@@ -63,6 +63,7 @@ Existing routes 1–26 from ITER-0002/0003 are unchanged (the two login routes c
 | Contracts (yellow) | `portability.yaml` new; export schemas new | `contracts/openapi/portability.yaml`; `contracts/export-schemas/*.json`; `tests/contract/{portability,export_bundle}_contract_test.go` |
 | Web (green) | `/data` page + `features/data` | `apps/web/src/features/data/*.ts(x)` (+tests); `apps/web/src/app/(workbench)/data/page.tsx`; `workbench-shell.tsx` |
 | Deploy/harness (yellow) | private assets, runbooks, Make targets, compose env, smoke blocks | `deploy/private/**`; `docs/runbooks/{backup-restore,upgrade}.md`; `Makefile`; `compose.yaml`; `.env.example`; `tests/smoke/{stack_test.sh,migration_test.sh}`; `README.md`; AGENTS.md files |
+| Deploy automation (yellow, post-delivery) | `make deploy` redeploy wrapper: backup → `git pull --ff-only` → build → `up -d` → migrate exit-0 gate → health probes; stops with rollback hints, no automatic rollback; `DEPLOY_OFFLINE=1` skips the pull; data spot-check stays manual | `scripts/deploy.sh`; `Makefile` deploy target; `docs/runbooks/{upgrade,cloud-ecs}.md`; `deploy/private/README.md` |
 
 ### Config fields (added to `config.Config`, all env-parsed like ITER-0002/0003 fields)
 

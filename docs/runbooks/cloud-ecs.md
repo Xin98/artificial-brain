@@ -125,6 +125,15 @@ Then in a browser from your whitelisted IP:
 
 ## 7. Updates
 
+One command (backup → `git pull --ff-only` → build → `up -d` → migrate
+exit-0 gate → health probes; stops with rollback hints on failure):
+
+```sh
+make deploy
+```
+
+Equivalent manual sequence:
+
 ```sh
 make backup                 # archive the database first
 git pull

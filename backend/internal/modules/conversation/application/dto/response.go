@@ -17,12 +17,21 @@ const (
 	KindTodoDeleted          = "todo_deleted"
 	KindNotFound             = "not_found"
 	KindUnsupported          = "unsupported"
+	// KindChat is the free-conversation reply for turns without a
+	// dispatchable intent.
+	KindChat = "chat"
 )
 
 // MessageResponse is the single envelope for all conversation kinds; only
 // the fields relevant to the kind are populated.
 type MessageResponse struct {
-	Kind             string              `json:"kind"`
+	Kind string `json:"kind"`
+	// Reply carries the model's natural-language answer: always for chat,
+	// for clarification when the model supplied one.
+	Reply string `json:"reply,omitempty"`
+	// SessionID is the session the turn was persisted against; the
+	// messages flow always sets it (auto-created sessions included).
+	SessionID        string              `json:"sessionId,omitempty"`
 	Todo             *tododto.Todo       `json:"todo,omitempty"`
 	ResolvedDueAtUTC *time.Time          `json:"resolvedDueAtUtc,omitempty"`
 	LocalEcho        string              `json:"localEcho,omitempty"`
@@ -39,4 +48,34 @@ type MessageResponse struct {
 type ConfirmationView struct {
 	ConfirmationID string    `json:"confirmationId"`
 	ExpiresAt      time.Time `json:"expiresAt"`
+}
+
+// SessionView is one session as listed or returned by the session routes.
+type SessionView struct {
+	ID        string    `json:"id"`
+	Title     string    `json:"title"`
+	CreatedAt time.Time `json:"createdAt"`
+	UpdatedAt time.Time `json:"updatedAt"`
+}
+
+// SessionListView is the sidebar listing envelope.
+type SessionListView struct {
+	Sessions []SessionView `json:"sessions"`
+}
+
+// MessageView is one persisted transcript row in session history.
+type MessageView struct {
+	ID             string    `json:"id"`
+	Role           string    `json:"role"`
+	Body           string    `json:"body"`
+	ResolvedIntent *string   `json:"resolvedIntent,omitempty"`
+	CreatedAt      time.Time `json:"createdAt"`
+}
+
+// SessionHistoryView is the history envelope for one session: the latest
+// messages in ascending insertion order.
+type SessionHistoryView struct {
+	SessionID string        `json:"sessionId"`
+	Title     string        `json:"title"`
+	Messages  []MessageView `json:"messages"`
 }

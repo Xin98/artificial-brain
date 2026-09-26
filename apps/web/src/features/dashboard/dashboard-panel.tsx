@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { fetchDashboardSummary } from "./fetch-dashboard";
 import type { DashboardSummary } from "./fetch-dashboard";
 import { fetchReminderDeliveries } from "./fetch-reminders";
-import type { ReminderDelivery } from "./fetch-reminders";
+import type { ReminderDelivery, ReminderStatusFilter } from "./fetch-reminders";
 import { DashboardView } from "./dashboard-view";
 
 function browserTimezone(provider?: () => string): string {
@@ -35,14 +35,26 @@ export function DashboardPanel({
   );
   const [recordsFailed, setRecordsFailed] = useState(false);
   const [failed, setFailed] = useState(false);
+  const [reminderStatus, setReminderStatus] =
+    useState<ReminderStatusFilter | null>(null);
+  const [reminderReloadKey, setReminderReloadKey] = useState(0);
+
+  function selectReminderStatus(status: ReminderStatusFilter | null): void {
+    if (status === reminderStatus) {
+      setDeliveries(undefined);
+      setRecordsFailed(false);
+      setReminderReloadKey((key) => key + 1);
+      return;
+    }
+    setDeliveries(undefined);
+    setRecordsFailed(false);
+    setReminderStatus(status);
+  }
 
   useEffect(() => {
     let cancelled = false;
     const timezone = browserTimezone(timezoneProvider);
-    void Promise.all([
-      fetchDashboardSummary("", fetcher, timezone),
-      fetchReminderDeliveries("", fetcher),
-    ]).then(([summaryResult, deliveriesResult]) => {
+    void fetchDashboardSummary("", fetcher, timezone).then((summaryResult) => {
       if (cancelled) {
         return;
       }
@@ -51,6 +63,23 @@ export function DashboardPanel({
         return;
       }
       setSummary(summaryResult);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [fetcher, timezoneProvider]);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchReminderDeliveries(
+      "",
+      fetcher,
+      3000,
+      reminderStatus ?? undefined,
+    ).then((deliveriesResult) => {
+      if (cancelled) {
+        return;
+      }
       if (deliveriesResult === null) {
         setRecordsFailed(true);
         return;
@@ -60,7 +89,7 @@ export function DashboardPanel({
     return () => {
       cancelled = true;
     };
-  }, [fetcher, timezoneProvider]);
+  }, [fetcher, reminderReloadKey, reminderStatus]);
 
   if (failed) {
     return (
@@ -85,13 +114,13 @@ export function DashboardPanel({
     );
   }
   return (
-    <>
-      <DashboardView deliveries={deliveries} summary={summary} />
-      {recordsFailed ? (
-        <p className="dashboard-records-note" role="status">
-          提醒记录暂时不可用,请稍后再试。
-        </p>
-      ) : null}
-    </>
+    <DashboardView
+      deliveries={deliveries}
+      onSelectReminderStatus={selectReminderStatus}
+      recordsLoading={!recordsFailed && deliveries === undefined}
+      recordsUnavailable={recordsFailed}
+      selectedReminderStatus={reminderStatus}
+      summary={summary}
+    />
   );
 }

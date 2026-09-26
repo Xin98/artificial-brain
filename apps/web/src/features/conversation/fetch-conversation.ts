@@ -43,6 +43,23 @@ export interface ConversationResponse {
   todoId?: string;
 }
 
+export type ConversationFailureReason =
+  | "timeout"
+  | "unauthenticated"
+  | "rate_limited"
+  | "rejected"
+  | "server"
+  | "invalid_response"
+  | "network";
+
+export type ConversationRequestResult =
+  | { ok: true; response: ConversationResponse }
+  | {
+      ok: false;
+      reason: ConversationFailureReason;
+      correlationId?: string;
+    };
+
 const ALLOWED_KEYS = [
   "kind",
   "correlationId",
@@ -58,15 +75,20 @@ const ALLOWED_KEYS = [
   "todoId",
 ] as const;
 
+// The private deployment gives the model request a 30-second total budget.
+// Keep a small transport margin so the browser does not cancel first.
+const DEFAULT_CONVERSATION_TIMEOUT_MS = 35_000;
+
 export async function postConversationMessage(
   baseURL: string,
   fetcher: typeof fetch,
   text: string,
   timezone: string,
-  timeoutMs = 15000,
-): Promise<ConversationResponse | null> {
+  timeoutMs = DEFAULT_CONVERSATION_TIMEOUT_MS,
+): Promise<ConversationRequestResult> {
+  let response: Response;
   try {
-    const response = await fetcher(`${baseURL}/api/v1/conversation/messages`, {
+    response = await fetcher(`${baseURL}/api/v1/conversation/messages`, {
       method: "POST",
       signal: AbortSignal.timeout(safeTimeout(timeoutMs)),
       cache: "no-store",
@@ -76,14 +98,61 @@ export async function postConversationMessage(
       },
       body: JSON.stringify({ text, timezone }),
     });
-    if (!response.ok) {
-      return null;
-    }
-    const payload: unknown = await response.json();
-    return isConversationResponse(payload) ? payload : null;
-  } catch {
-    return null;
+  } catch (error) {
+    return {
+      ok: false,
+      reason: isDeadlineError(error) ? "timeout" : "network",
+    };
   }
+
+  if (!response.ok) {
+    return classifyFailureResponse(response);
+  }
+
+  try {
+    const payload: unknown = await response.json();
+    return isConversationResponse(payload)
+      ? { ok: true, response: payload }
+      : { ok: false, reason: "invalid_response" };
+  } catch {
+    return { ok: false, reason: "invalid_response" };
+  }
+}
+
+async function classifyFailureResponse(
+  response: Response,
+): Promise<ConversationRequestResult> {
+  let correlationId: string | undefined;
+  try {
+    const payload: unknown = await response.json();
+    if (isRecord(payload) && isNonEmptyString(payload.correlationId)) {
+      correlationId = payload.correlationId;
+    }
+  } catch {
+    // A malformed error body must not hide the useful HTTP classification.
+  }
+
+  let reason: ConversationFailureReason;
+  if (response.status === 401) {
+    reason = "unauthenticated";
+  } else if (response.status === 429) {
+    reason = "rate_limited";
+  } else if (response.status >= 500) {
+    reason = "server";
+  } else {
+    reason = "rejected";
+  }
+
+  return correlationId
+    ? { ok: false, reason, correlationId }
+    : { ok: false, reason };
+}
+
+function isDeadlineError(error: unknown): boolean {
+  return (
+    error instanceof DOMException &&
+    (error.name === "TimeoutError" || error.name === "AbortError")
+  );
 }
 
 function isConversationResponse(value: unknown): value is ConversationResponse {
@@ -104,6 +173,13 @@ function isConversationResponse(value: unknown): value is ConversationResponse {
     return false;
   }
   if (value.expiresAt !== undefined && !isRFC3339(value.expiresAt)) {
+    return false;
+  }
+  if (
+    (value.confirmationId !== undefined &&
+      !isNonEmptyString(value.confirmationId)) ||
+    (value.todoId !== undefined && !isNonEmptyString(value.todoId))
+  ) {
     return false;
   }
   if (
@@ -150,7 +226,50 @@ function isConversationResponse(value: unknown): value is ConversationResponse {
       return false;
     }
   }
-  return true;
+  return hasKindSpecificShape(value, value.kind as ConversationKind);
+}
+
+function hasKindSpecificShape(
+  value: Record<string, unknown>,
+  kind: ConversationKind,
+): boolean {
+  const base = ["kind", "correlationId"];
+  switch (kind) {
+    case "todo_created":
+      return (
+        hasAllowedKeys(value, [
+          ...base,
+          "todo",
+          "resolvedDueAtUtc",
+          "localEcho",
+          "timezoneEcho",
+        ]) && value.todo !== undefined
+      );
+    case "clarification":
+      return hasAllowedKeys(value, [...base, "missingFields"]);
+    case "candidates":
+      return (
+        hasAllowedKeys(value, [...base, "candidates"]) &&
+        Array.isArray(value.candidates) &&
+        value.candidates.length > 0
+      );
+    case "confirmation_required":
+      return (
+        hasAllowedKeys(value, [...base, "confirmationId", "expiresAt"]) &&
+        isNonEmptyString(value.confirmationId) &&
+        isRFC3339(value.expiresAt)
+      );
+    case "todo_list":
+      return hasAllowedKeys(value, [...base, "todos"]);
+    case "todo_deleted":
+      return (
+        hasAllowedKeys(value, [...base, "todoId"]) &&
+        isNonEmptyString(value.todoId)
+      );
+    case "not_found":
+    case "unsupported":
+      return hasAllowedKeys(value, base);
+  }
 }
 
 function isCandidate(value: unknown): value is ConversationCandidate {

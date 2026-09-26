@@ -63,8 +63,14 @@ function extractUsage(source: string, file: string, usage: Usage): void {
       const tokens = segment.split(/\s+/).filter((token) => token !== "");
       tokens.forEach((token, tokenIndex) => {
         const touchesExpression =
-          (index > 0 && tokenIndex === 0) ||
-          (index < segments.length - 1 && tokenIndex === tokens.length - 1);
+          (index > 0 &&
+            tokenIndex === 0 &&
+            segment.length > 0 &&
+            !/^\s/.test(segment)) ||
+          (index < segments.length - 1 &&
+            tokenIndex === tokens.length - 1 &&
+            segment.length > 0 &&
+            !/\s$/.test(segment));
         if (touchesExpression) {
           record(usage.prefixes, token, file);
         } else {
@@ -117,4 +123,14 @@ it("defines a globals.css rule for every className used by components", () => {
 it("keeps globals.css present and non-empty", () => {
   expect(existsSync(cssPath)).toBe(true);
   expect(readFileSync(cssPath, "utf8").trim().length).toBeGreaterThan(0);
+});
+
+it("gives clickable dashboard tiles visible interaction states", () => {
+  const css = readFileSync(cssPath, "utf8");
+
+  expect(css).toMatch(/\.stat-tile-action\s*\{/);
+  expect(css).toMatch(/\.stat-tile-action:hover\s*\{/);
+  expect(css).toMatch(/\.stat-tile-action:focus-visible\s*\{/);
+  expect(css).toMatch(/\.stat-tile-selected\s*\{/);
+  expect(css).toMatch(/\.stat-tile-cue\s*\{/);
 });

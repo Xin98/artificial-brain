@@ -82,6 +82,22 @@ describe("fetchReminderDeliveries", () => {
     );
   });
 
+  it.each(["succeeded", "failed", "suppressed", "retrying"] as const)(
+    "queries the reminders endpoint with the %s status filter",
+    async (status) => {
+      const fetcher = vi
+        .fn()
+        .mockResolvedValue(jsonResponse({ deliveries: [] }));
+
+      await fetchReminderDeliveries("", fetcher, 3000, status);
+
+      expect(fetcher).toHaveBeenCalledWith(
+        `/api/v1/reminders?status=${status}`,
+        expect.any(Object),
+      );
+    },
+  );
+
   it("fails closed when a required field is missing", async () => {
     const { todoTitle: _todoTitle, ...missingRequired } = minimalDelivery;
     const result = await fetchReminderDeliveries(

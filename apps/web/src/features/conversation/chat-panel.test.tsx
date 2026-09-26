@@ -106,6 +106,69 @@ it("walks candidate selection into the confirmation-gated delete", async () => {
   expect(JSON.parse(String(confirmInit?.body))).toEqual({});
 });
 
+it("applies an older candidate confirmation to its originating turn", async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(
+      json(200, {
+        kind: "candidates",
+        correlationId: "corr-candidates",
+        candidates: [{ todoId: "todo-9", title: "提交周报", version: 4 }],
+      }),
+    )
+    .mockResolvedValueOnce(
+      json(200, { kind: "unsupported", correlationId: "corr-later" }),
+    )
+    .mockResolvedValueOnce(
+      json(201, {
+        confirmationId: "conf-older-turn",
+        expiresAt: "2026-08-18T12:05:00Z",
+      }),
+    )
+    .mockResolvedValueOnce(
+      json(200, {
+        kind: "todo_deleted",
+        correlationId: "corr-deleted",
+        todoId: "todo-9",
+      }),
+    );
+  render(<ChatPanel fetcher={fetcher as unknown as typeof fetch} />);
+
+  fireEvent.change(screen.getByLabelText("消息"), {
+    target: { value: "删除周报" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "发送" }));
+  await waitFor(() =>
+    expect(
+      screen.getByRole("button", { name: "提交周报" }),
+    ).toBeInTheDocument(),
+  );
+
+  fireEvent.change(screen.getByLabelText("消息"), {
+    target: { value: "今天天气怎么样" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "发送" }));
+  await waitFor(() =>
+    expect(screen.getByText("这个请求暂时不支持。")).toBeInTheDocument(),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "提交周报" }));
+  await waitFor(() => {
+    const confirm = screen.getByRole("button", { name: "确认删除" });
+    expect(confirm).toBeInTheDocument();
+    expect(confirm).toHaveFocus();
+  });
+  fireEvent.click(screen.getByRole("button", { name: "确认删除" }));
+
+  await waitFor(() =>
+    expect(screen.getByText("已删除待办。")).toBeInTheDocument(),
+  );
+  const olderTurn = screen.getByText("删除周报").closest(".chat-turn");
+  const laterTurn = screen.getByText("今天天气怎么样").closest(".chat-turn");
+  expect(olderTurn).toHaveTextContent("已删除待办。");
+  expect(laterTurn).toHaveTextContent("这个请求暂时不支持。");
+});
+
 it("renders unsupported intents without raw error text", async () => {
   const fetcher = vi
     .fn()
@@ -134,7 +197,137 @@ it("fails closed when the service is unavailable", async () => {
   fireEvent.click(screen.getByRole("button", { name: "发送" }));
 
   await waitFor(() =>
-    expect(screen.getByRole("alert")).toHaveTextContent("对话服务暂时不可用"),
+    expect(screen.getByRole("alert")).toHaveTextContent("先检查待办列表"),
   );
+  expect(screen.getByLabelText("消息")).toHaveValue("你好");
+  expect(
+    screen.queryByRole("button", { name: "重试上一条" }),
+  ).not.toBeInTheDocument();
   expect(screen.queryByText("boom")).not.toBeInTheDocument();
+});
+
+it("keeps successful turns in session history", async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(
+      json(200, {
+        kind: "todo_list",
+        correlationId: "corr-list",
+        todos: [{ id: "todo-1", title: "提交周报" }],
+      }),
+    )
+    .mockResolvedValueOnce(
+      json(200, { kind: "unsupported", correlationId: "corr-unsupported" }),
+    );
+  render(<ChatPanel fetcher={fetcher as unknown as typeof fetch} />);
+
+  fireEvent.change(screen.getByLabelText("消息"), {
+    target: { value: "列出待办" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "发送" }));
+  await waitFor(() => expect(screen.getByText("提交周报")).toBeInTheDocument());
+
+  fireEvent.change(screen.getByLabelText("消息"), {
+    target: { value: "今天天气怎么样" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+  await waitFor(() =>
+    expect(screen.getByText("这个请求暂时不支持。")).toBeInTheDocument(),
+  );
+  expect(screen.getByText("列出待办")).toBeInTheDocument();
+  expect(screen.getByText("今天天气怎么样")).toBeInTheDocument();
+  expect(screen.getByText("提交周报")).toBeInTheDocument();
+  expect(screen.getByRole("log")).toHaveAttribute(
+    "aria-relevant",
+    "additions text",
+  );
+});
+
+it("does not clear a newer draft when an older request completes", async () => {
+  let resolveRequest: ((response: Response) => void) | undefined;
+  const request = new Promise<Response>((resolve) => {
+    resolveRequest = resolve;
+  });
+  const fetcher = vi.fn(() => request);
+  render(<ChatPanel fetcher={fetcher as unknown as typeof fetch} />);
+
+  fireEvent.change(screen.getByLabelText("消息"), {
+    target: { value: "第一条" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "发送" }));
+  fireEvent.change(screen.getByLabelText("消息"), {
+    target: { value: "下一条草稿" },
+  });
+
+  resolveRequest?.(
+    json(200, { kind: "unsupported", correlationId: "corr-first" }),
+  );
+
+  await waitFor(() =>
+    expect(screen.getByText("这个请求暂时不支持。")).toBeInTheDocument(),
+  );
+  expect(screen.getByLabelText("消息")).toHaveValue("下一条草稿");
+});
+
+it("preserves but does not blindly retry an ambiguously timed-out message", async () => {
+  const fetcher = vi
+    .fn()
+    .mockRejectedValueOnce(new DOMException("deadline", "TimeoutError"));
+  render(<ChatPanel fetcher={fetcher as unknown as typeof fetch} />);
+
+  fireEvent.change(screen.getByLabelText("消息"), {
+    target: { value: "你好" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("先检查待办列表"),
+  );
+  expect(
+    screen.queryByRole("button", { name: "重试上一条" }),
+  ).not.toBeInTheDocument();
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  expect(screen.getByLabelText("消息")).toHaveValue("你好");
+});
+
+it("retries an explicit server failure without rendering its message", async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(
+      json(503, {
+        code: "internal_error",
+        message: "upstream secret should stay hidden",
+        correlationId: "corr-support-1",
+      }),
+    )
+    .mockResolvedValueOnce(
+      json(200, { kind: "unsupported", correlationId: "corr-retry" }),
+    );
+  render(<ChatPanel fetcher={fetcher as unknown as typeof fetch} />);
+
+  fireEvent.change(screen.getByLabelText("消息"), {
+    target: { value: "你好" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("corr-support-1"),
+  );
+  expect(screen.getByRole("alert")).not.toHaveTextContent("upstream secret");
+  fireEvent.click(screen.getByRole("button", { name: "重试上一条" }));
+  await waitFor(() =>
+    expect(screen.getByText("这个请求暂时不支持。")).toBeInTheDocument(),
+  );
+  expect(fetcher).toHaveBeenCalledTimes(2);
+});
+
+it("disables sending until a non-empty message is present", () => {
+  render(<ChatPanel fetcher={vi.fn() as unknown as typeof fetch} />);
+
+  expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("消息"), {
+    target: { value: "   " },
+  });
+  expect(screen.getByRole("button", { name: "发送" })).toBeDisabled();
 });

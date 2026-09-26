@@ -13,6 +13,9 @@ export type ReminderChannel = "email" | "sms";
 export type ReminderState =
   "scheduled" | "sending" | "succeeded" | "failed" | "suppressed";
 
+export type ReminderStatusFilter =
+  "succeeded" | "failed" | "suppressed" | "retrying";
+
 export type ReminderReceiptState = "received_ok" | "received_failed";
 
 // ReminderDelivery mirrors the API DeliveryView: required lifecycle fields
@@ -70,9 +73,11 @@ export async function fetchReminderDeliveries(
   baseURL: string,
   fetcher: typeof fetch,
   timeoutMs = 3000,
+  status?: ReminderStatusFilter,
 ): Promise<ReminderDelivery[] | null> {
   try {
-    const response = await fetcher(`${baseURL}/api/v1/reminders`, {
+    const query = status ? `?status=${encodeURIComponent(status)}` : "";
+    const response = await fetcher(`${baseURL}/api/v1/reminders${query}`, {
       signal: AbortSignal.timeout(safeTimeout(timeoutMs)),
       cache: "no-store",
       headers: { accept: "application/json" },

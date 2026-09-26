@@ -9,11 +9,17 @@ type Config struct {
 	APIKey    string
 	ModelName string
 	Timeout   time.Duration
+	Now       func() time.Time
 }
 
 type chatRequest struct {
-	Model    string        `json:"model"`
-	Messages []chatMessage `json:"messages"`
+	Model          string             `json:"model"`
+	Messages       []chatMessage      `json:"messages"`
+	ResponseFormat chatResponseFormat `json:"response_format"`
+}
+
+type chatResponseFormat struct {
+	Type string `json:"type"`
 }
 
 type chatMessage struct {

@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 
 import { DashboardPanel } from "./dashboard-panel";
@@ -25,6 +25,15 @@ const delivery = {
   attemptCount: 1,
   scheduledAt: "2026-08-19T01:00:00Z",
   createdAt: "2026-08-18T12:00:00Z",
+};
+
+const failedDelivery = {
+  ...delivery,
+  id: "rd_02",
+  todoId: "todo_02",
+  todoTitle: "发送周报",
+  state: "failed",
+  attemptCount: 3,
 };
 
 function jsonResponse(body: unknown): Response {
@@ -84,6 +93,116 @@ it("shows the summary tiles and the empty records state when no deliveries exist
     expect(screen.getByText("暂无提醒记录")).toBeInTheDocument(),
   );
   expect(screen.getByText("提醒成功").parentElement).toHaveTextContent("2");
+});
+
+it("refetches reminder records by the selected status and resets to all records", async () => {
+  const fetcher = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+    const url = String(input);
+    if (url.startsWith("/api/v1/dashboard/summary")) {
+      return jsonResponse(summary);
+    }
+    if (url === "/api/v1/reminders?status=failed") {
+      return jsonResponse({ deliveries: [failedDelivery] });
+    }
+    if (url === "/api/v1/reminders") {
+      return jsonResponse({ deliveries: [delivery] });
+    }
+    return new Response("{}", { status: 404 });
+  });
+  render(<DashboardPanel fetcher={fetcher as unknown as typeof fetch} />);
+
+  await waitFor(() =>
+    expect(screen.getByText("《每日站会》")).toBeInTheDocument(),
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: /失败/ }));
+
+  await waitFor(() =>
+    expect(fetcher).toHaveBeenCalledWith(
+      "/api/v1/reminders?status=failed",
+      expect.any(Object),
+    ),
+  );
+  await waitFor(() =>
+    expect(screen.getByText("《发送周报》")).toBeInTheDocument(),
+  );
+  expect(screen.queryByText("《每日站会》")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: /失败/ })).toHaveAttribute(
+    "aria-pressed",
+    "true",
+  );
+
+  fireEvent.click(screen.getByRole("button", { name: "全部提醒" }));
+
+  await waitFor(() => {
+    const unfilteredCalls = fetcher.mock.calls.filter(
+      ([input]) => String(input) === "/api/v1/reminders",
+    );
+    expect(unfilteredCalls).toHaveLength(2);
+  });
+  await waitFor(() =>
+    expect(screen.getByText("《每日站会》")).toBeInTheDocument(),
+  );
+});
+
+it("keeps the controlled records region mounted while a filter is loading", async () => {
+  let resolveReminders: ((response: Response) => void) | undefined;
+  const reminders = new Promise<Response>((resolve) => {
+    resolveReminders = resolve;
+  });
+  const fetcher = vi.fn((input: RequestInfo | URL): Promise<Response> => {
+    if (String(input).startsWith("/api/v1/dashboard/summary")) {
+      return Promise.resolve(jsonResponse(summary));
+    }
+    return reminders;
+  });
+  render(<DashboardPanel fetcher={fetcher as unknown as typeof fetch} />);
+
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /失败/ })).toBeInTheDocument(),
+  );
+  const records = screen.getByLabelText("提醒记录");
+  expect(records).toHaveAttribute("id", "reminder-records");
+  expect(screen.getByRole("status")).toHaveTextContent("提醒记录加载中");
+
+  resolveReminders?.(jsonResponse({ deliveries: [delivery] }));
+  await waitFor(() =>
+    expect(screen.getByText("《每日站会》")).toBeInTheDocument(),
+  );
+});
+
+it("retries a failed selected reminder filter when its card is clicked again", async () => {
+  const fetcher = vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+    const url = String(input);
+    if (url.startsWith("/api/v1/dashboard/summary")) {
+      return jsonResponse(summary);
+    }
+    if (url === "/api/v1/reminders") {
+      return jsonResponse({ deliveries: [delivery] });
+    }
+    if (url === "/api/v1/reminders?status=failed") {
+      return new Response("{}", { status: 500 });
+    }
+    return new Response("{}", { status: 404 });
+  });
+  render(<DashboardPanel fetcher={fetcher as unknown as typeof fetch} />);
+
+  await waitFor(() =>
+    expect(screen.getByText("《每日站会》")).toBeInTheDocument(),
+  );
+  const failed = screen.getByRole("button", { name: /失败/ });
+  fireEvent.click(failed);
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("提醒记录暂时不可用"),
+  );
+
+  fireEvent.click(failed);
+  await waitFor(() => {
+    const filteredCalls = fetcher.mock.calls.filter(
+      ([input]) => String(input) === "/api/v1/reminders?status=failed",
+    );
+    expect(filteredCalls).toHaveLength(2);
+  });
 });
 
 it("degrades to the summary view with a note when the records fail", async () => {

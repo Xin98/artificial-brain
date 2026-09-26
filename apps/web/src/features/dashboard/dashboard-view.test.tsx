@@ -1,5 +1,5 @@
-import { render, screen } from "@testing-library/react";
-import { expect, it } from "vitest";
+import { fireEvent, render, screen } from "@testing-library/react";
+import { expect, it, vi } from "vitest";
 
 import type { DashboardSummary } from "./fetch-dashboard";
 import type { ReminderDelivery } from "./fetch-reminders";
@@ -56,6 +56,46 @@ it("renders the nine deterministic stat tiles", () => {
   expect(screen.getByText("被抑制").parentElement).toHaveTextContent("6");
 });
 
+it("renders every todo stat tile as a link to the todo workspace", () => {
+  render(<DashboardView summary={summary} />);
+
+  for (const label of [
+    "待处理",
+    "今日到期",
+    "已逾期",
+    "无到期时间",
+    "近 7 天完成",
+  ]) {
+    expect(
+      screen.getByRole("link", { name: new RegExp(label) }),
+    ).toHaveAttribute("href", "/todos");
+  }
+});
+
+it("renders reminder stat tiles as pressed-state buttons and exposes a reset", () => {
+  const onSelectReminderStatus = vi.fn();
+  render(
+    <DashboardView
+      onSelectReminderStatus={onSelectReminderStatus}
+      selectedReminderStatus="failed"
+      summary={summary}
+    />,
+  );
+
+  const failed = screen.getByRole("button", { name: /失败/ });
+  const succeeded = screen.getByRole("button", { name: /提醒成功/ });
+  expect(failed).toHaveAttribute("type", "button");
+  expect(failed).toHaveAttribute("aria-controls", "reminder-records");
+  expect(failed).toHaveAttribute("aria-pressed", "true");
+  expect(succeeded).toHaveAttribute("aria-pressed", "false");
+
+  fireEvent.click(succeeded);
+  expect(onSelectReminderStatus).toHaveBeenCalledWith("succeeded");
+
+  fireEvent.click(screen.getByRole("button", { name: "全部提醒" }));
+  expect(onSelectReminderStatus).toHaveBeenCalledWith(null);
+});
+
 it("shows the checked instant", () => {
   render(<DashboardView summary={summary} />);
   const time = screen.getByText("统计时间").closest("p")?.querySelector("time");
@@ -66,6 +106,10 @@ it("lists each reminder record with title, channel, state, and schedule", () => 
   render(<DashboardView summary={summary} deliveries={records} />);
 
   expect(screen.getByText("提醒记录")).toBeInTheDocument();
+  expect(screen.getByLabelText("提醒记录")).toHaveAttribute(
+    "id",
+    "reminder-records",
+  );
   const first = screen.getByText("《每日站会》").closest("li");
   expect(first).toHaveTextContent("email");
   expect(first).toHaveTextContent("succeeded");
@@ -92,9 +136,23 @@ it("shows the empty state when there are no reminder records", () => {
   expect(screen.getByText("暂无提醒记录")).toBeInTheDocument();
 });
 
-it("omits the records section when deliveries were not loaded", () => {
+it("keeps the controlled records region mounted before deliveries load", () => {
   render(<DashboardView summary={summary} />);
 
-  expect(screen.queryByText("提醒记录")).not.toBeInTheDocument();
+  const records = screen.getByLabelText("提醒记录");
+  expect(records).toHaveAttribute("id", "reminder-records");
+  expect(records).toHaveAttribute("aria-busy", "true");
+  expect(records).not.toHaveAttribute("aria-live");
+  expect(screen.getByRole("status")).toHaveTextContent("提醒记录加载中");
   expect(screen.queryByText("暂无提醒记录")).not.toBeInTheDocument();
+});
+
+it("keeps the reminder list outside the live status region", () => {
+  render(<DashboardView summary={summary} deliveries={records} />);
+
+  const region = screen.getByLabelText("提醒记录");
+  expect(region).toHaveAttribute("aria-busy", "false");
+  expect(region).not.toHaveAttribute("aria-live");
+  expect(screen.getByRole("status")).toHaveTextContent("已加载 2 条提醒记录");
+  expect(screen.getByRole("list")).not.toHaveAttribute("aria-live");
 });

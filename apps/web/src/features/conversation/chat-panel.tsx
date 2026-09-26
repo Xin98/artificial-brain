@@ -1,10 +1,13 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import { confirmAction, createConfirmation } from "../todos/fetch-todos";
 import { postConversationMessage } from "./fetch-conversation";
-import type { ConversationResponse } from "./fetch-conversation";
+import type {
+  ConversationFailureReason,
+  ConversationResponse,
+} from "./fetch-conversation";
 
 function browserTimezone(provider?: () => string): string {
   if (provider) {
@@ -19,12 +22,22 @@ function browserTimezone(provider?: () => string): string {
 
 interface PendingConfirmation {
   confirmationId: string;
+  turnID: number;
   expiresAt?: string;
 }
 
-// ChatPanel sends one turn with the browser timezone and renders the
-// resolved kind. Candidate selection and confirmation stay two-step; the
-// panel never renders raw errors or internal URLs.
+interface ConversationTurn {
+  id: number;
+  text: string;
+  response: ConversationResponse;
+}
+
+interface ChatError {
+  message: string;
+  retryText?: string;
+  correlationId?: string;
+}
+
 export function ChatPanel({
   fetcher = fetch,
   timezoneProvider,
@@ -33,40 +46,67 @@ export function ChatPanel({
   timezoneProvider?: () => string;
 }): React.JSX.Element {
   const [text, setText] = useState("");
-  const [response, setResponse] = useState<ConversationResponse | null>(null);
+  const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const [pending, setPending] = useState<PendingConfirmation | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<ChatError | null>(null);
   const [busy, setBusy] = useState(false);
+  const nextTurnID = useRef(1);
+  const confirmButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    if (pending) {
+      confirmButtonRef.current?.focus();
+    }
+  }, [pending]);
 
   async function send(event: React.FormEvent): Promise<void> {
     event.preventDefault();
+    await submitMessage(text.trim());
+  }
+
+  async function submitMessage(message: string): Promise<void> {
+    if (busy || message.length === 0) {
+      return;
+    }
     setBusy(true);
     setError(null);
     const result = await postConversationMessage(
       "",
       fetcher,
-      text,
+      message,
       browserTimezone(timezoneProvider),
     );
     setBusy(false);
-    if (result === null) {
-      setResponse(null);
-      setError("对话服务暂时不可用,请稍后再试。");
+    if (!result.ok) {
+      setError({
+        message: failureCopy(result.reason),
+        retryText: isSafeToRetry(result.reason) ? message : undefined,
+        correlationId: result.correlationId,
+      });
       return;
     }
-    setText("");
-    setResponse(result);
-    if (result.kind === "confirmation_required" && result.confirmationId) {
+    const turnID = nextTurnID.current++;
+    setText((current) => (current.trim() === message ? "" : current));
+    setTurns((current) => [
+      ...current,
+      { id: turnID, text: message, response: result.response },
+    ]);
+    if (
+      result.response.kind === "confirmation_required" &&
+      result.response.confirmationId
+    ) {
       setPending({
-        confirmationId: result.confirmationId,
-        expiresAt: result.expiresAt,
+        confirmationId: result.response.confirmationId,
+        turnID,
+        expiresAt: result.response.expiresAt,
       });
-    } else {
-      setPending(null);
     }
   }
 
-  async function pickCandidate(todoId: string): Promise<void> {
+  async function pickCandidate(turnID: number, todoId: string): Promise<void> {
+    if (busy) {
+      return;
+    }
     setBusy(true);
     setError(null);
     const outcome = await createConfirmation(
@@ -79,36 +119,51 @@ export function ChatPanel({
     if (outcome.ok && outcome.confirmationId) {
       setPending({
         confirmationId: outcome.confirmationId,
+        turnID,
         expiresAt: outcome.expiresAt,
       });
       return;
     }
-    setError("确认请求失败,请稍后再试。");
+    setError({ message: "确认请求失败，请稍后再试。" });
   }
 
   async function confirmPending(): Promise<void> {
-    if (!pending) {
+    if (!pending || busy) {
       return;
     }
+    const confirmation = pending;
     setBusy(true);
     setError(null);
-    const outcome = await confirmAction("", fetcher, pending.confirmationId);
+    const outcome = await confirmAction(
+      "",
+      fetcher,
+      confirmation.confirmationId,
+    );
     setBusy(false);
     if (outcome.ok) {
       setPending(null);
-      setResponse({
-        kind: "todo_deleted",
-        correlationId: "",
-        todoId: outcome.todoId,
-      });
+      setTurns((current) =>
+        current.map((turn) =>
+          turn.id === confirmation.turnID
+            ? {
+                ...turn,
+                response: {
+                  kind: "todo_deleted",
+                  correlationId: turn.response.correlationId,
+                  todoId: outcome.todoId,
+                },
+              }
+            : turn,
+        ),
+      );
       return;
     }
-    setError("确认失败,可能已过期或被使用。");
+    setError({ message: "确认失败，可能已过期或已被使用。" });
   }
 
   return (
     <section aria-label="对话" className="chat-panel">
-      <form className="chat-input" onSubmit={send}>
+      <form aria-busy={busy} className="chat-input" onSubmit={send}>
         <label className="sr-only" htmlFor="chat-text">
           消息
         </label>
@@ -120,19 +175,59 @@ export function ChatPanel({
           type="text"
           value={text}
         />
-        <button className="btn-primary" disabled={busy} type="submit">
-          发送
+        <button
+          className="btn-primary"
+          disabled={busy || text.trim().length === 0}
+          type="submit"
+        >
+          {busy ? "发送中…" : "发送"}
         </button>
       </form>
       {error ? (
-        <p aria-live="polite" className="chat-error" role="alert">
-          {error}
-        </p>
-      ) : null}
-      {response ? (
-        <div className="chat-turn">
-          {renderResponse(response, (todoId) => void pickCandidate(todoId))}
+        <div aria-live="polite" className="chat-error" role="alert">
+          <p>{error.message}</p>
+          {error.correlationId ? (
+            <p className="chat-error-reference">
+              参考编号：<code>{error.correlationId}</code>
+            </p>
+          ) : null}
+          {error.retryText ? (
+            <button
+              className="btn-ghost"
+              disabled={busy}
+              onClick={() => void submitMessage(error.retryText ?? "")}
+              type="button"
+            >
+              重试上一条
+            </button>
+          ) : null}
         </div>
+      ) : null}
+      {turns.length > 0 ? (
+        <ol
+          aria-label="对话记录"
+          aria-live="polite"
+          aria-relevant="additions text"
+          className="chat-history"
+          role="log"
+        >
+          {turns.map((turn) => (
+            <li className="chat-turn" key={turn.id}>
+              <p className="chat-message-user">
+                <span className="sr-only">你：</span>
+                {turn.text}
+              </p>
+              <div className="chat-message-assistant">
+                <span className="sr-only">助手：</span>
+                {renderResponse(
+                  turn.response,
+                  (todoId) => void pickCandidate(turn.id, todoId),
+                  busy,
+                )}
+              </div>
+            </li>
+          ))}
+        </ol>
       ) : null}
       {pending ? (
         <div className="chat-confirm">
@@ -152,6 +247,7 @@ export function ChatPanel({
             className="btn-danger"
             disabled={busy}
             onClick={() => void confirmPending()}
+            ref={confirmButtonRef}
             type="button"
           >
             确认删除
@@ -170,9 +266,33 @@ export function ChatPanel({
   );
 }
 
+function failureCopy(reason: ConversationFailureReason): string {
+  switch (reason) {
+    case "timeout":
+      return "请求可能仍已完成。原消息已保留，请先检查待办列表，避免重复创建。";
+    case "unauthenticated":
+      return "登录状态已失效，请重新登录后再试。";
+    case "rate_limited":
+      return "当前对话请求较多，请稍后重试。";
+    case "rejected":
+      return "这条消息未被服务接受，请检查后重试。";
+    case "server":
+      return "对话服务处理失败，请重试。";
+    case "invalid_response":
+      return "对话服务返回异常，但请求可能已完成。请先检查待办列表，避免重复创建。";
+    case "network":
+      return "网络连接中断，请先检查待办列表，避免重复创建。原消息已保留。";
+  }
+}
+
+function isSafeToRetry(reason: ConversationFailureReason): boolean {
+  return reason === "rate_limited" || reason === "server";
+}
+
 function renderResponse(
   response: ConversationResponse,
   onPickCandidate: (todoId: string) => void,
+  disabled: boolean,
 ): React.JSX.Element {
   switch (response.kind) {
     case "todo_created":
@@ -205,6 +325,7 @@ function renderResponse(
               <li key={candidate.todoId}>
                 <button
                   className="chat-candidate"
+                  disabled={disabled}
                   onClick={() => onPickCandidate(candidate.todoId)}
                   type="button"
                 >

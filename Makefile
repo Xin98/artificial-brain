@@ -1,4 +1,4 @@
-.PHONY: toolchain-check harness-test architecture-test format format-check lint test verify dev down build migration-test smoke-test clean-local-data backup restore offline-bundle
+.PHONY: toolchain-check harness-test architecture-test format format-check lint test verify dev down deploy build migration-test smoke-test clean-local-data backup restore offline-bundle
 
 toolchain-check:
 	@sh scripts/check-toolchain.sh
@@ -32,6 +32,12 @@ dev:
 
 down:
 	@docker compose down
+
+deploy:
+	@DEPLOY_OFFLINE="$(DEPLOY_OFFLINE)" DEPLOY_SKIP_BACKUP="$(DEPLOY_SKIP_BACKUP)" \
+		DEPLOY_MIGRATE_TIMEOUT="$(DEPLOY_MIGRATE_TIMEOUT)" \
+		DEPLOY_HEALTH_TIMEOUT="$(DEPLOY_HEALTH_TIMEOUT)" \
+		sh scripts/deploy.sh
 
 build:
 	@go build ./backend/cmd/api ./backend/cmd/worker ./backend/cmd/migrate

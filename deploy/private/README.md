@@ -86,9 +86,11 @@ and restore semantics: [`docs/runbooks/backup-restore.md`](../../docs/runbooks/b
 
 ## Upgrade
 
-Back up first, then rebuild and let the one-shot migration run; the full
-checklist (including the append-only migrations rule and the restore path on
-failure) is in [`docs/runbooks/upgrade.md`](../../docs/runbooks/upgrade.md).
+Back up first, then rebuild and let the one-shot migration run — `make deploy`
+automates that sequence and gates on migrate/health (offline hosts:
+`make deploy DEPLOY_OFFLINE=1`). The full checklist (including the
+append-only migrations rule and the restore path on failure) is in
+[`docs/runbooks/upgrade.md`](../../docs/runbooks/upgrade.md).
 
 ## Offline install
 

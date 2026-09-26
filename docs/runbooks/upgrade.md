@@ -5,6 +5,17 @@ migrations, applied by the one-shot `migrate` service. There is no
 rolling-upgrade path for the single-host private form — schedule a short
 maintenance window.
 
+## Fast path: `make deploy`
+
+`make deploy` automates the mechanical parts of the checklist below — backup
+(skipped with a warning only when postgres is not running, i.e. a fresh
+install), `git pull --ff-only`, `docker compose build`, `docker compose up
+-d`, the migrate exit-0 gate, and the health probes — and stops with rollback
+hints on the first failure. It never rolls back or restores automatically;
+that decision stays with the operator. Offline hosts run `make deploy
+DEPLOY_OFFLINE=1` after `docker load`. The step-5 data spot-check in the web
+UI remains manual.
+
 ## Checklist
 
 1. **Verify the current version is healthy.**

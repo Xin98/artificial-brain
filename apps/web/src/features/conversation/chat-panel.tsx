@@ -295,6 +295,8 @@ function renderResponse(
   disabled: boolean,
 ): React.JSX.Element {
   switch (response.kind) {
+    case "chat":
+      return <p className="chat-result">{response.reply ?? ""}</p>;
     case "todo_created":
       return (
         <p className="chat-result">

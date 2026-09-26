@@ -17,6 +17,7 @@ export const CONVERSATION_KINDS = [
   "todo_deleted",
   "not_found",
   "unsupported",
+  "chat",
 ] as const;
 
 export type ConversationKind = (typeof CONVERSATION_KINDS)[number];
@@ -31,6 +32,8 @@ export interface ConversationCandidate {
 export interface ConversationResponse {
   kind: ConversationKind;
   correlationId: string;
+  reply?: string;
+  sessionId?: string;
   todo?: { id: string; title: string };
   resolvedDueAtUtc?: string;
   localEcho?: string;
@@ -63,6 +66,8 @@ export type ConversationRequestResult =
 const ALLOWED_KEYS = [
   "kind",
   "correlationId",
+  "reply",
+  "sessionId",
   "todo",
   "resolvedDueAtUtc",
   "localEcho",
@@ -84,6 +89,7 @@ export async function postConversationMessage(
   fetcher: typeof fetch,
   text: string,
   timezone: string,
+  sessionId?: string,
   timeoutMs = DEFAULT_CONVERSATION_TIMEOUT_MS,
 ): Promise<ConversationRequestResult> {
   let response: Response;
@@ -96,7 +102,9 @@ export async function postConversationMessage(
         "content-type": "application/json",
         accept: "application/json",
       },
-      body: JSON.stringify({ text, timezone }),
+      body: JSON.stringify(
+        sessionId ? { text, timezone, sessionId } : { text, timezone },
+      ),
     });
   } catch (error) {
     return {
@@ -178,13 +186,15 @@ function isConversationResponse(value: unknown): value is ConversationResponse {
   if (
     (value.confirmationId !== undefined &&
       !isNonEmptyString(value.confirmationId)) ||
-    (value.todoId !== undefined && !isNonEmptyString(value.todoId))
+    (value.todoId !== undefined && !isNonEmptyString(value.todoId)) ||
+    (value.sessionId !== undefined && !isNonEmptyString(value.sessionId))
   ) {
     return false;
   }
   if (
     !isStringOrUndefined(value.localEcho) ||
-    !isStringOrUndefined(value.timezoneEcho)
+    !isStringOrUndefined(value.timezoneEcho) ||
+    !isStringOrUndefined(value.reply)
   ) {
     return false;
   }
@@ -233,7 +243,7 @@ function hasKindSpecificShape(
   value: Record<string, unknown>,
   kind: ConversationKind,
 ): boolean {
-  const base = ["kind", "correlationId"];
+  const base = ["kind", "correlationId", "sessionId"];
   switch (kind) {
     case "todo_created":
       return (
@@ -245,8 +255,13 @@ function hasKindSpecificShape(
           "timezoneEcho",
         ]) && value.todo !== undefined
       );
+    case "chat":
+      return (
+        hasAllowedKeys(value, [...base, "reply"]) &&
+        isNonEmptyString(value.reply)
+      );
     case "clarification":
-      return hasAllowedKeys(value, [...base, "missingFields"]);
+      return hasAllowedKeys(value, [...base, "missingFields", "reply"]);
     case "candidates":
       return (
         hasAllowedKeys(value, [...base, "candidates"]) &&

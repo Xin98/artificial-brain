@@ -8,7 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
-const CurrentSchemaVersion int32 = 9
+const CurrentSchemaVersion int32 = 10
 
 var ErrSchemaIncompatible = errors.New("database schema is incompatible")
 

@@ -71,7 +71,7 @@ func setupTestPool(t *testing.T) *pgxpool.Pool {
 		truncate identity.login_challenges, identity.sessions, identity.contact_channels,
 			identity.users, identity.workspaces, identity.message_outbox,
 			todo.todos, reminder.reminder_plans, reminder.fake_outbox,
-			conversation.confirmation_requests, conversation.messages,
+			conversation.confirmation_requests, conversation.messages, conversation.sessions,
 			portability.portability_imports, portability.portability_source_records,
 			public.instance_meta,
 			river_job restart identity cascade
@@ -644,10 +644,18 @@ func TestConversationEndToEndIntentPath(t *testing.T) {
 	}
 	sessionResp.Body.Close()
 
+	// The first turn auto-creates a session; every later turn pins it so
+	// the whole intent path shares one transcript, exactly like the web
+	// client does after receiving a sessionId.
+	var pinnedSession string
 	postMessage := func(text, timezone string) map[string]any {
 		t.Helper()
-		messageResp := doJSON(t, client, http.MethodPost, srv.URL+"/api/v1/conversation/messages",
-			`{"text":"`+text+`","timezone":"`+timezone+`"}`)
+		payload := `{"text":"` + text + `","timezone":"` + timezone + `"`
+		if pinnedSession != "" {
+			payload += `,"sessionId":"` + pinnedSession + `"`
+		}
+		payload += `}`
+		messageResp := doJSON(t, client, http.MethodPost, srv.URL+"/api/v1/conversation/messages", payload)
 		body, _ := io.ReadAll(messageResp.Body)
 		messageResp.Body.Close()
 		if messageResp.StatusCode != http.StatusOK {
@@ -656,6 +664,9 @@ func TestConversationEndToEndIntentPath(t *testing.T) {
 		var decoded map[string]any
 		if err := json.Unmarshal(body, &decoded); err != nil {
 			t.Fatalf("messages(%s) body error = %v", text, err)
+		}
+		if pinnedSession == "" {
+			pinnedSession, _ = decoded["sessionId"].(string)
 		}
 		return decoded
 	}
@@ -749,15 +760,21 @@ func TestConversationEndToEndIntentPath(t *testing.T) {
 		t.Fatalf("list after delete = %#v, want 提交周报 gone", after["todos"])
 	}
 
-	// 7. Unmatched text is unsupported.
+	// 7. Unmatched text becomes free chat with the deterministic echo reply.
 	unknown := postMessage("今天天气怎么样", "Asia/Shanghai")
-	if unknown["kind"] != "unsupported" {
-		t.Fatalf("unknown kind = %v, want unsupported", unknown["kind"])
+	if unknown["kind"] != "chat" {
+		t.Fatalf("unknown kind = %v, want chat", unknown["kind"])
+	}
+	echo, _ := unknown["reply"].(string)
+	if !strings.Contains(echo, "你说的是：「今天天气怎么样」") {
+		t.Fatalf("chat reply = %q, want the deterministic echo", echo)
 	}
 
-	// 8. The audit trail holds exactly the resolved user turns, in order.
+	// 8. The audit trail holds exactly the resolved user turns, in order,
+	// all persisted against one auto-created session (assistant rows carry
+	// a NULL intent and are skipped).
 	rows, err := pool.Query(ctx, `
-		select resolved_intent from conversation.messages
+		select resolved_intent, session_id from conversation.messages
 		where workspace_id = $1 and user_id = $2
 		order by id
 	`, session.WorkspaceID, session.UserID)
@@ -766,16 +783,28 @@ func TestConversationEndToEndIntentPath(t *testing.T) {
 	}
 	defer rows.Close()
 	var intents []string
+	var sessionID string
+	rowCount := 0
 	for rows.Next() {
 		var intent *string
-		if err := rows.Scan(&intent); err != nil {
+		var rowSession *string
+		if err := rows.Scan(&intent, &rowSession); err != nil {
 			t.Fatalf("scan intent error = %v", err)
+		}
+		rowCount++
+		if rowSession == nil {
+			t.Fatalf("row %d has no session", rowCount)
+		}
+		if sessionID == "" {
+			sessionID = *rowSession
+		} else if *rowSession != sessionID {
+			t.Fatalf("row %d session = %q, want shared %q", rowCount, *rowSession, sessionID)
 		}
 		if intent != nil {
 			intents = append(intents, *intent)
 		}
 	}
-	wantIntents := []string{"todo.create", "todo.list", "todo.delete", "todo.list"}
+	wantIntents := []string{"todo.create", "todo.list", "todo.delete", "todo.list", "chat"}
 	if len(intents) != len(wantIntents) {
 		t.Fatalf("audit intents = %#v, want %#v", intents, wantIntents)
 	}
@@ -783,6 +812,209 @@ func TestConversationEndToEndIntentPath(t *testing.T) {
 		if intents[index] != wantIntents[index] {
 			t.Fatalf("audit intents = %#v, want %#v", intents, wantIntents)
 		}
+	}
+	// Every user turn is paired with an assistant transcript row.
+	if rowCount != 2*len(wantIntents) {
+		t.Fatalf("transcript rows = %d, want %d (user+assistant pairs)", rowCount, 2*len(wantIntents))
+	}
+	createdSessionID, _ := created["sessionId"].(string)
+	if createdSessionID != sessionID {
+		t.Fatalf("response sessionId = %q, want stored %q", createdSessionID, sessionID)
+	}
+}
+
+// TestConversationSessionsEndToEnd proves the session lifecycle over HTTP:
+// auto-creation from the first message, explicit-session posting, sidebar
+// listing, history replay, two-session isolation, rename, and delete with
+// transcript cascade.
+func TestConversationSessionsEndToEnd(t *testing.T) {
+	handler, pool := setupAPIHandlerWithPool(t, true)
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+	ctx := context.Background()
+
+	client, ids := loginViaDevInbox(t, srv, "+8613900005555")
+
+	postMessage := func(body string) (int, map[string]any) {
+		t.Helper()
+		resp := doJSON(t, client, http.MethodPost, srv.URL+"/api/v1/conversation/messages", body)
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		var decoded map[string]any
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &decoded); err != nil {
+				t.Fatalf("messages body error = %v, body = %s", err, raw)
+			}
+		}
+		return resp.StatusCode, decoded
+	}
+	getJSON := func(target string) (int, map[string]any) {
+		t.Helper()
+		resp, err := client.Get(srv.URL + target)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		var decoded map[string]any
+		if len(raw) > 0 {
+			if err := json.Unmarshal(raw, &decoded); err != nil {
+				t.Fatalf("GET %s body error = %v", target, err)
+			}
+		}
+		return resp.StatusCode, decoded
+	}
+
+	// 1. A message without sessionId auto-creates a session titled from it.
+	status, chat := postMessage(`{"text":"今天天气怎么样","timezone":"Asia/Shanghai"}`)
+	if status != http.StatusOK || chat["kind"] != "chat" {
+		t.Fatalf("chat status = %d, body = %#v", status, chat)
+	}
+	autoID, _ := chat["sessionId"].(string)
+	if autoID == "" {
+		t.Fatalf("chat response missing sessionId: %#v", chat)
+	}
+
+	// 2. The sidebar lists the auto-created session with its derived title.
+	status, list := getJSON("/api/v1/conversation/sessions")
+	if status != http.StatusOK {
+		t.Fatalf("list status = %d", status)
+	}
+	sessions, _ := list["sessions"].([]any)
+	if len(sessions) != 1 {
+		t.Fatalf("sessions = %#v, want the auto-created one", sessions)
+	}
+	first := sessions[0].(map[string]any)
+	if first["id"] != autoID || first["title"] != "今天天气怎么样" {
+		t.Fatalf("session view = %#v", first)
+	}
+
+	// 3. An explicitly created session accepts scoped messages.
+	resp := doJSON(t, client, http.MethodPost, srv.URL+"/api/v1/conversation/sessions", `{"title":"周报会话"}`)
+	raw, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("create session status = %d, want 201, body = %s", resp.StatusCode, raw)
+	}
+	var createdView struct {
+		ID    string `json:"id"`
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal(raw, &createdView); err != nil {
+		t.Fatal(err)
+	}
+	if createdView.Title != "周报会话" || createdView.ID == "" {
+		t.Fatalf("created view = %#v", createdView)
+	}
+	status, created := postMessage(`{"text":"明天下午三点提醒我提交周报","timezone":"Asia/Shanghai","sessionId":"` + createdView.ID + `"}`)
+	if status != http.StatusOK || created["kind"] != "todo_created" || created["sessionId"] != createdView.ID {
+		t.Fatalf("scoped create status = %d, body = %#v", status, created)
+	}
+
+	// 4. History replays the paired transcript rows in ascending order.
+	status, history := getJSON("/api/v1/conversation/sessions/" + createdView.ID + "/messages")
+	if status != http.StatusOK {
+		t.Fatalf("history status = %d", status)
+	}
+	if history["sessionId"] != createdView.ID || history["title"] != "周报会话" {
+		t.Fatalf("history envelope = %#v", history)
+	}
+	messages, _ := history["messages"].([]any)
+	if len(messages) != 2 {
+		t.Fatalf("history messages = %#v, want the user+assistant pair", messages)
+	}
+	userRow := messages[0].(map[string]any)
+	assistantRow := messages[1].(map[string]any)
+	if userRow["role"] != "user" || userRow["body"] != "明天下午三点提醒我提交周报" || userRow["resolvedIntent"] != "todo.create" {
+		t.Fatalf("user row = %#v", userRow)
+	}
+	assistantBody, _ := assistantRow["body"].(string)
+	if assistantRow["role"] != "assistant" ||
+		!strings.HasPrefix(assistantBody, "已创建待办「提交周报」，提醒时间 ") ||
+		!strings.Contains(assistantBody, "15:00（Asia/Shanghai）。") {
+		t.Fatalf("assistant row = %#v", assistantRow)
+	}
+
+	// 5. Sessions stay isolated: the auto session never sees the todo turn.
+	status, autoHistory := getJSON("/api/v1/conversation/sessions/" + autoID + "/messages")
+	if status != http.StatusOK {
+		t.Fatalf("auto history status = %d", status)
+	}
+	autoMessages, _ := autoHistory["messages"].([]any)
+	if len(autoMessages) != 2 {
+		t.Fatalf("auto history = %#v, want only the chat pair", autoMessages)
+	}
+	if autoMessages[0].(map[string]any)["body"] != "今天天气怎么样" {
+		t.Fatalf("auto history leaked another session: %#v", autoMessages)
+	}
+
+	// 6. Rename updates the sidebar title.
+	resp = doJSON(t, client, http.MethodPatch, srv.URL+"/api/v1/conversation/sessions/"+createdView.ID, `{"title":"冲刺计划"}`)
+	raw, _ = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("rename status = %d, want 200, body = %s", resp.StatusCode, raw)
+	}
+	var renamed struct {
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal(raw, &renamed); err != nil {
+		t.Fatal(err)
+	}
+	if renamed.Title != "冲刺计划" {
+		t.Fatalf("renamed title = %q", renamed.Title)
+	}
+
+	// 7. A foreign or unknown session is a 404 on every route.
+	status, _ = postMessage(`{"text":"你好","timezone":"UTC","sessionId":"00000000-0000-4000-8000-000000000000"}`)
+	if status != http.StatusNotFound {
+		t.Fatalf("unknown session message status = %d, want 404", status)
+	}
+	status, _ = getJSON("/api/v1/conversation/sessions/00000000-0000-4000-8000-000000000000/messages")
+	if status != http.StatusNotFound {
+		t.Fatalf("unknown session history status = %d, want 404", status)
+	}
+
+	// 8. Delete removes the session and cascades its transcript.
+	resp = doJSON(t, client, http.MethodDelete, srv.URL+"/api/v1/conversation/sessions/"+createdView.ID, "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete status = %d, want 204", resp.StatusCode)
+	}
+	resp = doJSON(t, client, http.MethodDelete, srv.URL+"/api/v1/conversation/sessions/"+createdView.ID, "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("second delete status = %d, want 404", resp.StatusCode)
+	}
+	var remaining int
+	if err := pool.QueryRow(ctx,
+		`select count(*) from conversation.messages where session_id = $1`, createdView.ID).Scan(&remaining); err != nil {
+		t.Fatalf("cascade count error = %v", err)
+	}
+	if remaining != 0 {
+		t.Fatalf("cascaded messages = %d, want 0", remaining)
+	}
+
+	// 9. The sidebar now lists only the auto-created session.
+	status, list = getJSON("/api/v1/conversation/sessions")
+	if status != http.StatusOK {
+		t.Fatalf("final list status = %d", status)
+	}
+	sessions, _ = list["sessions"].([]any)
+	if len(sessions) != 1 || sessions[0].(map[string]any)["id"] != autoID {
+		t.Fatalf("final sessions = %#v, want only %q", sessions, autoID)
+	}
+
+	// 10. The transcript rows carry the caller's scope.
+	var scoped int
+	if err := pool.QueryRow(ctx, `
+		select count(*) from conversation.messages
+		where workspace_id = $1 and user_id = $2
+	`, ids.WorkspaceID, ids.UserID).Scan(&scoped); err != nil {
+		t.Fatalf("scope count error = %v", err)
+	}
+	if scoped != 2 {
+		t.Fatalf("scoped rows = %d, want the surviving chat pair", scoped)
 	}
 }
 

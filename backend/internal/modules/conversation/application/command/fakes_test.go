@@ -13,14 +13,14 @@ import (
 )
 
 type fakeModel struct {
-	input    *ports.MessageInput
-	proposal json.RawMessage
-	err      error
+	input *ports.MessageInput
+	turn  json.RawMessage
+	err   error
 }
 
-func (m *fakeModel) Propose(_ context.Context, in ports.MessageInput) (json.RawMessage, error) {
+func (m *fakeModel) Complete(_ context.Context, in ports.MessageInput) (json.RawMessage, error) {
 	m.input = &in
-	return m.proposal, m.err
+	return m.turn, m.err
 }
 
 type fakeTodoGateway struct {

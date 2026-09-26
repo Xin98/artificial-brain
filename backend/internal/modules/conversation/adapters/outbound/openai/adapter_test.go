@@ -16,7 +16,7 @@ import (
 	"github.com/Xin98/artificial-brain/backend/internal/modules/conversation/application/ports"
 )
 
-const cannedContent = `{"schemaVersion":"1","intent":"todo.create","arguments":{"title":"提交周报"},"confidence":0.9,"missingFields":[]}`
+const cannedContent = `{"schemaVersion":"1","reply":"好的，我记下了「提交周报」。","proposal":{"schemaVersion":"1","intent":"todo.create","arguments":{"title":"提交周报"},"confidence":0.9,"missingFields":[]}}`
 
 type roundTripperFunc func(*http.Request) (*http.Response, error)
 
@@ -60,7 +60,7 @@ func TestNewRequiresConfiguration(t *testing.T) {
 	}
 }
 
-func TestProposeReturnsRawContentAndSendsExpectedRequest(t *testing.T) {
+func TestCompleteReturnsRawContentAndSendsExpectedRequest(t *testing.T) {
 	var gotPath, gotAuth, gotContentType string
 	var gotBody []byte
 	_, cfg := newStartedServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -76,9 +76,9 @@ func TestProposeReturnsRawContentAndSendsExpectedRequest(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	raw, err := adapter.Propose(context.Background(), ports.MessageInput{Text: "明天提醒我提交周报", Timezone: "Asia/Shanghai"})
+	raw, err := adapter.Complete(context.Background(), ports.MessageInput{Text: "明天提醒我提交周报", Timezone: "Asia/Shanghai"})
 	if err != nil {
-		t.Fatalf("Propose() error = %v", err)
+		t.Fatalf("Complete() error = %v", err)
 	}
 	if strings.TrimSpace(string(raw)) != cannedContent {
 		t.Fatalf("raw = %s, want untouched content", raw)
@@ -119,7 +119,7 @@ func TestProposeReturnsRawContentAndSendsExpectedRequest(t *testing.T) {
 	}
 }
 
-func TestProposeRequestsStructuredIntentJSONWithCurrentTime(t *testing.T) {
+func TestCompleteRequestsStructuredIntentJSONWithCurrentTime(t *testing.T) {
 	var gotBody struct {
 		ResponseFormat struct {
 			Type string `json:"type"`
@@ -143,12 +143,12 @@ func TestProposeRequestsStructuredIntentJSONWithCurrentTime(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	_, err = adapter.Propose(context.Background(), ports.MessageInput{
+	_, err = adapter.Complete(context.Background(), ports.MessageInput{
 		Text:     "提醒我提交周报",
 		Timezone: "Asia/Shanghai",
 	})
 	if err != nil {
-		t.Fatalf("Propose() error = %v", err)
+		t.Fatalf("Complete() error = %v", err)
 	}
 	if gotBody.ResponseFormat.Type != "json_object" {
 		t.Fatalf("response_format.type = %q, want json_object", gotBody.ResponseFormat.Type)
@@ -161,7 +161,7 @@ func TestProposeRequestsStructuredIntentJSONWithCurrentTime(t *testing.T) {
 		t.Fatalf("first message role = %q, want system", system.Role)
 	}
 	for _, required := range []string{
-		`"schemaVersion"`, `"arguments"`, `"confidence"`, `"missingFields"`,
+		`"schemaVersion"`, `"reply"`, `"proposal"`, `"arguments"`, `"confidence"`, `"missingFields"`,
 		`"todo.create"`, `"todo.delete"`, `"todo.list"`, `"unknown"`,
 		`"additionalProperties":false`, "Asia/Shanghai", "2026-09-26T11:45:00+08:00",
 	} {
@@ -175,7 +175,53 @@ func TestProposeRequestsStructuredIntentJSONWithCurrentTime(t *testing.T) {
 	}
 }
 
-func TestProposePassesThroughUnvalidatedContent(t *testing.T) {
+func TestCompleteMapsHistoryBetweenSystemAndCurrentTurn(t *testing.T) {
+	var gotBody struct {
+		Messages []struct {
+			Role    string `json:"role"`
+			Content string `json:"content"`
+		} `json:"messages"`
+	}
+	_, cfg := newStartedServer(t, func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Errorf("decode request body: %v", err)
+		}
+		_, _ = w.Write([]byte(completionResponse(cannedContent)))
+	})
+	adapter, err := New(cfg)
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+
+	_, err = adapter.Complete(context.Background(), ports.MessageInput{
+		Text:     "明天下午三点提醒我提交周报",
+		Timezone: "Asia/Shanghai",
+		History: []ports.HistoryMessage{
+			{Role: ports.RoleUser, Text: "今天天气怎么样"},
+			{Role: ports.RoleAssistant, Text: "你说的是：「今天天气怎么样」。"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Complete() error = %v", err)
+	}
+	if len(gotBody.Messages) != 4 {
+		t.Fatalf("messages = %#v, want system + 2 history + user", gotBody.Messages)
+	}
+	if gotBody.Messages[0].Role != "system" {
+		t.Fatalf("first role = %q, want system", gotBody.Messages[0].Role)
+	}
+	if gotBody.Messages[1].Role != "user" || gotBody.Messages[1].Content != "今天天气怎么样" {
+		t.Fatalf("history[0] = %#v", gotBody.Messages[1])
+	}
+	if gotBody.Messages[2].Role != "assistant" || gotBody.Messages[2].Content != "你说的是：「今天天气怎么样」。" {
+		t.Fatalf("history[1] = %#v", gotBody.Messages[2])
+	}
+	if gotBody.Messages[3].Role != "user" || gotBody.Messages[3].Content != "明天下午三点提醒我提交周报" {
+		t.Fatalf("current turn = %#v", gotBody.Messages[3])
+	}
+}
+
+func TestCompletePassesThroughUnvalidatedContent(t *testing.T) {
 	_, cfg := newStartedServer(t, func(w http.ResponseWriter, r *http.Request) {
 		_, _ = w.Write([]byte(completionResponse("not json at all")))
 	})
@@ -183,16 +229,16 @@ func TestProposePassesThroughUnvalidatedContent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	raw, err := adapter.Propose(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"})
+	raw, err := adapter.Complete(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"})
 	if err != nil {
-		t.Fatalf("Propose() error = %v", err)
+		t.Fatalf("Complete() error = %v", err)
 	}
 	if strings.TrimSpace(string(raw)) != "not json at all" {
 		t.Fatalf("raw = %q, want unvalidated passthrough", raw)
 	}
 }
 
-func TestProposeMapsHTTPFailureToTypedError(t *testing.T) {
+func TestCompleteMapsHTTPFailureToTypedError(t *testing.T) {
 	_, cfg := newStartedServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
@@ -200,13 +246,13 @@ func TestProposeMapsHTTPFailureToTypedError(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New() error = %v", err)
 	}
-	_, err = adapter.Propose(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"})
+	_, err = adapter.Complete(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"})
 	if !errors.Is(err, ErrRequestFailed) {
-		t.Fatalf("Propose() error = %v, want ErrRequestFailed", err)
+		t.Fatalf("Complete() error = %v, want ErrRequestFailed", err)
 	}
 }
 
-func TestProposeRetriesOnceAfterRateLimit(t *testing.T) {
+func TestCompleteRetriesOnceAfterRateLimit(t *testing.T) {
 	var attempts atomic.Int32
 	_, cfg := newStartedServer(t, func(w http.ResponseWriter, r *http.Request) {
 		if attempts.Add(1) == 1 {
@@ -220,9 +266,9 @@ func TestProposeRetriesOnceAfterRateLimit(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	raw, err := adapter.Propose(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"})
+	raw, err := adapter.Complete(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"})
 	if err != nil {
-		t.Fatalf("Propose() error = %v", err)
+		t.Fatalf("Complete() error = %v", err)
 	}
 	if string(raw) != cannedContent {
 		t.Fatalf("raw = %s, want %s", raw, cannedContent)
@@ -232,7 +278,7 @@ func TestProposeRetriesOnceAfterRateLimit(t *testing.T) {
 	}
 }
 
-func TestProposeDoesNotRetryOtherClientErrorsOrExposeDetails(t *testing.T) {
+func TestCompleteDoesNotRetryOtherClientErrorsOrExposeDetails(t *testing.T) {
 	var attempts atomic.Int32
 	_, cfg := newStartedServer(t, func(w http.ResponseWriter, r *http.Request) {
 		attempts.Add(1)
@@ -243,9 +289,9 @@ func TestProposeDoesNotRetryOtherClientErrorsOrExposeDetails(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	_, err = adapter.Propose(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"})
+	_, err = adapter.Complete(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"})
 	if !errors.Is(err, ErrRequestFailed) {
-		t.Fatalf("Propose() error = %v, want ErrRequestFailed", err)
+		t.Fatalf("Complete() error = %v, want ErrRequestFailed", err)
 	}
 	if got := attempts.Load(); got != 1 {
 		t.Fatalf("attempts = %d, want 1", got)
@@ -257,7 +303,7 @@ func TestProposeDoesNotRetryOtherClientErrorsOrExposeDetails(t *testing.T) {
 	}
 }
 
-func TestProposeRetriesServerErrorsAtMostOnce(t *testing.T) {
+func TestCompleteRetriesServerErrorsAtMostOnce(t *testing.T) {
 	var attempts atomic.Int32
 	_, cfg := newStartedServer(t, func(w http.ResponseWriter, r *http.Request) {
 		attempts.Add(1)
@@ -268,9 +314,9 @@ func TestProposeRetriesServerErrorsAtMostOnce(t *testing.T) {
 		t.Fatalf("New() error = %v", err)
 	}
 
-	_, err = adapter.Propose(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"})
+	_, err = adapter.Complete(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"})
 	if !errors.Is(err, ErrRequestFailed) {
-		t.Fatalf("Propose() error = %v, want ErrRequestFailed", err)
+		t.Fatalf("Complete() error = %v, want ErrRequestFailed", err)
 	}
 	if got := attempts.Load(); got != 2 {
 		t.Fatalf("attempts = %d, want exactly 2", got)
@@ -282,7 +328,7 @@ func TestProposeRetriesServerErrorsAtMostOnce(t *testing.T) {
 	}
 }
 
-func TestProposeRejectsMalformedResponses(t *testing.T) {
+func TestCompleteRejectsMalformedResponses(t *testing.T) {
 	cases := map[string]string{
 		"non-json body":   "hello",
 		"missing choices": `{}`,
@@ -297,13 +343,13 @@ func TestProposeRejectsMalformedResponses(t *testing.T) {
 		if err != nil {
 			t.Fatalf("New() error = %v", err)
 		}
-		if _, err := adapter.Propose(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"}); !errors.Is(err, ErrMalformedResponse) {
-			t.Fatalf("%s: Propose() error = %v, want ErrMalformedResponse", name, err)
+		if _, err := adapter.Complete(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"}); !errors.Is(err, ErrMalformedResponse) {
+			t.Fatalf("%s: Complete() error = %v, want ErrMalformedResponse", name, err)
 		}
 	}
 }
 
-func TestProposeHonorsContextDeadline(t *testing.T) {
+func TestCompleteHonorsContextDeadline(t *testing.T) {
 	_, cfg := newStartedServer(t, func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(300 * time.Millisecond)
 		_, _ = w.Write([]byte(completionResponse(cannedContent)))
@@ -314,12 +360,12 @@ func TestProposeHonorsContextDeadline(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
-	if _, err := adapter.Propose(ctx, ports.MessageInput{Text: "x", Timezone: "UTC"}); err == nil {
-		t.Fatal("Propose() error = nil, want deadline failure")
+	if _, err := adapter.Complete(ctx, ports.MessageInput{Text: "x", Timezone: "UTC"}); err == nil {
+		t.Fatal("Complete() error = nil, want deadline failure")
 	}
 }
 
-func TestProposeRetriesClientTimeoutWhileParentContextIsActive(t *testing.T) {
+func TestCompleteRetriesClientTimeoutWhileParentContextIsActive(t *testing.T) {
 	var attempts atomic.Int32
 	cfg := Config{
 		BaseURL:   "http://model.local",
@@ -342,9 +388,9 @@ func TestProposeRetriesClientTimeoutWhileParentContextIsActive(t *testing.T) {
 		}, nil
 	})
 
-	raw, err := adapter.Propose(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"})
+	raw, err := adapter.Complete(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"})
 	if err != nil {
-		t.Fatalf("Propose() error = %v", err)
+		t.Fatalf("Complete() error = %v", err)
 	}
 	if string(raw) != cannedContent {
 		t.Fatalf("raw = %s, want %s", raw, cannedContent)
@@ -354,7 +400,7 @@ func TestProposeRetriesClientTimeoutWhileParentContextIsActive(t *testing.T) {
 	}
 }
 
-func TestProposeDoesNotRetryAfterParentContextDeadline(t *testing.T) {
+func TestCompleteDoesNotRetryAfterParentContextDeadline(t *testing.T) {
 	var attempts atomic.Int32
 	_, cfg := newStartedServer(t, func(w http.ResponseWriter, r *http.Request) {
 		attempts.Add(1)
@@ -367,15 +413,15 @@ func TestProposeDoesNotRetryAfterParentContextDeadline(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
 	defer cancel()
 
-	if _, err := adapter.Propose(ctx, ports.MessageInput{Text: "x", Timezone: "UTC"}); err == nil {
-		t.Fatal("Propose() error = nil, want deadline failure")
+	if _, err := adapter.Complete(ctx, ports.MessageInput{Text: "x", Timezone: "UTC"}); err == nil {
+		t.Fatal("Complete() error = nil, want deadline failure")
 	}
 	if got := attempts.Load(); got != 1 {
 		t.Fatalf("attempts = %d, want 1", got)
 	}
 }
 
-func TestProposeRetriesResponseBodyTimeoutWhileParentContextIsActive(t *testing.T) {
+func TestCompleteRetriesResponseBodyTimeoutWhileParentContextIsActive(t *testing.T) {
 	var attempts atomic.Int32
 	cfg := Config{
 		BaseURL:   "http://model.local",
@@ -399,9 +445,9 @@ func TestProposeRetriesResponseBodyTimeoutWhileParentContextIsActive(t *testing.
 		}, nil
 	})
 
-	raw, err := adapter.Propose(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"})
+	raw, err := adapter.Complete(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"})
 	if err != nil {
-		t.Fatalf("Propose() error = %v", err)
+		t.Fatalf("Complete() error = %v", err)
 	}
 	if string(raw) != cannedContent {
 		t.Fatalf("raw = %s, want %s", raw, cannedContent)
@@ -411,7 +457,7 @@ func TestProposeRetriesResponseBodyTimeoutWhileParentContextIsActive(t *testing.
 	}
 }
 
-func TestProposeRetriesWithinOneTotalTimeoutBudget(t *testing.T) {
+func TestCompleteRetriesWithinOneTotalTimeoutBudget(t *testing.T) {
 	cfg := Config{
 		BaseURL:   "http://model.local",
 		APIKey:    "test-key",
@@ -438,8 +484,8 @@ func TestProposeRetriesWithinOneTotalTimeoutBudget(t *testing.T) {
 		return nil, request.Context().Err()
 	})
 
-	if _, err := adapter.Propose(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"}); err == nil {
-		t.Fatal("Propose() error = nil, want transport failure")
+	if _, err := adapter.Complete(context.Background(), ports.MessageInput{Text: "x", Timezone: "UTC"}); err == nil {
+		t.Fatal("Complete() error = nil, want transport failure")
 	}
 	elapsed := time.Since(started)
 	if len(deadlines) != 2 {
@@ -450,6 +496,6 @@ func TestProposeRetriesWithinOneTotalTimeoutBudget(t *testing.T) {
 		t.Errorf("retry deadline = %s, later than total budget deadline %s", deadlines[1], latestAllowed)
 	}
 	if elapsed > cfg.Timeout+40*time.Millisecond {
-		t.Errorf("Propose() elapsed = %s, want at most one %s timeout budget", elapsed, cfg.Timeout)
+		t.Errorf("Complete() elapsed = %s, want at most one %s timeout budget", elapsed, cfg.Timeout)
 	}
 }

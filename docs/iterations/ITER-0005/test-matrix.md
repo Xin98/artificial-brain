@@ -1,0 +1,21 @@
+# ITER-0005 test matrix
+
+Rows are recorded as each task reaches green. IDs group by subsystem: `MIG` migrations/schema, `CFG` platform config, `CDM` conversation domain, `CVA` conversation application (validation/commands/queries), `MDL` model adapters, `PGS` conversation postgres adapters, `HTP` conversation HTTP, `WIR` composition root, `CNT` contracts, `WEB` web, `SMK` smoke gates.
+
+| Requirement | Command and evidence | Evidence commit | Status |
+| --- | --- | --- | --- |
+| MIG-01 — schema advances 9→10 via append-only migration 010 (`conversation.sessions`, nullable cascading `messages.session_id`, indexes); migrations 001–009 byte-untouched | `make migration-test`; empty-schema gate, idempotent re-run, `schema_version=10` assertion | | Pending |
+| CFG-01 — `CONVERSATION_HISTORY_TURNS` default 10, fail-closed bounds 0..50 | `go test ./backend/internal/platform/config -race` | | Pending |
+| CDM-01 — Session entity invariants (title 1..50, `DefaultSessionTitle` 30-rune truncation + fallback), ModelTurn value, new errors | `go test ./backend/internal/modules/conversation/domain -race` | | Pending |
+| CVA-01 — envelope validation (`ValidateModelTurn`): exact keys, version, reply bounds, null-or-v1 proposal; v1 `ValidateProposal` unchanged | `go test ./backend/internal/modules/conversation/application/... -race` | | Pending |
+| CVA-02 — dispatch: unknown/null proposal → chat + reply; invalid envelope/proposal → unsupported fail-closed; intent gates unchanged; transcript user+assistant rows per turn; auto-create session title; unknown explicit session → ErrSessionNotFound; history window passed to model; HistoryTurns=0 | `go test ./backend/internal/modules/conversation/application/... -race` | | Pending |
+| MDL-01 — deterministic adapter: corpus proposal pins byte-identical inside envelope; fixed per-family replies; `EchoReplyTemplate` echo for unmatched input; history ignored | `go test ./backend/internal/modules/conversation/adapters/outbound/deterministic -race` | | Pending |
+| MDL-02 — openai adapter: envelope via httptest; unified prompt assertions (reply/proposal + v1 fragments); history order system→history→user; retry/timeout/429/5xx semantics unchanged; never egresses in CI | `go test ./backend/internal/modules/conversation/adapters/outbound/openai -race` | | Pending |
+| PGS-01 — SessionStore CRUD/ownership isolation/order/cascade; Append with SessionID; ListBySession order/limit/scope | `TEST_DATABASE_URL=… go test ./backend/internal/modules/conversation/adapters/outbound/postgres -race -p=1` | | Pending |
+| HTP-01 — messages flow: optional sessionId passthrough, `session_not_found` 404, envelope reply/sessionId; five session routes (200/201/204/404/422, strict-body rejections); auth coverage for all 8 routes | `go test ./backend/internal/modules/conversation/adapters/inbound/http -race` | | Pending |
+| WIR-01 — composition end-to-end: chat echo turn, audit intent sequence `[…,"chat"]` with shared session_id, sessions lifecycle (auto-create, list, explicit post, history, isolation, rename, delete cascade, 404) | `TEST_DATABASE_URL=… go test ./backend/cmd/api -race` | | Pending |
+| CNT-01 — conversation OpenAPI: chat kind, reply/sessionId, five session paths, closed-object schemas | `go test ./tests/contract -race` | | Pending |
+| WEB-01 — fetch layer: chat/reply/sessionId strict validation + rejections; fetch-sessions CRUD validators | `corepack pnpm --filter @artificial-brain/web test` | | Pending |
+| WEB-02 — UI: session sidebar (new/switch/rename/delete), history loads as text-only turns, chat bubble, sessionId pinned via onSessionCreated without losing live turns, confirmation/candidate flows unchanged; globals-css gate | `corepack pnpm --filter @artificial-brain/web test` + `lint` + `build` | | Pending |
+| SMK-01 — smoke: free-chat echo assertion; session create → explicit-session post → list → history → rename → delete → 404; deterministic adapter only | `make smoke-test` | | Pending |
+| Clean-context regression | `make verify && make migration-test && make smoke-test` re-run independently plus acceptance mapping, zone compliance (zero new dependencies, migrations 001–009 untouched, no real-provider egress in CI), and credential scan; report in `regression-report.md` | | Pending |

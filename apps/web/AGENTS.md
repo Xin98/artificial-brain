@@ -2,9 +2,9 @@
 
 ## Zones
 
-- **Green:** implement the server-rendered system-health feature, the ITER-0002 workbench features (auth, dashboard, todos, settings, conversation), the ITER-0003 dashboard reminder extension (real reminder counters and the reminder records list), and the ITER-0004 `/data` data portability feature (export and two-phase import flow) and their tests under `apps/web`.
-- **Yellow:** package boundaries, browser/server data boundaries, root workspace configuration, the `next.config.ts` rewrite and `shared/server` session seams, and public UI contracts require a planned review.
-- **Red:** feature code must not import deployment configuration or expose Compose service names to the browser; in ITER-0004 do not add new web dependencies.
+- **Green:** implement the server-rendered system-health feature, the ITER-0002 workbench features (auth, dashboard, todos, settings, conversation), the ITER-0003 dashboard reminder extension (real reminder counters and the reminder records list), the ITER-0004 `/data` data portability feature (export and two-phase import flow), and the ITER-0005 conversation upgrade (session sidebar, history-loading chat panel, `chat` kind rendering) and their tests under `apps/web`.
+- **Yellow:** package boundaries, browser/server data boundaries, root workspace configuration, the `next.config.ts` rewrite and `shared/server` session seams, public UI contracts, and `globals.css` (styling contract enforced by `globals-css.test.ts`) require a planned review; ITER-0005 yellow items are listed in `docs/iterations/ITER-0005/plan.md`.
+- **Red:** feature code must not import deployment configuration or expose Compose service names to the browser; in ITER-0005 do not add new web dependencies.
 
 ## Dependencies and verification
 

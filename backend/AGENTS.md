@@ -2,9 +2,9 @@
 
 ## Zones
 
-- **Green:** implement the health-chain code and the business modules (`identity`, `todo`, `reminder`, `conversation`, `portability`) — including the ITER-0003 reminder delivery hexagon (River worker inbound adapter and fake/SMTP/Aliyun provider outbound adapters) and the ITER-0004 identity/todo/reminder import-export seams — and their tests inside `backend/internal/modules/<context>/{domain,application,adapters}` and established platform boundaries.
-- **Yellow:** commands, migrations, configuration contracts, the platform transaction/router seams, and cross-package boundaries require a planned review.
-- **Red:** API and Worker never run migrations; platform never imports a business module; do not create empty business packages; in ITER-0004 tests and CI deliver only through fake adapters (no real-provider calls from CI).
+- **Green:** implement the health-chain code and the business modules (`identity`, `todo`, `reminder`, `conversation`, `portability`) — including the ITER-0003 reminder delivery hexagon, the ITER-0004 identity/todo/reminder import-export seams, and the ITER-0005 conversation sessions/free-chat/history hexagon (unified `ModelPort.Complete` envelope, session commands and history queries, deterministic/OpenAI adapter updates) — and their tests inside `backend/internal/modules/<context>/{domain,application,adapters}` and established platform boundaries.
+- **Yellow:** commands, migrations, configuration contracts, the platform transaction/router seams, and cross-package boundaries require a planned review; ITER-0005 yellow items are listed in `docs/iterations/ITER-0005/plan.md`.
+- **Red:** API and Worker never run migrations; platform never imports a business module; do not create empty business packages; in ITER-0005 tests and CI deliver only through the deterministic/fake model adapter (no real-provider calls from CI).
 
 ## Dependencies and verification
 

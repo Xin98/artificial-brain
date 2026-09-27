@@ -3,6 +3,7 @@ package command
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"sync"
 	"time"
 
@@ -12,14 +13,14 @@ import (
 )
 
 type fakeModel struct {
-	input    *ports.MessageInput
-	proposal json.RawMessage
-	err      error
+	input *ports.MessageInput
+	turn  json.RawMessage
+	err   error
 }
 
-func (m *fakeModel) Propose(_ context.Context, in ports.MessageInput) (json.RawMessage, error) {
+func (m *fakeModel) Complete(_ context.Context, in ports.MessageInput) (json.RawMessage, error) {
 	m.input = &in
-	return m.proposal, m.err
+	return m.turn, m.err
 }
 
 type fakeTodoGateway struct {
@@ -125,12 +126,136 @@ func (s *fakeConfirmationStore) Consume(_ context.Context, workspaceID, userID, 
 }
 
 type fakeMessageLog struct {
-	messages []ports.MessageLog
+	messages  []ports.MessageLog
+	listCalls []fakeHistoryCall
+	listErr   error
+}
+
+type fakeHistoryCall struct {
+	sessionID string
+	limit     int
 }
 
 func (l *fakeMessageLog) Append(_ context.Context, message ports.MessageLog) error {
 	l.messages = append(l.messages, message)
 	return nil
+}
+
+func (l *fakeMessageLog) ListBySession(_ context.Context, _, _, sessionID string, limit int) ([]ports.MessageLogEntry, error) {
+	l.listCalls = append(l.listCalls, fakeHistoryCall{sessionID: sessionID, limit: limit})
+	if l.listErr != nil {
+		return nil, l.listErr
+	}
+	// Return the recorded transcript of the session, ascending, honoring
+	// the window limit like the postgres adapter does.
+	var entries []ports.MessageLogEntry
+	for index, message := range l.messages {
+		if message.SessionID == nil || *message.SessionID != sessionID {
+			continue
+		}
+		entries = append(entries, ports.MessageLogEntry{
+			ID:             strconv.Itoa(index + 1),
+			SessionID:      sessionID,
+			Role:           message.Role,
+			Body:           message.Body,
+			ResolvedIntent: message.ResolvedIntent,
+			CreatedAt:      message.CreatedAt,
+		})
+	}
+	if limit > 0 && len(entries) > limit {
+		entries = entries[len(entries)-limit:]
+	}
+	return entries, nil
+}
+
+type fakeSessionStore struct {
+	mu       sync.Mutex
+	sessions map[string]domain.Session
+	order    []string
+	nextID   int
+	getErr   error
+}
+
+func newFakeSessionStore() *fakeSessionStore {
+	return &fakeSessionStore{sessions: map[string]domain.Session{}}
+}
+
+func (s *fakeSessionStore) Create(_ context.Context, session domain.Session) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions[session.ID] = session
+	s.order = append(s.order, session.ID)
+	return nil
+}
+
+func (s *fakeSessionStore) Get(_ context.Context, workspaceID, userID, sessionID string) (domain.Session, error) {
+	if s.getErr != nil {
+		return domain.Session{}, s.getErr
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[sessionID]
+	if !ok || session.WorkspaceID != workspaceID || session.UserID != userID {
+		return domain.Session{}, domain.ErrSessionNotFound
+	}
+	return session, nil
+}
+
+func (s *fakeSessionStore) List(_ context.Context, workspaceID, userID string, limit int) ([]domain.Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var sessions []domain.Session
+	for index := len(s.order) - 1; index >= 0; index-- {
+		session := s.sessions[s.order[index]]
+		if session.WorkspaceID == workspaceID && session.UserID == userID {
+			sessions = append(sessions, session)
+		}
+	}
+	if limit > 0 && len(sessions) > limit {
+		sessions = sessions[:limit]
+	}
+	return sessions, nil
+}
+
+func (s *fakeSessionStore) Rename(_ context.Context, workspaceID, userID, sessionID, title string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[sessionID]
+	if !ok || session.WorkspaceID != workspaceID || session.UserID != userID {
+		return domain.ErrSessionNotFound
+	}
+	session.Title = title
+	session.UpdatedAt = now
+	s.sessions[sessionID] = session
+	return nil
+}
+
+func (s *fakeSessionStore) Delete(_ context.Context, workspaceID, userID, sessionID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[sessionID]
+	if !ok || session.WorkspaceID != workspaceID || session.UserID != userID {
+		return domain.ErrSessionNotFound
+	}
+	delete(s.sessions, sessionID)
+	return nil
+}
+
+func (s *fakeSessionStore) Touch(_ context.Context, workspaceID, userID, sessionID string, now time.Time) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	session, ok := s.sessions[sessionID]
+	if !ok || session.WorkspaceID != workspaceID || session.UserID != userID {
+		return domain.ErrSessionNotFound
+	}
+	session.UpdatedAt = now
+	s.sessions[sessionID] = session
+	return nil
+}
+
+func (s *fakeSessionStore) takeID() string {
+	s.nextID++
+	return "session-" + strconv.Itoa(s.nextID)
 }
 
 type fakeUoW struct{}

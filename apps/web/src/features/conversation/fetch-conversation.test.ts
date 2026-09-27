@@ -91,11 +91,94 @@ it("distinguishes a browser deadline from other network failures", async () => {
   ).resolves.toEqual({ ok: false, reason: "network" });
 });
 
+it("accepts a chat turn carrying the model reply and session id", async () => {
+  const fetcher = vi.fn().mockResolvedValue(
+    json(200, {
+      kind: "chat",
+      correlationId: "corr-chat",
+      reply: "你说的是：「今天天气怎么样」。这个我暂时不能直接执行。",
+      sessionId: "sess-1",
+    }),
+  );
+
+  await expect(
+    postConversationMessage(
+      "",
+      fetcher as unknown as typeof fetch,
+      "今天天气怎么样",
+      "Asia/Shanghai",
+      "sess-1",
+    ),
+  ).resolves.toEqual({
+    ok: true,
+    response: {
+      kind: "chat",
+      correlationId: "corr-chat",
+      reply: "你说的是：「今天天气怎么样」。这个我暂时不能直接执行。",
+      sessionId: "sess-1",
+    },
+  });
+});
+
+it("accepts a clarification that carries an optional model reply", async () => {
+  const fetcher = vi.fn().mockResolvedValue(
+    json(200, {
+      kind: "clarification",
+      correlationId: "corr-clarify",
+      missingFields: ["due_at"],
+      reply: "好的，请问「提交周报」要在什么时间提醒？",
+    }),
+  );
+
+  await expect(
+    postConversationMessage(
+      "",
+      fetcher as unknown as typeof fetch,
+      "提醒我提交周报",
+      "Asia/Shanghai",
+    ),
+  ).resolves.toMatchObject({ ok: true });
+});
+
+it("includes sessionId in the body only when provided", async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(
+      json(200, { kind: "chat", correlationId: "c", reply: "r" }),
+    );
+
+  await postConversationMessage(
+    "",
+    fetcher as unknown as typeof fetch,
+    "你好",
+    "Asia/Shanghai",
+    "sess-9",
+  );
+  expect(JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))).toEqual({
+    text: "你好",
+    timezone: "Asia/Shanghai",
+    sessionId: "sess-9",
+  });
+
+  await postConversationMessage(
+    "",
+    fetcher as unknown as typeof fetch,
+    "你好",
+    "Asia/Shanghai",
+  );
+  expect(JSON.parse(String(fetcher.mock.calls[1]?.[1]?.body))).toEqual({
+    text: "你好",
+    timezone: "Asia/Shanghai",
+  });
+});
+
 it.each([
   { kind: "todo_created", correlationId: "corr-malformed" },
   { kind: "candidates", correlationId: "corr-malformed" },
   { kind: "confirmation_required", correlationId: "corr-malformed" },
   { kind: "todo_deleted", correlationId: "corr-malformed" },
+  { kind: "chat", correlationId: "corr-malformed" },
+  { kind: "chat", correlationId: "corr-malformed", reply: "" },
 ])(
   "rejects a $kind success payload missing kind-specific fields",
   async (body) => {
@@ -118,6 +201,7 @@ it("rejects fields that belong to a different response kind", async () => {
       kind: "unsupported",
       correlationId: "corr-cross-kind",
       confirmationId: "conf-should-not-be-here",
+      reply: "reply is not allowed on unsupported",
     }),
   );
 

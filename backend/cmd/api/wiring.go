@@ -23,6 +23,7 @@ import (
 	convapplication "github.com/Xin98/artificial-brain/backend/internal/modules/conversation/application"
 	convcommand "github.com/Xin98/artificial-brain/backend/internal/modules/conversation/application/command"
 	convports "github.com/Xin98/artificial-brain/backend/internal/modules/conversation/application/ports"
+	convquery "github.com/Xin98/artificial-brain/backend/internal/modules/conversation/application/query"
 	conversationdomain "github.com/Xin98/artificial-brain/backend/internal/modules/conversation/domain"
 	identityhttp "github.com/Xin98/artificial-brain/backend/internal/modules/identity/adapters/inbound/http"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/identity/adapters/outbound/fakeoutbox"
@@ -426,6 +427,7 @@ func selectModel(cfg config.Config) convports.ModelPort {
 func registerConversationRoutes(cfg config.Config, pool *pgxpool.Pool, mux *http.ServeMux, auth func(http.Handler) http.Handler, todos todoHandlers) {
 	confirmations := convpostgres.NewConfirmationStore(pool)
 	messageLog := convpostgres.NewMessageLogStore(pool)
+	sessions := convpostgres.NewSessionStore(pool)
 	shim := &todoGatewayShim{
 		create:     todos.Create,
 		del:        todos.Delete,
@@ -437,12 +439,15 @@ func registerConversationRoutes(cfg config.Config, pool *pgxpool.Pool, mux *http
 		Model:             selectModel(cfg),
 		Todos:             shim,
 		Confirmations:     confirmations,
+		Sessions:          sessions,
 		Messages:          messageLog,
 		UoW:               &joinableUoW{runner: database.NewTxRunner(pool)},
 		Router:            convapplication.NewRouter(),
 		NewConfirmationID: newID,
+		NewSessionID:      newID,
 		Now:               time.Now,
 		ConfirmationTTL:   cfg.ConfirmationTTL,
+		HistoryTurns:      cfg.ConversationHistoryTurns,
 	}
 	createConfirmation := &convcommand.CreateConfirmationHandler{
 		Todos:           shim,
@@ -457,10 +462,27 @@ func registerConversationRoutes(cfg config.Config, pool *pgxpool.Pool, mux *http
 		UoW:           &joinableUoW{runner: database.NewTxRunner(pool)},
 		Now:           time.Now,
 	}
+	createSession := &convcommand.CreateSessionHandler{
+		Sessions: sessions,
+		NewID:    newID,
+		Now:      time.Now,
+	}
+	renameSession := &convcommand.RenameSessionHandler{
+		Sessions: sessions,
+		Now:      time.Now,
+	}
+	deleteSession := &convcommand.DeleteSessionHandler{Sessions: sessions}
+	listSessions := &convquery.ListSessionsHandler{Sessions: sessions}
+	getHistory := &convquery.GetHistoryHandler{Sessions: sessions, Messages: messageLog}
 	conversationhttp.RegisterRoutes(mux, auth, &conversationhttp.Handler{
 		ProcessMessage:     process,
 		CreateConfirmation: createConfirmation,
 		ConfirmAction:      confirmAction,
+		ListSessions:       listSessions,
+		CreateSession:      createSession,
+		RenameSession:      renameSession,
+		DeleteSession:      deleteSession,
+		GetHistory:         getHistory,
 	})
 }
 

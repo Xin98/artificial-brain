@@ -36,15 +36,82 @@ func denyAuth(next http.Handler) http.Handler {
 type fakeProcessor struct {
 	workspaceID string
 	userID      string
+	sessionID   string
 	text        string
 	timezone    string
 	response    dto.MessageResponse
 	err         error
 }
 
-func (p *fakeProcessor) Handle(_ context.Context, workspaceID, userID, text, timezone string) (dto.MessageResponse, error) {
-	p.workspaceID, p.userID, p.text, p.timezone = workspaceID, userID, text, timezone
+func (p *fakeProcessor) Handle(_ context.Context, workspaceID, userID, sessionID, text, timezone string) (dto.MessageResponse, error) {
+	p.workspaceID, p.userID, p.sessionID, p.text, p.timezone = workspaceID, userID, sessionID, text, timezone
 	return p.response, p.err
+}
+
+type fakeSessionLister struct {
+	view dto.SessionListView
+	err  error
+}
+
+func (l *fakeSessionLister) Handle(_ context.Context, _, _ string) (dto.SessionListView, error) {
+	return l.view, l.err
+}
+
+type fakeSessionCreator struct {
+	title string
+	view  dto.SessionView
+	err   error
+}
+
+func (c *fakeSessionCreator) Handle(_ context.Context, _, _, title string) (dto.SessionView, error) {
+	c.title = title
+	return c.view, c.err
+}
+
+type fakeSessionRenamer struct {
+	sessionID string
+	title     string
+	view      dto.SessionView
+	err       error
+}
+
+func (rn *fakeSessionRenamer) Handle(_ context.Context, _, _, sessionID, title string) (dto.SessionView, error) {
+	rn.sessionID, rn.title = sessionID, title
+	return rn.view, rn.err
+}
+
+type fakeSessionDeleter struct {
+	sessionID string
+	err       error
+}
+
+func (d *fakeSessionDeleter) Handle(_ context.Context, _, _, sessionID string) error {
+	d.sessionID = sessionID
+	return d.err
+}
+
+type fakeHistory struct {
+	sessionID string
+	view      dto.SessionHistoryView
+	err       error
+}
+
+func (g *fakeHistory) Handle(_ context.Context, _, _, sessionID string) (dto.SessionHistoryView, error) {
+	g.sessionID = sessionID
+	return g.view, g.err
+}
+
+func newTestHandler(processor *fakeProcessor) *Handler {
+	return &Handler{
+		ProcessMessage:     processor,
+		CreateConfirmation: &fakeConfirmationCreator{},
+		ConfirmAction:      &fakeConfirmer{},
+		ListSessions:       &fakeSessionLister{},
+		CreateSession:      &fakeSessionCreator{},
+		RenameSession:      &fakeSessionRenamer{},
+		DeleteSession:      &fakeSessionDeleter{},
+		GetHistory:         &fakeHistory{},
+	}
 }
 
 type fakeConfirmationCreator struct {
@@ -91,17 +158,18 @@ func decodeBody(t *testing.T, recorder *httptest.ResponseRecorder) map[string]an
 }
 
 func TestConversationRoutesRequireAuthentication(t *testing.T) {
-	handler := &Handler{
-		ProcessMessage:     &fakeProcessor{},
-		CreateConfirmation: &fakeConfirmationCreator{},
-		ConfirmAction:      &fakeConfirmer{},
-	}
+	handler := newTestHandler(&fakeProcessor{})
 	routes := []struct {
 		method string
 		target string
 		body   string
 	}{
 		{http.MethodPost, "/api/v1/conversation/messages", `{"text":"你好","timezone":"UTC"}`},
+		{http.MethodGet, "/api/v1/conversation/sessions", ""},
+		{http.MethodPost, "/api/v1/conversation/sessions", `{"title":"周报"}`},
+		{http.MethodGet, "/api/v1/conversation/sessions/session-1/messages", ""},
+		{http.MethodPatch, "/api/v1/conversation/sessions/session-1", `{"title":"新标题"}`},
+		{http.MethodDelete, "/api/v1/conversation/sessions/session-1", ""},
 		{http.MethodPost, "/api/v1/confirmations", `{"intent":"todo.delete","todoId":"todo-1"}`},
 		{http.MethodPost, "/api/v1/confirmations/conf-1/confirm", ""},
 	}
@@ -114,13 +182,15 @@ func TestConversationRoutesRequireAuthentication(t *testing.T) {
 }
 
 func TestMessagesReturnsKindAndCorrelationID(t *testing.T) {
-	processor := &fakeProcessor{response: dto.MessageResponse{Kind: dto.KindTodoCreated}}
-	handler := &Handler{ProcessMessage: processor, CreateConfirmation: &fakeConfirmationCreator{}, ConfirmAction: &fakeConfirmer{}}
+	processor := &fakeProcessor{response: dto.MessageResponse{
+		Kind: dto.KindTodoCreated, SessionID: "session-9", Reply: "好的。",
+	}}
+	handler := newTestHandler(processor)
 
 	mux := http.NewServeMux()
 	RegisterRoutes(mux, allowAuth, handler)
 	req := httptest.NewRequest(http.MethodPost, "/api/v1/conversation/messages",
-		strings.NewReader(`{"text":"明天提醒我提交周报","timezone":"Asia/Shanghai"}`))
+		strings.NewReader(`{"text":"明天提醒我提交周报","timezone":"Asia/Shanghai","sessionId":"session-9"}`))
 	req.Header.Set("Content-Type", "application/json")
 	req = req.WithContext(observability.WithCorrelationID(req.Context(), "corr-123"))
 	recorder := httptest.NewRecorder()
@@ -136,9 +206,26 @@ func TestMessagesReturnsKindAndCorrelationID(t *testing.T) {
 	if body["correlationId"] != "corr-123" {
 		t.Fatalf("correlationId = %v, want corr-123", body["correlationId"])
 	}
-	if processor.workspaceID != "ws-1" || processor.userID != "user-1" ||
+	if body["sessionId"] != "session-9" || body["reply"] != "好的。" {
+		t.Fatalf("session fields = %#v", body)
+	}
+	if processor.workspaceID != "ws-1" || processor.userID != "user-1" || processor.sessionID != "session-9" ||
 		processor.text != "明天提醒我提交周报" || processor.timezone != "Asia/Shanghai" {
 		t.Fatalf("processor args = %#v", processor)
+	}
+}
+
+func TestMessagesMapsUnknownSessionToNotFound(t *testing.T) {
+	processor := &fakeProcessor{err: domain.ErrSessionNotFound}
+	handler := newTestHandler(processor)
+
+	recorder := serve(t, handler, allowAuth, http.MethodPost, "/api/v1/conversation/messages",
+		`{"text":"你好","timezone":"UTC","sessionId":"session-x"}`)
+	if recorder.Code != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", recorder.Code)
+	}
+	if decoded := decodeBody(t, recorder); decoded["code"] != "session_not_found" {
+		t.Fatalf("envelope = %#v", decoded)
 	}
 }
 
@@ -264,5 +351,163 @@ func TestConfirmActionErrorMapping(t *testing.T) {
 		if decoded := decodeBody(t, recorder); decoded["code"] != tc.code {
 			t.Fatalf("%s envelope = %#v, want %s", tc.name, decoded, tc.code)
 		}
+	}
+}
+
+func TestListSessionsReturns200(t *testing.T) {
+	lister := &fakeSessionLister{view: dto.SessionListView{Sessions: []dto.SessionView{
+		{ID: "session-1", Title: "周报", CreatedAt: testNow, UpdatedAt: testNow},
+	}}}
+	handler := newTestHandler(&fakeProcessor{})
+	handler.ListSessions = lister
+
+	recorder := serve(t, handler, allowAuth, http.MethodGet, "/api/v1/conversation/sessions", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeBody(t, recorder)
+	sessions, ok := body["sessions"].([]any)
+	if !ok || len(sessions) != 1 || sessions[0].(map[string]any)["id"] != "session-1" {
+		t.Fatalf("body = %#v", body)
+	}
+}
+
+func TestCreateSessionReturns201(t *testing.T) {
+	creator := &fakeSessionCreator{view: dto.SessionView{ID: "session-1", Title: "周报", CreatedAt: testNow, UpdatedAt: testNow}}
+	handler := newTestHandler(&fakeProcessor{})
+	handler.CreateSession = creator
+
+	recorder := serve(t, handler, allowAuth, http.MethodPost, "/api/v1/conversation/sessions", `{"title":"周报"}`)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("status = %d, want 201, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeBody(t, recorder)
+	if body["id"] != "session-1" || body["title"] != "周报" {
+		t.Fatalf("body = %#v", body)
+	}
+	if creator.title != "周报" {
+		t.Fatalf("creator title = %q", creator.title)
+	}
+
+	// An absent body falls back to the default title.
+	recorder = serve(t, handler, allowAuth, http.MethodPost, "/api/v1/conversation/sessions", "")
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("empty body status = %d, want 201", recorder.Code)
+	}
+	if creator.title != "" {
+		t.Fatalf("creator title = %q, want blank for the domain fallback", creator.title)
+	}
+}
+
+func TestCreateSessionRejectsInvalidBodies(t *testing.T) {
+	cases := []struct {
+		name       string
+		body       string
+		creatorErr error
+	}{
+		{"invalid title", `{"title":"` + strings.Repeat("长", 51) + `"}`, domain.ErrSessionTitleInvalid},
+		{"unknown field", `{"title":"周报","bogus":1}`, nil},
+		{"malformed json", `{"title":`, nil},
+	}
+	for _, tc := range cases {
+		handler := newTestHandler(&fakeProcessor{})
+		handler.CreateSession = &fakeSessionCreator{err: tc.creatorErr}
+		recorder := serve(t, handler, allowAuth, http.MethodPost, "/api/v1/conversation/sessions", tc.body)
+		if recorder.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("%s status = %d, want 422, body = %s", tc.name, recorder.Code, recorder.Body.String())
+		}
+		if decoded := decodeBody(t, recorder); decoded["code"] != "validation_error" {
+			t.Fatalf("%s envelope = %#v", tc.name, decoded)
+		}
+	}
+}
+
+func TestRenameSessionMapping(t *testing.T) {
+	renamer := &fakeSessionRenamer{view: dto.SessionView{ID: "session-9", Title: "新标题", CreatedAt: testNow, UpdatedAt: testNow}}
+	handler := newTestHandler(&fakeProcessor{})
+	handler.RenameSession = renamer
+
+	recorder := serve(t, handler, allowAuth, http.MethodPatch, "/api/v1/conversation/sessions/session-9", `{"title":"新标题"}`)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if body := decodeBody(t, recorder); body["title"] != "新标题" || body["id"] != "session-9" {
+		t.Fatalf("body = %#v", body)
+	}
+	if renamer.sessionID != "session-9" || renamer.title != "新标题" {
+		t.Fatalf("renamer args = %#v", renamer)
+	}
+
+	handler.RenameSession = &fakeSessionRenamer{err: domain.ErrSessionNotFound}
+	recorder = serve(t, handler, allowAuth, http.MethodPatch, "/api/v1/conversation/sessions/session-x", `{"title":"任意"}`)
+	if recorder.Code != http.StatusNotFound || decodeBody(t, recorder)["code"] != "session_not_found" {
+		t.Fatalf("unknown session = %d %s", recorder.Code, recorder.Body.String())
+	}
+
+	handler.RenameSession = &fakeSessionRenamer{err: domain.ErrSessionTitleInvalid}
+	recorder = serve(t, handler, allowAuth, http.MethodPatch, "/api/v1/conversation/sessions/session-9", `{"title":""}`)
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("invalid title status = %d, want 422", recorder.Code)
+	}
+
+	recorder = serve(t, handler, allowAuth, http.MethodPatch, "/api/v1/conversation/sessions/session-9", `{"bogus":1}`)
+	if recorder.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("unknown field status = %d, want 422", recorder.Code)
+	}
+}
+
+func TestDeleteSessionMapping(t *testing.T) {
+	deleter := &fakeSessionDeleter{}
+	handler := newTestHandler(&fakeProcessor{})
+	handler.DeleteSession = deleter
+
+	recorder := serve(t, handler, allowAuth, http.MethodDelete, "/api/v1/conversation/sessions/session-9", "")
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204", recorder.Code)
+	}
+	if deleter.sessionID != "session-9" {
+		t.Fatalf("deleter id = %q", deleter.sessionID)
+	}
+
+	handler.DeleteSession = &fakeSessionDeleter{err: domain.ErrSessionNotFound}
+	recorder = serve(t, handler, allowAuth, http.MethodDelete, "/api/v1/conversation/sessions/session-x", "")
+	if recorder.Code != http.StatusNotFound || decodeBody(t, recorder)["code"] != "session_not_found" {
+		t.Fatalf("unknown session = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestSessionMessagesReplaysHistory(t *testing.T) {
+	chat := "chat"
+	getter := &fakeHistory{view: dto.SessionHistoryView{
+		SessionID: "session-9",
+		Title:     "周报",
+		Messages: []dto.MessageView{
+			{ID: "1", Role: "user", Body: "你好", ResolvedIntent: &chat, CreatedAt: testNow},
+			{ID: "2", Role: "assistant", Body: "你好！有什么可以帮你？", CreatedAt: testNow},
+		},
+	}}
+	handler := newTestHandler(&fakeProcessor{})
+	handler.GetHistory = getter
+
+	recorder := serve(t, handler, allowAuth, http.MethodGet, "/api/v1/conversation/sessions/session-9/messages", "")
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200, body = %s", recorder.Code, recorder.Body.String())
+	}
+	body := decodeBody(t, recorder)
+	if body["sessionId"] != "session-9" || body["title"] != "周报" {
+		t.Fatalf("body = %#v", body)
+	}
+	messages := body["messages"].([]any)
+	if len(messages) != 2 || messages[1].(map[string]any)["role"] != "assistant" {
+		t.Fatalf("messages = %#v", messages)
+	}
+	if getter.sessionID != "session-9" {
+		t.Fatalf("getter id = %q", getter.sessionID)
+	}
+
+	handler.GetHistory = &fakeHistory{err: domain.ErrSessionNotFound}
+	recorder = serve(t, handler, allowAuth, http.MethodGet, "/api/v1/conversation/sessions/session-x/messages", "")
+	if recorder.Code != http.StatusNotFound || decodeBody(t, recorder)["code"] != "session_not_found" {
+		t.Fatalf("unknown session = %d %s", recorder.Code, recorder.Body.String())
 	}
 }

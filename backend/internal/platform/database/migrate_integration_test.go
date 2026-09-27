@@ -36,8 +36,8 @@ func TestMigrate(t *testing.T) {
 	if version != CurrentSchemaVersion {
 		t.Fatalf("schema version = %d, want %d", version, CurrentSchemaVersion)
 	}
-	if version != 9 {
-		t.Fatalf("schema version = %d, want 9", version)
+	if version != 10 {
+		t.Fatalf("schema version = %d, want 10", version)
 	}
 
 	var workerTableCount int

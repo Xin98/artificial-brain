@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -81,5 +82,80 @@ func TestClarificationCarriesMissingFieldsAndReason(t *testing.T) {
 	clarification := Clarification{MissingFields: []string{"title"}, Reason: ReasonMissingFields}
 	if len(clarification.MissingFields) != 1 || clarification.MissingFields[0] != "title" || clarification.Reason != ReasonMissingFields {
 		t.Fatalf("clarification = %#v", clarification)
+	}
+}
+
+func TestNewSessionValidatesIdentifiersAndTitle(t *testing.T) {
+	session, err := NewSession("s-1", "ws-1", "user-1", "  周报会话  ", testNow)
+	if err != nil {
+		t.Fatalf("NewSession() error = %v", err)
+	}
+	if session.ID != "s-1" || session.WorkspaceID != "ws-1" || session.UserID != "user-1" {
+		t.Fatalf("session identity = %#v", session)
+	}
+	if session.Title != "周报会话" {
+		t.Fatalf("session.Title = %q, want trimmed", session.Title)
+	}
+	if !session.CreatedAt.Equal(testNow) || !session.UpdatedAt.Equal(testNow) {
+		t.Fatalf("session window = %v..%v", session.CreatedAt, session.UpdatedAt)
+	}
+
+	for _, title := range []string{"", "   ", strings.Repeat("长", MaxSessionTitleRunes+1)} {
+		if _, err := NewSession("s-1", "ws-1", "user-1", title, testNow); !errors.Is(err, ErrSessionTitleInvalid) {
+			t.Fatalf("NewSession(title=%q) error = %v, want ErrSessionTitleInvalid", title, err)
+		}
+	}
+	for _, id := range []string{"", " "} {
+		if _, err := NewSession(id, "ws-1", "user-1", "标题", testNow); !errors.Is(err, ErrInvalidSession) {
+			t.Fatalf("NewSession(id=%q) error = %v, want ErrInvalidSession", id, err)
+		}
+	}
+	if _, err := NewSession("s-1", "", "user-1", "标题", testNow); !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("NewSession(no workspace) error = %v, want ErrInvalidSession", err)
+	}
+	if _, err := NewSession("s-1", "ws-1", " ", "标题", testNow); !errors.Is(err, ErrInvalidSession) {
+		t.Fatalf("NewSession(no user) error = %v, want ErrInvalidSession", err)
+	}
+}
+
+func TestSessionRenamedValidatesAndTouches(t *testing.T) {
+	session, err := NewSession("s-1", "ws-1", "user-1", "旧标题", testNow)
+	if err != nil {
+		t.Fatalf("NewSession() error = %v", err)
+	}
+	renamed, err := session.Renamed(" 新标题 ", testNow.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("Renamed() error = %v", err)
+	}
+	if renamed.Title != "新标题" || !renamed.UpdatedAt.Equal(testNow.Add(time.Minute)) {
+		t.Fatalf("renamed = %#v", renamed)
+	}
+	if !renamed.CreatedAt.Equal(testNow) || renamed.ID != session.ID {
+		t.Fatalf("Renamed changed identity: %#v", renamed)
+	}
+	if session.Title != "旧标题" {
+		t.Fatalf("Renamed mutated the receiver: %#v", session)
+	}
+	if _, err := session.Renamed(strings.Repeat("长", MaxSessionTitleRunes+1), testNow); !errors.Is(err, ErrSessionTitleInvalid) {
+		t.Fatalf("Renamed(too long) error = %v, want ErrSessionTitleInvalid", err)
+	}
+	if _, err := session.Renamed("  ", testNow); !errors.Is(err, ErrSessionTitleInvalid) {
+		t.Fatalf("Renamed(blank) error = %v, want ErrSessionTitleInvalid", err)
+	}
+}
+
+func TestDefaultSessionTitle(t *testing.T) {
+	if got := DefaultSessionTitle("明天下午三点提醒我提交周报"); got != "明天下午三点提醒我提交周报" {
+		t.Fatalf("DefaultSessionTitle(short) = %q", got)
+	}
+	long := strings.Repeat("字", DefaultSessionTitleRunes+10)
+	if got := DefaultSessionTitle(long); got != strings.Repeat("字", DefaultSessionTitleRunes) {
+		t.Fatalf("DefaultSessionTitle(long) truncated to %d runes, want %d", len([]rune(got)), DefaultSessionTitleRunes)
+	}
+	if got := DefaultSessionTitle("   \n\t "); got != DefaultSessionTitleFallback {
+		t.Fatalf("DefaultSessionTitle(blank) = %q, want fallback", got)
+	}
+	if got := DefaultSessionTitle("  提醒我开会  "); got != "提醒我开会" {
+		t.Fatalf("DefaultSessionTitle(padded) = %q, want trimmed", got)
 	}
 }

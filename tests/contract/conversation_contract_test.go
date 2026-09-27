@@ -15,7 +15,17 @@ func conversationRoutes() []struct {
 		body    string
 	}{
 		{"/api/v1/conversation/messages", "post",
-			map[string]string{"200": "ConversationResponse", "401": "ErrorEnvelope", "422": "ErrorEnvelope"}, "ConversationMessageRequest"},
+			map[string]string{"200": "ConversationResponse", "401": "ErrorEnvelope", "404": "ErrorEnvelope", "422": "ErrorEnvelope"}, "ConversationMessageRequest"},
+		{"/api/v1/conversation/sessions", "get",
+			map[string]string{"200": "SessionListResponse", "401": "ErrorEnvelope"}, ""},
+		{"/api/v1/conversation/sessions", "post",
+			map[string]string{"201": "SessionView", "401": "ErrorEnvelope", "422": "ErrorEnvelope"}, "SessionCreateRequest"},
+		{"/api/v1/conversation/sessions/{sessionId}/messages", "get",
+			map[string]string{"200": "SessionHistoryResponse", "401": "ErrorEnvelope", "404": "ErrorEnvelope"}, ""},
+		{"/api/v1/conversation/sessions/{sessionId}", "patch",
+			map[string]string{"200": "SessionView", "401": "ErrorEnvelope", "404": "ErrorEnvelope", "422": "ErrorEnvelope"}, "SessionRenameRequest"},
+		{"/api/v1/conversation/sessions/{sessionId}", "delete",
+			map[string]string{"204": "", "401": "ErrorEnvelope", "404": "ErrorEnvelope"}, ""},
 		{"/api/v1/confirmations", "post",
 			map[string]string{"201": "ConfirmationCreated", "401": "ErrorEnvelope", "404": "ErrorEnvelope", "409": "ErrorEnvelope"}, "ConfirmationRequest"},
 		{"/api/v1/confirmations/{confirmationId}/confirm", "post",
@@ -25,7 +35,7 @@ func conversationRoutes() []struct {
 
 var conversationKinds = []string{
 	"todo_created", "clarification", "candidates", "confirmation_required",
-	"todo_list", "todo_deleted", "not_found", "unsupported",
+	"todo_list", "todo_deleted", "not_found", "unsupported", "chat",
 }
 
 func TestConversationContractRoutesCodesAndSchemas(t *testing.T) {
@@ -41,7 +51,9 @@ func TestConversationContractRoutesCodesAndSchemas(t *testing.T) {
 	}
 
 	message := schemas["ConversationMessageRequest"]
-	if !docClosedObject(message, []string{"text", "timezone"}) || !docMaxLength(message.Properties["text"], 1000) {
+	if !docClosedObject(message, []string{"text", "timezone"}) ||
+		!docPropertiesAre(message, []string{"text", "timezone", "sessionId"}) ||
+		!docMaxLength(message.Properties["text"], 1000) || !docIsString(message.Properties["sessionId"]) {
 		t.Fatalf("ConversationMessageRequest = %#v", message)
 	}
 
@@ -57,10 +69,14 @@ func TestConversationContractRoutesCodesAndSchemas(t *testing.T) {
 
 	response := schemas["ConversationResponse"]
 	required := []string{"kind", "correlationId"}
-	optional := []string{"todo", "resolvedDueAtUtc", "localEcho", "timezoneEcho", "missingFields",
+	optional := []string{"reply", "sessionId", "todo", "resolvedDueAtUtc", "localEcho", "timezoneEcho", "missingFields",
 		"candidates", "confirmationId", "expiresAt", "todos", "todoId"}
 	if !docClosedObject(response, required) || !docPropertiesAre(response, append(required, optional...)) {
 		t.Fatalf("ConversationResponse = %#v", response)
+	}
+	if !docIsString(response.Properties["reply"]) || !docMaxLength(response.Properties["reply"], 2000) ||
+		!docIsString(response.Properties["sessionId"]) {
+		t.Fatalf("ConversationResponse reply/sessionId = %#v", response.Properties)
 	}
 	if !docStringEnum(response.Properties["kind"], conversationKinds) {
 		t.Fatalf("ConversationResponse.kind enum = %#v", response.Properties["kind"].Enum)
@@ -93,6 +109,46 @@ func TestConversationContractRoutesCodesAndSchemas(t *testing.T) {
 		!docMaxLength(todoView.Properties["title"], 200) {
 		t.Fatalf("TodoView = %#v", todoView)
 	}
+
+	sessionView := schemas["SessionView"]
+	if !docClosedObject(sessionView, []string{"id", "title", "createdAt", "updatedAt"}) ||
+		!docPropertiesAre(sessionView, []string{"id", "title", "createdAt", "updatedAt"}) ||
+		!docMaxLength(sessionView.Properties["title"], 50) ||
+		!docDateTime(sessionView.Properties["createdAt"]) || !docDateTime(sessionView.Properties["updatedAt"]) {
+		t.Fatalf("SessionView = %#v", sessionView)
+	}
+
+	sessionList := schemas["SessionListResponse"]
+	if !docClosedObject(sessionList, []string{"sessions"}) || !docArrayOfRef(sessionList.Properties["sessions"], "SessionView") {
+		t.Fatalf("SessionListResponse = %#v", sessionList)
+	}
+
+	sessionCreate := schemas["SessionCreateRequest"]
+	if !docClosedObject(sessionCreate, nil) || !docPropertiesAre(sessionCreate, []string{"title"}) ||
+		!docMinLength(sessionCreate.Properties["title"], 1) || !docMaxLength(sessionCreate.Properties["title"], 50) {
+		t.Fatalf("SessionCreateRequest = %#v", sessionCreate)
+	}
+
+	sessionRename := schemas["SessionRenameRequest"]
+	if !docClosedObject(sessionRename, []string{"title"}) || !docPropertiesAre(sessionRename, []string{"title"}) ||
+		!docMinLength(sessionRename.Properties["title"], 1) || !docMaxLength(sessionRename.Properties["title"], 50) {
+		t.Fatalf("SessionRenameRequest = %#v", sessionRename)
+	}
+
+	history := schemas["SessionHistoryResponse"]
+	if !docClosedObject(history, []string{"sessionId", "title", "messages"}) ||
+		!docPropertiesAre(history, []string{"sessionId", "title", "messages"}) ||
+		!docArrayOfRef(history.Properties["messages"], "MessageView") {
+		t.Fatalf("SessionHistoryResponse = %#v", history)
+	}
+
+	messageView := schemas["MessageView"]
+	if !docClosedObject(messageView, []string{"id", "role", "body", "createdAt"}) ||
+		!docPropertiesAre(messageView, []string{"id", "role", "body", "resolvedIntent", "createdAt"}) ||
+		!docStringEnum(messageView.Properties["role"], []string{"user", "assistant"}) ||
+		!docIsString(messageView.Properties["resolvedIntent"]) || !docDateTime(messageView.Properties["createdAt"]) {
+		t.Fatalf("MessageView = %#v", messageView)
+	}
 }
 
 func TestConversationContractRejectsMutation(t *testing.T) {
@@ -107,6 +163,16 @@ func TestConversationContractRejectsMutation(t *testing.T) {
 	mutated.Paths["/api/v1/confirmations/{confirmationId}/confirm"] = confirm
 	if conversationContractValid(mutated) {
 		t.Fatal("mutation (missing 410) unexpectedly passed validation")
+	}
+	// Giving the content-less delete (204) a JSON body must fail.
+	mutated = loadDoc(t, "conversation.yaml")
+	session := mutated.Paths["/api/v1/conversation/sessions/{sessionId}"]
+	session.Delete.Responses["204"] = docResponse{Content: map[string]docMediaType{
+		"application/json": {Schema: docSchema{Ref: "#/components/schemas/ErrorEnvelope"}},
+	}}
+	mutated.Paths["/api/v1/conversation/sessions/{sessionId}"] = session
+	if conversationContractValid(mutated) {
+		t.Fatal("mutation (204 with content) unexpectedly passed validation")
 	}
 }
 
@@ -124,6 +190,12 @@ func conversationContractValid(document docDocument) bool {
 			return false
 		}
 		for code, schema := range route.schemas {
+			if schema == "" {
+				if len(operation.Responses[code].Content) != 0 {
+					return false
+				}
+				continue
+			}
 			if operation.Responses[code].Content["application/json"].Schema.Ref != "#/components/schemas/"+schema {
 				return false
 			}
@@ -160,6 +232,31 @@ func conversationContractValid(document docDocument) bool {
 		return false
 	}
 	todoView := schemas["TodoView"]
-	return docClosedObject(todoView, []string{"id", "title", "status", "overdue", "reminderVersion", "version", "createdAt", "updatedAt"}) &&
-		docStringEnum(todoView.Properties["status"], []string{"pending", "completed"})
+	if !docClosedObject(todoView, []string{"id", "title", "status", "overdue", "reminderVersion", "version", "createdAt", "updatedAt"}) ||
+		!docStringEnum(todoView.Properties["status"], []string{"pending", "completed"}) {
+		return false
+	}
+	sessionView := schemas["SessionView"]
+	if !docClosedObject(sessionView, []string{"id", "title", "createdAt", "updatedAt"}) || !docMaxLength(sessionView.Properties["title"], 50) {
+		return false
+	}
+	sessionList := schemas["SessionListResponse"]
+	if !docClosedObject(sessionList, []string{"sessions"}) || !docArrayOfRef(sessionList.Properties["sessions"], "SessionView") {
+		return false
+	}
+	sessionCreate := schemas["SessionCreateRequest"]
+	if !docClosedObject(sessionCreate, nil) || !docMinLength(sessionCreate.Properties["title"], 1) {
+		return false
+	}
+	sessionRename := schemas["SessionRenameRequest"]
+	if !docClosedObject(sessionRename, []string{"title"}) || !docMinLength(sessionRename.Properties["title"], 1) {
+		return false
+	}
+	history := schemas["SessionHistoryResponse"]
+	if !docClosedObject(history, []string{"sessionId", "title", "messages"}) || !docArrayOfRef(history.Properties["messages"], "MessageView") {
+		return false
+	}
+	messageView := schemas["MessageView"]
+	return docClosedObject(messageView, []string{"id", "role", "body", "createdAt"}) &&
+		docStringEnum(messageView.Properties["role"], []string{"user", "assistant"})
 }

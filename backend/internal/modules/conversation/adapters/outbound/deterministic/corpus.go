@@ -11,7 +11,16 @@ const (
 	confidenceUnknown   = 0.0
 )
 
-// proposalEnvelope is the marshaled model output shape. MissingFields is
+// turnEnvelope is the unified model output: a natural-language reply plus
+// the structured proposal. The deterministic adapter always fills both;
+// the proposal object stays byte-identical to the pre-sessions output.
+type turnEnvelope struct {
+	SchemaVersion string           `json:"schemaVersion"`
+	Reply         string           `json:"reply"`
+	Proposal      proposalEnvelope `json:"proposal"`
+}
+
+// proposalEnvelope is the marshaled proposal shape (v1). MissingFields is
 // always serialized as an array because the schema requires the key.
 type proposalEnvelope struct {
 	SchemaVersion string            `json:"schemaVersion"`

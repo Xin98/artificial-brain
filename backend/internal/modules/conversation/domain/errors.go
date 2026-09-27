@@ -18,4 +18,17 @@ var (
 	// never imports Todo's domain package.
 	ErrTodoNotFound   = errors.New("conversation: todo not found")
 	ErrTodoNotPending = errors.New("conversation: todo is not pending")
+
+	// ErrInvalidModelTurn rejects unified model output whose envelope fails
+	// strict validation; like ErrInvalidProposal it never becomes a write and
+	// never masquerades as chat.
+	ErrInvalidModelTurn = errors.New("conversation: model turn failed envelope validation")
+
+	// ErrInvalidSession marks constructor misuse (missing identifiers);
+	// ErrSessionTitleInvalid marks out-of-bounds titles; ErrSessionNotFound
+	// is the scoped miss for any session access outside the caller's
+	// workspace+user.
+	ErrInvalidSession      = errors.New("conversation: session is invalid")
+	ErrSessionTitleInvalid = errors.New("conversation: session title is invalid")
+	ErrSessionNotFound     = errors.New("conversation: session not found")
 )

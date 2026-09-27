@@ -1335,3 +1335,118 @@ main[data-page="login"] {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ----- ITER-0005 conversation sessions ---------------------------------------------------- */
+
+.conversation-layout {
+  align-items: start;
+  display: grid;
+  gap: 1.5rem;
+  grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+}
+
+.session-sidebar {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-l);
+  box-shadow: var(--shadow-card);
+  display: grid;
+  gap: 0.75rem;
+  padding: 1rem;
+}
+
+.session-new {
+  width: 100%;
+}
+
+.session-list {
+  display: grid;
+  gap: 0.375rem;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.session-item {
+  border: 1px solid transparent;
+  border-radius: var(--radius-m);
+}
+
+.session-item-active {
+  background: var(--accent-soft);
+  border-color: var(--ring);
+}
+
+.session-row {
+  align-items: center;
+  display: flex;
+  gap: 0.25rem;
+}
+
+.session-open {
+  background: transparent;
+  border: 0;
+  border-radius: var(--radius-m);
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  flex: 1 1 auto;
+  gap: 0.125rem;
+  min-width: 0;
+  padding: 0.5rem 0.625rem;
+  text-align: left;
+}
+
+.session-open:hover {
+  background: var(--surface-2);
+}
+
+.session-open:focus-visible {
+  box-shadow: 0 0 0 3px var(--ring);
+  outline: none;
+}
+
+.session-title {
+  color: var(--text-1);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-meta {
+  color: var(--text-3);
+  font-size: 0.75rem;
+}
+
+.session-actions {
+  display: flex;
+  flex: 0 0 auto;
+  gap: 0.125rem;
+}
+
+.session-actions button {
+  font-size: 0.75rem;
+  padding: 0.25rem 0.375rem;
+}
+
+.session-rename {
+  display: grid;
+  gap: 0.375rem;
+  padding: 0.5rem;
+}
+
+.session-rename input {
+  width: 100%;
+}
+
+.chat-history-loading {
+  color: var(--text-3);
+  margin: 0;
+}
+
+@media (max-width: 48rem) {
+  .conversation-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

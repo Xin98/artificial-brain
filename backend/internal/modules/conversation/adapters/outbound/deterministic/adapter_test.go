@@ -39,17 +39,29 @@ func TestMatchingNormalizesWhitespaceAndEnglishCase(t *testing.T) {
 	}
 }
 
-func TestProposeIsByteIdenticalAcrossCalls(t *testing.T) {
+func TestCompleteIsByteIdenticalAcrossCalls(t *testing.T) {
 	adapter := New(func() time.Time { return corpusNow })
 	input := ports.MessageInput{Text: "明天下午三点提醒我提交周报", Timezone: "Asia/Shanghai"}
-	first, err := adapter.Propose(context.Background(), input)
+	first, err := adapter.Complete(context.Background(), input)
 	if err != nil {
-		t.Fatalf("Propose() error = %v", err)
+		t.Fatalf("Complete() error = %v", err)
+	}
+	// The envelope carries both the fixed reply and the unchanged v1 proposal.
+	var envelope struct {
+		SchemaVersion string          `json:"schemaVersion"`
+		Reply         string          `json:"reply"`
+		Proposal      json.RawMessage `json:"proposal"`
+	}
+	if err := json.Unmarshal(first, &envelope); err != nil {
+		t.Fatalf("envelope invalid JSON: %v; raw = %s", err, first)
+	}
+	if envelope.SchemaVersion != "1" || envelope.Reply == "" || len(envelope.Proposal) == 0 {
+		t.Fatalf("envelope = %#v, want schemaVersion/reply/proposal all present", envelope)
 	}
 	for index := 0; index < 5; index++ {
-		again, err := adapter.Propose(context.Background(), input)
+		again, err := adapter.Complete(context.Background(), input)
 		if err != nil {
-			t.Fatalf("Propose() repeat error = %v", err)
+			t.Fatalf("Complete() repeat error = %v", err)
 		}
 		if !bytes.Equal(first, again) {
 			t.Fatalf("repeat %d differs: %s vs %s", index, first, again)
@@ -59,16 +71,19 @@ func TestProposeIsByteIdenticalAcrossCalls(t *testing.T) {
 
 func TestInvalidTimezoneFallsBackDeterministically(t *testing.T) {
 	adapter := New(func() time.Time { return corpusNow })
-	raw, err := adapter.Propose(context.Background(), ports.MessageInput{
+	raw, err := adapter.Complete(context.Background(), ports.MessageInput{
 		Text: "明天下午三点提醒我提交周报", Timezone: "Not/AZone",
 	})
 	if err != nil {
-		t.Fatalf("Propose() error = %v", err)
+		t.Fatalf("Complete() error = %v", err)
 	}
-	var proposal evalProposal
-	if err := json.Unmarshal(raw, &proposal); err != nil {
+	var envelope struct {
+		Proposal evalProposal `json:"proposal"`
+	}
+	if err := json.Unmarshal(raw, &envelope); err != nil {
 		t.Fatalf("invalid JSON: %v", err)
 	}
+	proposal := envelope.Proposal
 	// The due resolves against UTC when the input timezone cannot load; the
 	// raw timezone still travels so the application validation rejects it.
 	if proposal.Arguments.DueAtUTC != "2026-08-19T15:00:00Z" {

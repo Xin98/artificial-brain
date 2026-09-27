@@ -2,9 +2,9 @@
 
 ## Zones
 
-- **Green:** add focused implementation and tests within an existing feature or platform boundary, including the ITER-0004 private deployment and data portability work (Identity, Todo, Conversation, Reminder, and Portability modules, plus the `/data` web feature).
-- **Yellow:** changes to root build configuration, CI, public contracts, migrations, architecture policy, or any `AGENTS.md` must be listed in the ITER-0004 iteration plan's yellow-zone register and handled deliberately.
-- **Red:** in ITER-0004 do not call real providers from CI (private-mode smoke runs development fakes), do not commit credentials, do not lower CI gates, and migrations 001–007 stay untouched.
+- **Green:** add focused implementation and tests within an existing feature or platform boundary, including the ITER-0005 conversation upgrade (Conversation module sessions/free-chat/history work plus the `/conversation` web feature).
+- **Yellow:** changes to root build configuration, CI, public contracts, migrations, architecture policy, or any `AGENTS.md` must be listed in the ITER-0005 iteration plan's yellow-zone register and handled deliberately.
+- **Red:** in ITER-0005 do not call real providers from CI (conversation smoke runs the deterministic development adapter), do not commit credentials, do not lower CI gates, do not add Go or web dependencies, and migrations 001–009 stay untouched.
 
 ## Dependencies and verification
 

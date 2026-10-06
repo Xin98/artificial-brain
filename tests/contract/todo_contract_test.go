@@ -41,7 +41,7 @@ func TestTodoContractRoutesCodesAndSchemas(t *testing.T) {
 
 	todo := schemas["Todo"]
 	required := []string{"id", "title", "status", "overdue", "reminderVersion", "version", "createdAt", "updatedAt"}
-	optional := []string{"description", "dueAtUtc", "timezoneAtInput", "completedAt", "deletedAt"}
+	optional := []string{"description", "dueAtUtc", "timezoneAtInput", "completedAt", "deletedAt", "reminderScheduled", "reminderChannels"}
 	if !docClosedObject(todo, required) || !docPropertiesAre(todo, append(required, optional...)) {
 		t.Fatalf("Todo = %#v", todo)
 	}

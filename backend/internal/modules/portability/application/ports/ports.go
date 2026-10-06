@@ -73,6 +73,8 @@ type ParsedBundle struct {
 	Todos      []domain.TodoRecord
 	Deliveries []domain.DeliveryRecord
 	Channels   []domain.ChannelRecord
+	Sessions   []domain.SessionRecord
+	Messages   []domain.MessageRecord
 }
 
 // BundleParser validates and decodes an export bundle's bytes. Parse checks
@@ -112,6 +114,12 @@ type SourceRecordStore interface {
 	// (sourceInstanceID, sourceRecordID) pair reports
 	// domain.ErrSourceRecordExists.
 	Register(ctx context.Context, record dto.SourceRecord) error
+}
+
+// ScopedSourceRecordStore binds every source lookup and write to the importing
+// owner. Legacy unscoped methods remain an adapter compatibility surface only.
+type ScopedSourceRecordStore interface {
+	ForOwner(Principal) SourceRecordStore
 }
 
 // TodoImporter restores one bundle todo through the todo module's public

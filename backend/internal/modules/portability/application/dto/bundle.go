@@ -5,6 +5,7 @@
 package dto
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/Xin98/artificial-brain/backend/internal/modules/portability/domain"
@@ -18,6 +19,8 @@ const (
 	PreferencesEntry = "preferences.json"
 	TodosCSVEntry    = "todos.csv"
 	ManifestEntry    = "manifest.json"
+	SessionsEntry    = "conversation-sessions.json"
+	MessagesEntry    = "conversation-messages.json"
 )
 
 // TodoExportRecord is one todo row in the bundle wire shape: full history —
@@ -84,6 +87,8 @@ type BundleManifestCounts struct {
 	Todos      int `json:"todos"`
 	Deliveries int `json:"deliveries"`
 	Channels   int `json:"channels"`
+	Sessions   int `json:"sessions"`
+	Messages   int `json:"messages"`
 }
 
 // NewBundleManifest maps the domain manifest to its bundle wire shape.
@@ -96,7 +101,24 @@ func NewBundleManifest(manifest domain.Manifest) BundleManifest {
 			Todos:      manifest.Counts.Todos,
 			Deliveries: manifest.Counts.Deliveries,
 			Channels:   manifest.Counts.Channels,
+			Sessions:   manifest.Counts.Sessions,
+			Messages:   manifest.Counts.Messages,
 		},
 		Files: manifest.Files,
 	}
+}
+
+// MarshalJSON keeps schema1's closed count object unchanged while schema2
+// explicitly writes both history counts, including empty history.
+func (m BundleManifest) MarshalJSON() ([]byte, error) {
+	type alias BundleManifest
+	counts := map[string]int{"todos": m.Counts.Todos, "channels": m.Counts.Channels, "deliveries": m.Counts.Deliveries}
+	if m.SchemaVersion == "2" {
+		counts["sessions"] = m.Counts.Sessions
+		counts["messages"] = m.Counts.Messages
+	}
+	return json.Marshal(struct {
+		alias
+		Counts map[string]int `json:"counts"`
+	}{alias: alias(m), Counts: counts})
 }

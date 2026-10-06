@@ -104,3 +104,32 @@ it("verifies a channel with the entered code and toggles it", async () => {
     expect(JSON.parse(String(toggleInit?.body))).toEqual({ enabled: false });
   });
 });
+
+it("validates channel addresses before submitting and explains inactive verification", async () => {
+  const fetcher = vi.fn().mockResolvedValue(json(200, { channels: [channel] }));
+  render(<ChannelManager fetcher={fetcher} />);
+  await screen.findByText(/user@example.com/);
+  expect(screen.getByText("待验证 · 暂不能接收提醒")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("地址"), { target: { value: "bad" } });
+  fireEvent.click(screen.getByRole("button", { name: "添加" }));
+  expect(screen.getByRole("alert")).toHaveTextContent("格式无效");
+  expect(fetcher).toHaveBeenCalledTimes(1);
+});
+
+it("resends verification for an existing channel without duplicating it and starts a countdown", async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(json(200, { channels: [channel] }))
+    .mockResolvedValueOnce(json(202, {}));
+  render(<ChannelManager fetcher={fetcher} />);
+  await screen.findByText(/user@example.com/);
+  fireEvent.click(screen.getByRole("button", { name: "重新发送验证码" }));
+  await waitFor(() =>
+    expect(screen.getByRole("button", { name: /秒后重新发送/ })).toBeDisabled(),
+  );
+  expect(String(fetcher.mock.calls[1][0])).toBe(
+    "/api/v1/settings/contact-channels/channel-1/resend",
+  );
+  expect(fetcher.mock.calls[1][1]?.method).toBe("POST");
+  expect(screen.getByRole("status")).toHaveTextContent("验证码已重新发送");
+});

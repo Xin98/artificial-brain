@@ -6,6 +6,7 @@ import "time"
 // (new|skipped|conflict|invalid), and why.
 type Decision struct {
 	Kind           string `json:"kind"`
+	Label          string `json:"label,omitempty"`
 	SourceRecordID string `json:"sourceRecordId"`
 	Outcome        string `json:"outcome"`
 	Reason         string `json:"reason"`

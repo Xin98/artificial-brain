@@ -1,9 +1,13 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"strconv"
 
+	"github.com/Xin98/artificial-brain/backend/internal/modules/conversation/application/dto"
+	"github.com/Xin98/artificial-brain/backend/internal/modules/conversation/application/query"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/conversation/domain"
 )
 
@@ -12,7 +16,30 @@ func (h *Handler) listSessions(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	view, err := h.ListSessions.Handle(r.Context(), principal.WorkspaceID, principal.UserID)
+	offset := 0
+	if raw := r.URL.Query().Get("offset"); raw != "" {
+		value, err := strconv.ParseInt(raw, 10, 32)
+		if err != nil || value < 0 || value > 2147483647-query.MaxListedSessions-1 {
+			writeValidationError(w, r)
+			return
+		}
+		for _, c := range raw {
+			if c < '0' || c > '9' {
+				writeValidationError(w, r)
+				return
+			}
+		}
+		offset = int(value)
+	}
+	var view dto.SessionListView
+	var err error
+	if paged, ok := h.ListSessions.(interface {
+		HandlePage(context.Context, string, string, int) (dto.SessionListView, error)
+	}); ok {
+		view, err = paged.HandlePage(r.Context(), principal.WorkspaceID, principal.UserID, offset)
+	} else {
+		view, err = h.ListSessions.Handle(r.Context(), principal.WorkspaceID, principal.UserID)
+	}
 	if err != nil {
 		writeError(w, r, http.StatusInternalServerError, "internal_error", "internal server error")
 		return
@@ -91,7 +118,29 @@ func (h *Handler) sessionMessages(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	view, err := h.GetHistory.Handle(r.Context(), principal.WorkspaceID, principal.UserID, r.PathValue("sessionId"))
+	before := r.URL.Query().Get("before")
+	if before != "" {
+		value, err := strconv.ParseInt(before, 10, 64)
+		if err != nil || value <= 0 {
+			writeValidationError(w, r)
+			return
+		}
+		for _, c := range before {
+			if c < '0' || c > '9' {
+				writeValidationError(w, r)
+				return
+			}
+		}
+	}
+	var view dto.SessionHistoryView
+	var err error
+	if paged, ok := h.GetHistory.(interface {
+		HandlePage(context.Context, string, string, string, string) (dto.SessionHistoryView, error)
+	}); ok {
+		view, err = paged.HandlePage(r.Context(), principal.WorkspaceID, principal.UserID, r.PathValue("sessionId"), before)
+	} else {
+		view, err = h.GetHistory.Handle(r.Context(), principal.WorkspaceID, principal.UserID, r.PathValue("sessionId"))
+	}
 	if err != nil {
 		if errors.Is(err, domain.ErrSessionNotFound) {
 			writeSessionNotFound(w, r)

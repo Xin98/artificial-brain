@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useRef, useState } from "react";
 
 import { formatRFC3339UTC } from "../validation";
 import { createTodo, updateTodo } from "./fetch-todos";
@@ -9,7 +9,8 @@ import type { Todo } from "./fetch-todos";
 const errorMessages: Record<string, string> = {
   validation_error: "内容无效:标题需在 1 到 200 字之间,时间需合法。",
   conflict: "待办已被更新,请刷新后重试。",
-  unavailable: "服务暂时不可用,请稍后再试。",
+  not_found: "待办已被删除，请刷新列表。",
+  unavailable: "请求结果暂时无法确认，请刷新列表检查是否已保存，再尝试提交。",
 };
 
 function browserTimezone(provider?: () => string): string {
@@ -44,7 +45,8 @@ function toLocalInput(dueAtUtc?: string): string {
   if (Number.isNaN(parsed.getTime())) {
     return "";
   }
-  return parsed.toISOString().slice(0, 16);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${parsed.getFullYear()}-${pad(parsed.getMonth() + 1)}-${pad(parsed.getDate())}T${pad(parsed.getHours())}:${pad(parsed.getMinutes())}`;
 }
 
 // TodoForm creates or edits a todo. The browser timezone travels with the
@@ -54,20 +56,28 @@ export function TodoForm({
   editing,
   timezoneProvider,
   onDone,
+  onCancel,
 }: {
   fetcher?: typeof fetch;
   editing?: Todo;
   timezoneProvider?: () => string;
   onDone: () => void;
+  onCancel?: () => void;
 }): React.JSX.Element {
   const [title, setTitle] = useState(editing?.title ?? "");
   const [description, setDescription] = useState(editing?.description ?? "");
   const [due, setDue] = useState(toLocalInput(editing?.dueAtUtc));
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const submitting = useRef(false);
+  const [success, setSuccess] = useState<string | null>(null);
+  const id = useId();
 
   async function submit(event: React.FormEvent): Promise<void> {
     event.preventDefault();
+    if (submitting.current) return;
+    submitting.current = true;
+    setSuccess(null);
     setBusy(true);
     setError(null);
     const timezone = browserTimezone(timezoneProvider);
@@ -75,6 +85,7 @@ export function TodoForm({
     if (due !== "" && dueAtUtc === null) {
       setError(errorMessages.validation_error);
       setBusy(false);
+      submitting.current = false;
       return;
     }
 
@@ -86,8 +97,14 @@ export function TodoForm({
             description !== (editing.description ?? "")
               ? description
               : undefined,
-          dueAtUtc: dueAtUtc ?? null,
-          timezoneAtInput: dueAtUtc ? timezone : undefined,
+          dueAtUtc:
+            due === toLocalInput(editing.dueAtUtc)
+              ? editing.dueAtUtc
+              : (dueAtUtc ?? null),
+          timezoneAtInput:
+            dueAtUtc && due !== toLocalInput(editing.dueAtUtc)
+              ? timezone
+              : undefined,
         })
       : await createTodo("", fetcher, {
           title,
@@ -96,7 +113,14 @@ export function TodoForm({
           timezoneAtInput: dueAtUtc ? timezone : undefined,
         });
     setBusy(false);
+    submitting.current = false;
     if (outcome.ok) {
+      if (!editing) {
+        setTitle("");
+        setDescription("");
+        setDue("");
+      }
+      setSuccess(editing ? "待办已保存。" : "待办已创建。可继续新建下一条。");
       onDone();
       return;
     }
@@ -110,9 +134,9 @@ export function TodoForm({
       onSubmit={submit}
     >
       <div className="field">
-        <label htmlFor="todo-title">标题</label>
+        <label htmlFor={`${id}-title`}>标题</label>
         <input
-          id="todo-title"
+          id={`${id}-title`}
           maxLength={200}
           onChange={(event) => setTitle(event.target.value)}
           type="text"
@@ -120,9 +144,9 @@ export function TodoForm({
         />
       </div>
       <div className="field">
-        <label htmlFor="todo-description">描述</label>
+        <label htmlFor={`${id}-description`}>描述</label>
         <input
-          id="todo-description"
+          id={`${id}-description`}
           onChange={(event) => setDescription(event.target.value)}
           type="text"
           value={description}
@@ -130,9 +154,9 @@ export function TodoForm({
       </div>
       <div className="form-row">
         <div className="field">
-          <label htmlFor="todo-due">到期时间</label>
+          <label htmlFor={`${id}-due`}>到期时间</label>
           <input
-            id="todo-due"
+            id={`${id}-due`}
             onChange={(event) => setDue(event.target.value)}
             type="datetime-local"
             value={due}
@@ -142,6 +166,17 @@ export function TodoForm({
           {editing ? "保存" : "新建"}
         </button>
       </div>
+      {editing && onCancel ? (
+        <button
+          className="btn-ghost"
+          disabled={busy}
+          onClick={onCancel}
+          type="button"
+        >
+          取消编辑
+        </button>
+      ) : null}
+      {success ? <p role="status">{success}</p> : null}
       {error ? (
         <p aria-live="polite" className="todo-error" role="alert">
           {error}

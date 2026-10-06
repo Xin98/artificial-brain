@@ -8,11 +8,16 @@ paths:
       operationId: exportBundle
       description: >-
         Streams the workspace's full-history export bundle — todos, reminder
-        deliveries, contact channel preferences, and the manifest — as a zip
+        deliveries, contact channel preferences, owner-scoped conversation sessions
+        and complete messages, and the schema 2 manifest — as a zip
         download. The Content-Disposition header carries the attachment
         filename artificial-brain-export-YYYYMMDD.zip. Once streaming has
         started the response is committed; a mid-stream failure can no longer
-        switch to the JSON error envelope.
+        switch to the JSON error envelope. Schema 2 adds conversation-sessions.json
+        and conversation-messages.json with SHA-256 checksums and counts; message
+        order, role, body, timestamp and optional resolved intent are preserved.
+        Legacy messages without sessions are included. Imports read schemas 1
+        and 2, restore history only, and never replay operations or providers.
       responses:
         '200':
           description: The export bundle as a zip download.
@@ -155,7 +160,10 @@ components:
       properties:
         kind:
           type: string
-          enum: [todo, channel, delivery]
+          enum: [todo, channel, delivery, session, message]
+        label:
+          type: string
+          description: Readable title, contact address, or message excerpt. Optional for older stored previews.
         sourceRecordId:
           type: string
         outcome:

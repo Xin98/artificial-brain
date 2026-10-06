@@ -24,13 +24,16 @@ const (
 	KindTodo     = "todo"
 	KindChannel  = "channel"
 	KindDelivery = "delivery"
+	KindSession  = "session"
+	KindMessage  = "message"
 )
 
 // ImportEntry is one validated bundle record awaiting a decision.
 type ImportEntry struct {
-	Kind           string // todo|channel|delivery
-	SourceRecordID string
-	Fingerprint    string
+	SourceInstanceID string // when set, resolves the exact source key without parsing delimiters
+	Kind             string // todo|channel|delivery
+	SourceRecordID   string
+	Fingerprint      string
 }
 
 // Decision is the classification of one import entry.
@@ -58,11 +61,31 @@ func decideEntry(entry ImportEntry, existing map[string]string) Decision {
 	if entry.SourceRecordID == "" {
 		return Decision{Kind: entry.Kind, Outcome: OutcomeNew}
 	}
+	if entry.SourceInstanceID != "" {
+		fingerprint, ok := existing[entry.SourceInstanceID+":"+entry.SourceRecordID]
+		if !ok {
+			return Decision{Kind: entry.Kind, SourceRecordID: entry.SourceRecordID, Outcome: OutcomeNew}
+		}
+		reason := "fingerprint changed since last import"
+		outcome := OutcomeConflict
+		if fingerprint == entry.Fingerprint {
+			reason = "fingerprint unchanged since last import"
+			outcome = OutcomeSkipped
+		}
+		if fingerprint == "legacy-owner-unverified" {
+			reason = "legacy_source_owner_unverified"
+		}
+		return Decision{Kind: entry.Kind, SourceRecordID: entry.SourceRecordID, Outcome: outcome, Reason: reason}
+	}
 	matched := false
 	for key, fingerprint := range existing {
 		if recordIDFromKey(key) != entry.SourceRecordID {
 			continue
 		}
+		if fingerprint == "legacy-owner-unverified" {
+			return Decision{Kind: entry.Kind, SourceRecordID: entry.SourceRecordID, Outcome: OutcomeConflict, Reason: "legacy_source_owner_unverified"}
+		}
+
 		if fingerprint == entry.Fingerprint {
 			return Decision{
 				Kind:           entry.Kind,

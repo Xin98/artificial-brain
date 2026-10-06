@@ -23,6 +23,8 @@ type UpdateTodoHandler struct {
 // Handle applies the edit described by request.
 func (h *UpdateTodoHandler) Handle(ctx context.Context, request dto.UpdateTodoRequest) (dto.Todo, error) {
 	var todo domain.Todo
+	var schedulingKnown bool
+	channels := []string{}
 	now := h.Now()
 	err := h.UoW.Run(ctx, func(ctx context.Context) error {
 		loaded, err := h.Store.Get(ctx, request.WorkspaceID, request.UserID, request.TodoID)
@@ -47,6 +49,7 @@ func (h *UpdateTodoHandler) Handle(ctx context.Context, request dto.UpdateTodoRe
 		if loaded.ReminderVersion == previousReminderVersion {
 			return nil
 		}
+		schedulingKnown = true
 		if err := h.Planner.Revoke(ctx, ports.RevokeReminderRequest{
 			WorkspaceID:         request.WorkspaceID,
 			TodoID:              request.TodoID,
@@ -58,7 +61,7 @@ func (h *UpdateTodoHandler) Handle(ctx context.Context, request dto.UpdateTodoRe
 		if loaded.DueAtUTC == nil {
 			return nil
 		}
-		channels, err := channelsSnapshot(ctx, h.Channels, loaded.WorkspaceID, loaded.OwnerUserID)
+		channels, err = channelsSnapshot(ctx, h.Channels, loaded.WorkspaceID, loaded.OwnerUserID)
 		if err != nil {
 			return err
 		}
@@ -75,5 +78,10 @@ func (h *UpdateTodoHandler) Handle(ctx context.Context, request dto.UpdateTodoRe
 	if err != nil {
 		return dto.Todo{}, err
 	}
-	return dto.FromDomain(todo, now), nil
+	view := dto.FromDomain(todo, now)
+	if schedulingKnown {
+		scheduled := todo.DueAtUTC != nil && len(channels) > 0
+		view.ReminderScheduled, view.ReminderChannels = &scheduled, &channels
+	}
+	return view, nil
 }

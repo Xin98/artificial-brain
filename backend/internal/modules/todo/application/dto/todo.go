@@ -16,11 +16,15 @@ type Todo struct {
 	Status          string     `json:"status"`
 	Overdue         bool       `json:"overdue"`
 	ReminderVersion int        `json:"reminderVersion"`
-	Version         int        `json:"version"`
-	CreatedAt       time.Time  `json:"createdAt"`
-	UpdatedAt       time.Time  `json:"updatedAt"`
-	CompletedAt     *time.Time `json:"completedAt,omitempty"`
-	DeletedAt       *time.Time `json:"deletedAt,omitempty"`
+	// Scheduling feedback is present only when a command planned or cleared
+	// reminders; query views do not infer delivery state from a due date.
+	ReminderScheduled *bool      `json:"reminderScheduled,omitempty"`
+	ReminderChannels  *[]string  `json:"reminderChannels,omitempty"`
+	Version           int        `json:"version"`
+	CreatedAt         time.Time  `json:"createdAt"`
+	UpdatedAt         time.Time  `json:"updatedAt"`
+	CompletedAt       *time.Time `json:"completedAt,omitempty"`
+	DeletedAt         *time.Time `json:"deletedAt,omitempty"`
 }
 
 // FromDomain maps the aggregate to its view, deriving overdue at now.

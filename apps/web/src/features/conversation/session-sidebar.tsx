@@ -31,7 +31,7 @@ export function SessionSidebar({
   busy?: boolean;
   onCreate: () => void;
   onSelect: (sessionId: string) => void;
-  onRename: (sessionId: string, title: string) => void;
+  onRename: (sessionId: string, title: string) => void | Promise<boolean>;
   onDelete: (sessionId: string) => void;
 }): React.JSX.Element {
   const [editingId, setEditingId] = useState<string | undefined>();
@@ -47,13 +47,14 @@ export function SessionSidebar({
     setDraft("");
   }
 
-  function submitRename(sessionId: string): void {
+  async function submitRename(sessionId: string): Promise<void> {
     const title = draft.trim();
     if (title.length === 0 || [...title].length > MAX_TITLE_LENGTH) {
       return;
     }
-    cancelRename();
-    onRename(sessionId, title);
+    const result = onRename(sessionId, title);
+    const saved = result instanceof Promise ? await result : result;
+    if (saved !== false) cancelRename();
   }
 
   return (
@@ -82,7 +83,7 @@ export function SessionSidebar({
                 className="session-rename"
                 onSubmit={(event) => {
                   event.preventDefault();
-                  submitRename(session.id);
+                  void submitRename(session.id);
                 }}
               >
                 <label
@@ -99,7 +100,11 @@ export function SessionSidebar({
                   type="text"
                   value={draft}
                 />
-                <button className="btn-ghost" type="submit">
+                <button
+                  className="btn-ghost"
+                  disabled={busy || draft.trim().length === 0}
+                  type="submit"
+                >
                   保存
                 </button>
                 <button

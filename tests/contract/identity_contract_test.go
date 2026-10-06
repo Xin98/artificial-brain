@@ -31,6 +31,8 @@ func identityRoutes() []struct {
 			map[string]string{"201": "ContactChannel", "401": "ErrorEnvelope", "409": "ErrorEnvelope", "422": "ErrorEnvelope", "429": "ErrorEnvelope", "502": "ErrorEnvelope", "503": "ErrorEnvelope"}, "AddChannelRequest"},
 		{"/api/v1/settings/contact-channels/{channelId}/verify", "post",
 			map[string]string{"200": "ChannelVerified", "401": "ErrorEnvelope", "404": "ErrorEnvelope", "422": "ErrorEnvelope"}, "VerifyCodeRequest"},
+		{"/api/v1/settings/contact-channels/{channelId}/resend", "post",
+			map[string]string{"202": "EmptyObject", "401": "ErrorEnvelope", "404": "ErrorEnvelope", "409": "ErrorEnvelope", "429": "ErrorEnvelope", "502": "ErrorEnvelope", "503": "ErrorEnvelope"}, ""},
 		{"/api/v1/settings/contact-channels/{channelId}", "patch",
 			map[string]string{"200": "ContactChannel", "401": "ErrorEnvelope", "404": "ErrorEnvelope", "422": "ErrorEnvelope"}, "SetChannelEnabledRequest"},
 		{"/api/v1/dev/sms-inbox", "get",

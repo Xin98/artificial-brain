@@ -140,6 +140,24 @@ describe("uploadImportBundle", () => {
 });
 
 describe("confirmImport", () => {
+  it("recovers the committed report after a lost confirm response", async () => {
+    const fetcher = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("lost response"))
+      .mockResolvedValueOnce(
+        json(200, {
+          importId: "import-1",
+          state: "committed",
+          report: wireReport,
+        }),
+      );
+    const result = await confirmImport("", fetcher, "import-1");
+    expect(result).toEqual({ ok: true, report: wireReport });
+    expect(fetcher).toHaveBeenLastCalledWith(
+      "/api/v1/portability/imports/import-1",
+      expect.objectContaining({ method: "GET" }),
+    );
+  });
   it("returns the report for a 200 response", async () => {
     const result = await confirmImport(
       "",
@@ -149,13 +167,7 @@ describe("confirmImport", () => {
 
     expect(result).toEqual({
       ok: true,
-      report: {
-        new: 3,
-        skipped: 1,
-        conflicts: 2,
-        invalid: 0,
-        committedAt: "2026-08-21T03:00:00Z",
-      },
+      report: wireReport,
     });
   });
 

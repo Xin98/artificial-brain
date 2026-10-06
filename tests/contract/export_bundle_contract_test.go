@@ -80,7 +80,7 @@ func TestExportBundleContractSchemasPinWireShapes(t *testing.T) {
 		t.Fatalf("manifest schema = %#v", manifest)
 	}
 	version := manifest.Properties["schemaVersion"]
-	if version.Const == nil || *version.Const != "1" {
+	if version.Const == nil || *version.Const != "2" {
 		t.Fatalf("manifest schemaVersion = %#v, want const \"1\"", version)
 	}
 	if !bundleSchemaIsString(manifest.Properties["sourceInstanceId"]) ||
@@ -88,7 +88,7 @@ func TestExportBundleContractSchemasPinWireShapes(t *testing.T) {
 		t.Fatalf("manifest sourceInstanceId/exportedAt = %#v", manifest.Properties)
 	}
 	counts := manifest.Properties["counts"]
-	countFields := []string{"todos", "deliveries", "channels"}
+	countFields := []string{"todos", "deliveries", "channels", "sessions", "messages"}
 	if !bundleSchemaClosed(counts, countFields) || !sameSet(mapKeys(counts.Properties), countFields) {
 		t.Fatalf("manifest counts = %#v", counts)
 	}
@@ -180,7 +180,7 @@ func TestExportBundleContractRejectsMutation(t *testing.T) {
 	// Bumping the manifest schema version const must fail.
 	bumped := loadExportSchema(t, "manifest.schema.json")
 	version := bumped.Properties["schemaVersion"]
-	two := "2"
+	two := "3"
 	version.Const = &two
 	bumped.Properties["schemaVersion"] = version
 	if manifestSchemaValid(bumped) {
@@ -224,14 +224,14 @@ func manifestSchemaValid(manifest exportSchema) bool {
 		return false
 	}
 	version := manifest.Properties["schemaVersion"]
-	if version.Const == nil || *version.Const != "1" {
+	if version.Const == nil || *version.Const != "2" {
 		return false
 	}
 	if !bundleSchemaIsString(manifest.Properties["sourceInstanceId"]) || !bundleSchemaDateTime(manifest.Properties["exportedAt"]) {
 		return false
 	}
 	counts := manifest.Properties["counts"]
-	countFields := []string{"todos", "deliveries", "channels"}
+	countFields := []string{"todos", "deliveries", "channels", "sessions", "messages"}
 	if !bundleSchemaClosed(counts, countFields) || !sameSet(mapKeys(counts.Properties), countFields) {
 		return false
 	}
@@ -288,4 +288,23 @@ func preferencesSchemaValid(preferences exportSchema) bool {
 		sameSet(mapKeys(item.Properties), fields) &&
 		bundleSchemaStringEnum(item.Properties["kind"], []string{"email", "sms"}) &&
 		bundleSchemaIsBoolean(item.Properties["enabled"])
+}
+
+func TestConversationExportSchemasPreserveHistory(t *testing.T) {
+	sessions := loadExportSchema(t, "conversation-sessions.schema.json")
+	messages := loadExportSchema(t, "conversation-messages.schema.json")
+	if sessions.Type != "array" || sessions.Items == nil || !bundleSchemaClosed(*sessions.Items, []string{"id", "title", "createdAt", "updatedAt"}) {
+		t.Fatalf("session shape = %#v", sessions)
+	}
+	if messages.Type != "array" || messages.Items == nil || !bundleSchemaClosed(*messages.Items, []string{"id", "role", "body", "order", "createdAt"}) {
+		t.Fatalf("message shape = %#v", messages)
+	}
+	if !bundleSchemaStringEnum(messages.Items.Properties["role"], []string{"user", "assistant"}) || !bundleSchemaDateTime(messages.Items.Properties["createdAt"]) {
+		t.Fatal("message role/date contract missing")
+	}
+	legacy := loadExportSchema(t, "manifest-v1.schema.json")
+	version := legacy.Properties["schemaVersion"]
+	if version.Const == nil || *version.Const != "1" {
+		t.Fatal("schema1 compatibility contract missing")
+	}
 }

@@ -59,16 +59,16 @@ it("renders the nine deterministic stat tiles", () => {
 it("renders every todo stat tile as a link to the todo workspace", () => {
   render(<DashboardView summary={summary} />);
 
-  for (const label of [
-    "待处理",
-    "今日到期",
-    "已逾期",
-    "无到期时间",
-    "近 7 天完成",
+  for (const [label, view] of [
+    ["待处理", "pending"],
+    ["今日到期", "today"],
+    ["已逾期", "overdue"],
+    ["无到期时间", "noDue"],
+    ["近 7 天完成", "completed7d"],
   ]) {
     expect(
       screen.getByRole("link", { name: new RegExp(label) }),
-    ).toHaveAttribute("href", "/todos");
+    ).toHaveAttribute("href", `/todos?view=${view}`);
   }
 });
 
@@ -111,21 +111,21 @@ it("lists each reminder record with title, channel, state, and schedule", () => 
     "reminder-records",
   );
   const first = screen.getByText("《每日站会》").closest("li");
-  expect(first).toHaveTextContent("email");
-  expect(first).toHaveTextContent("succeeded");
+  expect(first).toHaveTextContent("邮箱");
+  expect(first).toHaveTextContent("已提交发送");
   expect(first?.querySelector("time")).toHaveAttribute(
     "datetime",
     "2026-08-19T01:00:00Z",
   );
   const second = screen.getByText("《周报》").closest("li");
-  expect(second).toHaveTextContent("sms");
-  expect(second).toHaveTextContent("failed");
+  expect(second).toHaveTextContent("短信");
+  expect(second).toHaveTextContent("投递失败");
 });
 
 it("shows the receipt state when present", () => {
   render(<DashboardView summary={summary} deliveries={records} />);
 
-  expect(screen.getByText("received_failed")).toBeInTheDocument();
+  expect(screen.getByText("接收失败")).toBeInTheDocument();
   const first = screen.getByText("《每日站会》").closest("li");
   expect(first).not.toHaveTextContent("received_");
 });

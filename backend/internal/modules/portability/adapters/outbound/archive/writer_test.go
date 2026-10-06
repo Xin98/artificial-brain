@@ -129,7 +129,7 @@ func TestWriteManifestFillsSharedMapBeforeMarshal(t *testing.T) {
 			t.Fatalf("marshaled manifest missing hash for %q", name)
 		}
 	}
-	if wire.SchemaVersion != domain.SchemaVersion || wire.SourceInstanceID != "instance-1" {
+	if wire.SchemaVersion != "1" || wire.SourceInstanceID != "instance-1" {
 		t.Fatalf("marshaled manifest = %+v, want schema %q and instance-1", wire, domain.SchemaVersion)
 	}
 }

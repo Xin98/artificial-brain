@@ -39,6 +39,15 @@ paths:
   /api/v1/conversation/sessions:
     get:
       operationId: listConversationSessions
+      parameters:
+        - in: query
+          name: offset
+          description: Zero-based offset into the most recently active session list.
+          schema:
+            type: integer
+            minimum: 0
+            maximum: 2147483546
+            default: 0
       responses:
         '200':
           description: The caller's conversation sessions, most recently active first.
@@ -46,6 +55,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SessionListResponse'
+        '422':
+          description: Invalid pagination offset.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         '401':
           description: Missing or invalid session.
           content:
@@ -81,6 +96,13 @@ paths:
   /api/v1/conversation/sessions/{sessionId}/messages:
     get:
       operationId: getConversationHistory
+      parameters:
+        - in: query
+          name: before
+          description: Exclusive decimal message ID cursor; absent returns the latest page.
+          schema:
+            type: string
+            pattern: '^[0-9]+$'
       responses:
         '200':
           description: The session transcript, oldest message first.
@@ -88,6 +110,12 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/SessionHistoryResponse'
+        '422':
+          description: Invalid message cursor.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
         '401':
           description: Missing or invalid session.
           content:
@@ -186,6 +214,11 @@ paths:
   /api/v1/confirmations/{confirmationId}/confirm:
     post:
       operationId: confirmAction
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConfirmActionRequest'
       responses:
         '200':
           description: The confirmed action executed.
@@ -213,6 +246,12 @@ paths:
                 $ref: '#/components/schemas/ErrorEnvelope'
         '410':
           description: Confirmation expired.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorEnvelope'
+        '422':
+          description: Invalid confirmation body.
           content:
             application/json:
               schema:
@@ -262,6 +301,13 @@ components:
         expiresAt:
           type: string
           format: date-time
+    ConfirmActionRequest:
+      type: object
+      additionalProperties: false
+      properties:
+        sessionId:
+          type: string
+          description: Owned conversation session receiving the committed deletion outcome; optional for legacy clients.
     ConversationResponse:
       type: object
       additionalProperties: false
@@ -301,6 +347,7 @@ components:
             type: string
         candidates:
           type: array
+          description: Matching todo titles and dates; includes the single target for confirmation_required.
           items:
             $ref: '#/components/schemas/Candidate'
         confirmationId:
@@ -352,6 +399,13 @@ components:
           type: boolean
         reminderVersion:
           type: integer
+        reminderScheduled:
+          type: boolean
+          description: Whether this command scheduled deliveries; false with no usable channels. Omitted when scheduling state is unknown.
+        reminderChannels:
+          type: array
+          items:
+            type: string
         version:
           type: integer
         createdAt:
@@ -385,12 +439,17 @@ components:
     SessionListResponse:
       type: object
       additionalProperties: false
-      required: [sessions]
+      required: [sessions, hasMore]
       properties:
         sessions:
           type: array
           items:
             $ref: '#/components/schemas/SessionView'
+        hasMore:
+          type: boolean
+        nextOffset:
+          type: integer
+          minimum: 0
     SessionCreateRequest:
       type: object
       additionalProperties: false
@@ -411,7 +470,7 @@ components:
     SessionHistoryResponse:
       type: object
       additionalProperties: false
-      required: [sessionId, title, messages]
+      required: [sessionId, title, messages, hasMore]
       properties:
         sessionId:
           type: string
@@ -421,6 +480,11 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/MessageView'
+        hasMore:
+          type: boolean
+        nextBefore:
+          type: string
+          description: Exclusive cursor for the next older page; first visible message ID. Present only when hasMore is true.
     MessageView:
       type: object
       additionalProperties: false

@@ -37,14 +37,28 @@ func (s *MessageLogStore) Append(ctx context.Context, message ports.MessageLog) 
 // ListBySession returns the latest limit transcript rows of one session in
 // ascending insertion order, scoped to the caller's workspace+user.
 func (s *MessageLogStore) ListBySession(ctx context.Context, workspaceID, userID, sessionID string, limit int) ([]ports.MessageLogEntry, error) {
+	return s.ListBefore(ctx, workspaceID, userID, sessionID, "", limit)
+}
+
+// ListBefore returns a scoped, exclusive cursor page in insertion order.
+func (s *MessageLogStore) ListBefore(ctx context.Context, workspaceID, userID, sessionID, before string, limit int) ([]ports.MessageLogEntry, error) {
+	var boundary *int64
+	if before != "" {
+		id, err := strconv.ParseInt(before, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+		boundary = &id
+	}
 	exec := database.ExecutorFromContextOr(ctx, s.pool)
 	rows, err := exec.Query(ctx, `
 		select id, role, body, resolved_intent, created_at
 		from conversation.messages
 		where workspace_id = $1 and user_id = $2 and session_id = $3
+		and ($5::bigint is null or id < $5)
 		order by id desc
 		limit $4
-	`, workspaceID, userID, sessionID, limit)
+	`, workspaceID, userID, sessionID, limit, boundary)
 	if err != nil {
 		return nil, err
 	}

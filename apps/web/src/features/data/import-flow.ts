@@ -15,6 +15,7 @@ export interface ImportDecision {
   sourceRecordId: string;
   outcome: "new" | "skipped" | "conflict" | "invalid";
   reason?: string;
+  label?: string;
 }
 
 export interface ImportPreview {
@@ -35,6 +36,8 @@ export interface ImportReport {
   conflicts: number;
   invalid: number;
   committedAt: string;
+  details?: ImportDecision[];
+  truncated?: boolean;
 }
 
 export type UploadResult =
@@ -99,7 +102,7 @@ export async function uploadImportBundle(
 
 // confirmImport executes the pending import exactly once. A 409 means the
 // import was already committed or has expired; the panel says so.
-export async function confirmImport(
+async function confirmImportOnce(
   baseURL: string,
   fetcher: typeof fetch,
   importId: string,
@@ -132,6 +135,44 @@ export async function confirmImport(
   }
 }
 
+export async function confirmImport(
+  baseURL: string,
+  fetcher: typeof fetch,
+  importId: string,
+  timeoutMs = 30000,
+): Promise<ConfirmResult> {
+  const result = await confirmImportOnce(baseURL, fetcher, importId, timeoutMs);
+  if (
+    result.ok ||
+    (result.code !== UNKNOWN_CODE && result.code !== "import_conflict")
+  )
+    return result;
+  try {
+    const response = await fetcher(
+      `${baseURL}/api/v1/portability/imports/${encodeURIComponent(importId)}`,
+      {
+        method: "GET",
+        cache: "no-store",
+        signal: AbortSignal.timeout(safeTimeout(timeoutMs)),
+        headers: { accept: "application/json" },
+      },
+    );
+    if (response.status !== 200) return result;
+    const value: unknown = await response.json();
+    if (
+      isRecord(value) &&
+      value.importId === importId &&
+      value.state === "committed"
+    ) {
+      const report = toImportReport(value.report);
+      if (report !== null) return { ok: true, report };
+    }
+  } catch {
+    /* Keep the same import for a safe retry when its status is unknown. */
+  }
+  return result;
+}
+
 // readErrorCode extracts the error envelope's code, failing closed to
 // UNKNOWN_CODE when the body is not a readable envelope.
 async function readErrorCode(response: Response): Promise<string> {
@@ -162,9 +203,13 @@ function toImportPreview(value: unknown): ImportPreview | null {
       "truncated",
     ]) ||
     !isInteger(preview.new) ||
+    preview.new < 0 ||
     !isInteger(preview.skipped) ||
+    preview.skipped < 0 ||
     !isInteger(preview.conflicts) ||
+    preview.conflicts < 0 ||
     !isInteger(preview.invalid) ||
+    preview.invalid < 0 ||
     !Array.isArray(preview.details) ||
     !isBoolean(preview.truncated)
   ) {
@@ -202,9 +247,13 @@ function toImportReport(value: unknown): ImportReport | null {
   }
   if (
     !isInteger(value.new) ||
+    value.new < 0 ||
     !isInteger(value.skipped) ||
+    value.skipped < 0 ||
     !isInteger(value.conflicts) ||
+    value.conflicts < 0 ||
     !isInteger(value.invalid) ||
+    value.invalid < 0 ||
     !isRFC3339(value.committedAt)
   ) {
     return null;
@@ -221,6 +270,12 @@ function toImportReport(value: unknown): ImportReport | null {
     conflicts: value.conflicts,
     invalid: value.invalid,
     committedAt: value.committedAt,
+    ...(value.details !== undefined
+      ? { details: value.details as ImportDecision[] }
+      : {}),
+    ...(value.truncated !== undefined
+      ? { truncated: value.truncated as boolean }
+      : {}),
   };
 }
 
@@ -231,7 +286,13 @@ function isDecisionList(value: unknown): value is ImportDecision[] {
 function isImportDecision(value: unknown): value is ImportDecision {
   if (
     !isRecord(value) ||
-    !hasAllowedKeys(value, ["kind", "sourceRecordId", "outcome", "reason"])
+    !hasAllowedKeys(value, [
+      "kind",
+      "sourceRecordId",
+      "outcome",
+      "reason",
+      "label",
+    ])
   ) {
     return false;
   }
@@ -245,6 +306,7 @@ function isImportDecision(value: unknown): value is ImportDecision {
     isNonEmptyString(value.sourceRecordId) &&
     typeof value.outcome === "string" &&
     DECISION_OUTCOMES.includes(value.outcome) &&
-    (value.reason === undefined || typeof value.reason === "string")
+    (value.reason === undefined || typeof value.reason === "string") &&
+    (value.label === undefined || typeof value.label === "string")
   );
 }

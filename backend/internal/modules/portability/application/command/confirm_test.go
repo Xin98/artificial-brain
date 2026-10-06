@@ -68,6 +68,7 @@ func newConfirmRig() *confirmRig {
 func (r *confirmRig) seedPendingImport(bundle []byte) dto.ImportRecordRow {
 	row := dto.ImportRecordRow{
 		ID:               "import-1",
+		UserID:           "user-1",
 		WorkspaceID:      "ws-1",
 		State:            dto.ImportStatePending,
 		SourceInstanceID: "instance-src",
@@ -136,7 +137,7 @@ func TestConfirmImportHappyPathExecutesChannelsTodosDeliveriesInOrder(t *testing
 	if gotDelivery.TodoID != "todo-1" {
 		t.Fatalf("delivery TodoID = %q, want the todo id created this run", gotDelivery.TodoID)
 	}
-	if gotDelivery.SourceInstanceID != "instance-src" || gotDelivery.SourceRecordID != "delivery-src-1" {
+	if gotDelivery.SourceInstanceID != domain.OwnerSourceNamespace("ws-1", "user-1", "instance-src") || gotDelivery.SourceRecordID != "delivery-src-1" {
 		t.Fatalf("delivery source identity = %q/%q, want instance-src/delivery-src-1", gotDelivery.SourceInstanceID, gotDelivery.SourceRecordID)
 	}
 	if gotDelivery.Channel != domain.ChannelKindEmail || gotDelivery.State != domain.DeliveryStateSucceeded {

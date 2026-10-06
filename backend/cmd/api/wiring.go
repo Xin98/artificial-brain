@@ -141,7 +141,8 @@ func registerIdentityRoutes(cfg config.Config, pool *pgxpool.Pool, mux *http.Ser
 			Now:      time.Now,
 			CodeTTL:  cfg.ChannelCodeTTL,
 		},
-		VerifyChannel:     &command.VerifyChannelHandler{Channels: channels, Now: time.Now},
+		ResendChannel:     &command.ResendChannelHandler{Channels: channels, Outbox: outbox, NewCode: newSixDigitCode, Now: time.Now, CodeTTL: cfg.ChannelCodeTTL, UoW: &joinableUoW{runner: database.NewTxRunner(pool)}},
+		VerifyChannel:     &command.VerifyChannelHandler{Channels: channels, Now: time.Now, UoW: &joinableUoW{runner: database.NewTxRunner(pool)}},
 		SetChannelEnabled: &command.SetChannelEnabledHandler{Channels: channels},
 		Channels:          &query.ChannelsQuery{Channels: channels},
 		SessionTTL:        cfg.SessionTTL,
@@ -238,7 +239,7 @@ func buildTodoHandlers(pool *pgxpool.Pool, scheduler reminderports.JobScheduler,
 		Create:     &todocommand.CreateTodoHandler{Store: todos, UoW: uow, Planner: planner, Channels: channels, NewID: newID, Now: now},
 		Complete:   &todocommand.CompleteTodoHandler{Store: todos, UoW: uow, Planner: planner, Now: now},
 		Delete:     &todocommand.DeleteTodoHandler{Store: todos, UoW: uow, Planner: planner, Now: now},
-		Update:     &todocommand.UpdateTodoHandler{Store: todos, UoW: uow, Planner: planner, Now: now},
+		Update:     &todocommand.UpdateTodoHandler{Store: todos, UoW: uow, Planner: planner, Channels: channels, Now: now},
 	}
 }
 
@@ -459,6 +460,8 @@ func registerConversationRoutes(cfg config.Config, pool *pgxpool.Pool, mux *http
 	confirmAction := &convcommand.ConfirmActionHandler{
 		Confirmations: confirmations,
 		Todos:         shim,
+		Sessions:      sessions,
+		Messages:      messageLog,
 		UoW:           &joinableUoW{runner: database.NewTxRunner(pool)},
 		Now:           time.Now,
 	}
@@ -535,16 +538,18 @@ func buildPortabilityHandlers(cfg config.Config, pool *pgxpool.Pool, now func() 
 	imports := portabilitypostgres.NewImportStore(pool)
 	sources := portabilitypostgres.NewSourceRecordStore(pool)
 	parser := archive.NewParser()
+	historyStore := convpostgres.NewHistoryStore(pool)
 
 	return portabilityHandlers{
 		Export: &portabilitycommand.ExportBundleHandler{
-			Instance:   portabilitypostgres.NewMetaStore(pool),
-			Todos:      &todoExportShim{export: &todoquery.ExportTodosHandler{Store: todos, Now: now}},
-			Channels:   &channelExportShim{q: &query.ChannelsExportQuery{Channels: channels}},
-			Deliveries: &deliveryExportShim{q: &reminderquery.ExportDeliveriesHandler{Deliveries: deliveries}},
-			Archive:    archive.Factory(),
-			PageSize:   200,
-			Now:        now,
+			Conversations: &conversationExportShim{q: &convquery.ExportHistoryQuery{Store: historyStore}},
+			Instance:      portabilitypostgres.NewMetaStore(pool),
+			Todos:         &todoExportShim{export: &todoquery.ExportTodosHandler{Store: todos, Now: now}},
+			Channels:      &channelExportShim{q: &query.ChannelsExportQuery{Channels: channels}},
+			Deliveries:    &deliveryExportShim{q: &reminderquery.ExportDeliveriesHandler{Deliveries: deliveries}},
+			Archive:       archive.Factory(),
+			PageSize:      200,
+			Now:           now,
 		},
 		Upload: &portabilitycommand.UploadImportHandler{
 			Imports:   imports,
@@ -555,17 +560,18 @@ func buildPortabilityHandlers(cfg config.Config, pool *pgxpool.Pool, now func() 
 			ImportTTL: 24 * time.Hour,
 		},
 		Confirm: &portabilitycommand.ConfirmImportHandler{
-			Imports:    imports,
-			Sources:    sources,
-			Parser:     parser,
-			Todos:      &todoImportShim{imp: &todocommand.ImportTodoHandler{Store: todos, NewID: newID, Now: now}},
-			Channels:   &channelImportShim{imp: &command.ImportChannelHandler{Channels: channels, NewID: newID, Now: now}, list: &query.ChannelsQuery{Channels: channels}},
-			Deliveries: &deliveryImportShim{imp: &remindercommand.ImportDeliveriesHandler{Deliveries: deliveries, NewID: newID, Now: now}},
-			UoW:        &joinableUoW{runner: database.NewTxRunner(pool)},
-			Log:        slog.Default(),
-			NewID:      newID,
-			Now:        now,
-			ImportTTL:  24 * time.Hour,
+			Conversations: &conversationImportShim{h: &convcommand.ImportHistoryHandler{Store: historyStore, NewID: newID}},
+			Imports:       imports,
+			Sources:       sources,
+			Parser:        parser,
+			Todos:         &todoImportShim{imp: &todocommand.ImportTodoHandler{Store: todos, NewID: newID, Now: now}},
+			Channels:      &channelImportShim{imp: &command.ImportChannelHandler{Channels: channels, NewID: newID, Now: now}, list: &query.ChannelsQuery{Channels: channels}},
+			Deliveries:    &deliveryImportShim{imp: &remindercommand.ImportDeliveriesHandler{Deliveries: deliveries, NewID: newID, Now: now}},
+			UoW:           &joinableUoW{runner: database.NewTxRunner(pool)},
+			Log:           slog.Default(),
+			NewID:         newID,
+			Now:           now,
+			ImportTTL:     24 * time.Hour,
 		},
 		Get: &portabilityquery.GetImportQuery{
 			Imports:   imports,

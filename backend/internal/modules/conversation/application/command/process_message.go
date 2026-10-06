@@ -134,8 +134,6 @@ func (h *ProcessMessageHandler) dispatchCreate(ctx context.Context, workspaceID,
 			response.LocalEcho = due.In(location).Format("2006-01-02 15:04")
 		}
 	}
-	summary := application.CreateSummary(proposal.Arguments.Title, response.LocalEcho, echoTimezone, proposal.Arguments.DueAtUTC)
-
 	var created tododto.Todo
 	var resolved string
 	err := h.UoW.Run(ctx, func(ctx context.Context) error {
@@ -151,6 +149,7 @@ func (h *ProcessMessageHandler) dispatchCreate(ctx context.Context, workspaceID,
 			return err
 		}
 		created = todo
+		summary := application.CreateSchedulingSummary(todo, response.LocalEcho, echoTimezone, proposal.Arguments.DueAtUTC)
 		id, err := h.transcribeInside(ctx, workspaceID, userID, sessionID, text, string(proposal.Intent), summary)
 		resolved = id
 		return err
@@ -180,7 +179,7 @@ func (h *ProcessMessageHandler) dispatchList(ctx context.Context, workspaceID, u
 		}
 		todos = listed
 		id, err := h.transcribeInside(ctx, workspaceID, userID, sessionID, text,
-			string(proposal.Intent), application.ListSummary(len(todos)))
+			string(proposal.Intent), application.TodoListSummary(todos))
 		resolved = id
 		return err
 	})
@@ -230,6 +229,7 @@ func (h *ProcessMessageHandler) dispatchDelete(ctx context.Context, workspaceID,
 		expiresAt := confirmation.ExpiresAt
 		return dto.MessageResponse{
 			Kind:           dto.KindConfirmationRequired,
+			Candidates:     candidates,
 			ConfirmationID: confirmation.ID,
 			ExpiresAt:      &expiresAt,
 			SessionID:      resolved,

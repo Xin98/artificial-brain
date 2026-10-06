@@ -17,11 +17,11 @@ func conversationRoutes() []struct {
 		{"/api/v1/conversation/messages", "post",
 			map[string]string{"200": "ConversationResponse", "401": "ErrorEnvelope", "404": "ErrorEnvelope", "422": "ErrorEnvelope"}, "ConversationMessageRequest"},
 		{"/api/v1/conversation/sessions", "get",
-			map[string]string{"200": "SessionListResponse", "401": "ErrorEnvelope"}, ""},
+			map[string]string{"200": "SessionListResponse", "401": "ErrorEnvelope", "422": "ErrorEnvelope"}, ""},
 		{"/api/v1/conversation/sessions", "post",
 			map[string]string{"201": "SessionView", "401": "ErrorEnvelope", "422": "ErrorEnvelope"}, "SessionCreateRequest"},
 		{"/api/v1/conversation/sessions/{sessionId}/messages", "get",
-			map[string]string{"200": "SessionHistoryResponse", "401": "ErrorEnvelope", "404": "ErrorEnvelope"}, ""},
+			map[string]string{"200": "SessionHistoryResponse", "401": "ErrorEnvelope", "404": "ErrorEnvelope", "422": "ErrorEnvelope"}, ""},
 		{"/api/v1/conversation/sessions/{sessionId}", "patch",
 			map[string]string{"200": "SessionView", "401": "ErrorEnvelope", "404": "ErrorEnvelope", "422": "ErrorEnvelope"}, "SessionRenameRequest"},
 		{"/api/v1/conversation/sessions/{sessionId}", "delete",
@@ -29,7 +29,7 @@ func conversationRoutes() []struct {
 		{"/api/v1/confirmations", "post",
 			map[string]string{"201": "ConfirmationCreated", "401": "ErrorEnvelope", "404": "ErrorEnvelope", "409": "ErrorEnvelope"}, "ConfirmationRequest"},
 		{"/api/v1/confirmations/{confirmationId}/confirm", "post",
-			map[string]string{"200": "ConversationResponse", "401": "ErrorEnvelope", "404": "ErrorEnvelope", "409": "ErrorEnvelope", "410": "ErrorEnvelope"}, ""},
+			map[string]string{"200": "ConversationResponse", "401": "ErrorEnvelope", "404": "ErrorEnvelope", "409": "ErrorEnvelope", "410": "ErrorEnvelope", "422": "ErrorEnvelope"}, "ConfirmActionRequest"},
 	}
 }
 
@@ -119,7 +119,7 @@ func TestConversationContractRoutesCodesAndSchemas(t *testing.T) {
 	}
 
 	sessionList := schemas["SessionListResponse"]
-	if !docClosedObject(sessionList, []string{"sessions"}) || !docArrayOfRef(sessionList.Properties["sessions"], "SessionView") {
+	if !docClosedObject(sessionList, []string{"sessions", "hasMore"}) || !docArrayOfRef(sessionList.Properties["sessions"], "SessionView") {
 		t.Fatalf("SessionListResponse = %#v", sessionList)
 	}
 
@@ -136,8 +136,8 @@ func TestConversationContractRoutesCodesAndSchemas(t *testing.T) {
 	}
 
 	history := schemas["SessionHistoryResponse"]
-	if !docClosedObject(history, []string{"sessionId", "title", "messages"}) ||
-		!docPropertiesAre(history, []string{"sessionId", "title", "messages"}) ||
+	if !docClosedObject(history, []string{"sessionId", "title", "messages", "hasMore"}) ||
+		!docPropertiesAre(history, []string{"sessionId", "title", "messages", "hasMore", "nextBefore"}) ||
 		!docArrayOfRef(history.Properties["messages"], "MessageView") {
 		t.Fatalf("SessionHistoryResponse = %#v", history)
 	}
@@ -241,7 +241,7 @@ func conversationContractValid(document docDocument) bool {
 		return false
 	}
 	sessionList := schemas["SessionListResponse"]
-	if !docClosedObject(sessionList, []string{"sessions"}) || !docArrayOfRef(sessionList.Properties["sessions"], "SessionView") {
+	if !docClosedObject(sessionList, []string{"sessions", "hasMore"}) || !docArrayOfRef(sessionList.Properties["sessions"], "SessionView") {
 		return false
 	}
 	sessionCreate := schemas["SessionCreateRequest"]
@@ -253,7 +253,7 @@ func conversationContractValid(document docDocument) bool {
 		return false
 	}
 	history := schemas["SessionHistoryResponse"]
-	if !docClosedObject(history, []string{"sessionId", "title", "messages"}) || !docArrayOfRef(history.Properties["messages"], "MessageView") {
+	if !docClosedObject(history, []string{"sessionId", "title", "messages", "hasMore"}) || !docArrayOfRef(history.Properties["messages"], "MessageView") {
 		return false
 	}
 	messageView := schemas["MessageView"]

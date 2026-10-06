@@ -9,7 +9,7 @@ import (
 // outcome and kind one preview/report decision line can carry.
 var (
 	importStates     = []string{"pending", "committed", "expired"}
-	decisionKinds    = []string{"todo", "channel", "delivery"}
+	decisionKinds    = []string{"todo", "channel", "delivery", "session", "message"}
 	decisionOutcomes = []string{"new", "skipped", "conflict", "invalid"}
 )
 
@@ -93,11 +93,11 @@ func TestPortabilityContractRoutesCodesAndSchemas(t *testing.T) {
 
 	decision := schemas["ImportDecision"]
 	decisionFields := []string{"kind", "sourceRecordId", "outcome", "reason"}
-	if !docClosedObject(decision, decisionFields) || !docPropertiesAre(decision, decisionFields) ||
+	if !docClosedObject(decision, decisionFields) || !docPropertiesAre(decision, append(append([]string{}, decisionFields...), "label")) ||
 		!docStringEnum(decision.Properties["kind"], decisionKinds) ||
 		!docIsString(decision.Properties["sourceRecordId"]) ||
 		!docStringEnum(decision.Properties["outcome"], decisionOutcomes) ||
-		!docIsString(decision.Properties["reason"]) {
+		!docIsString(decision.Properties["reason"]) || !docIsString(decision.Properties["label"]) {
 		t.Fatalf("ImportDecision = %#v", decision)
 	}
 
@@ -288,7 +288,7 @@ func portabilityContractValid(document docDocument) bool {
 		!docStringEnum(decision.Properties["kind"], decisionKinds) ||
 		!docIsString(decision.Properties["sourceRecordId"]) ||
 		!docStringEnum(decision.Properties["outcome"], decisionOutcomes) ||
-		!docIsString(decision.Properties["reason"]) {
+		!docIsString(decision.Properties["reason"]) || !docIsString(decision.Properties["label"]) {
 		return false
 	}
 	counts := []string{"new", "skipped", "conflicts", "invalid"}

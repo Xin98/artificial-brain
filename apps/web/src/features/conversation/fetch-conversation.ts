@@ -7,6 +7,7 @@ import {
   isStringOrUndefined,
   safeTimeout,
 } from "../validation";
+import { recoverExpiredSession } from "../auth/session-recovery";
 
 export const CONVERSATION_KINDS = [
   "todo_created",
@@ -34,7 +35,7 @@ export interface ConversationResponse {
   correlationId: string;
   reply?: string;
   sessionId?: string;
-  todo?: { id: string; title: string };
+  todo?: ConversationTodo;
   resolvedDueAtUtc?: string;
   localEcho?: string;
   timezoneEcho?: string;
@@ -42,8 +43,18 @@ export interface ConversationResponse {
   candidates?: ConversationCandidate[];
   confirmationId?: string;
   expiresAt?: string;
-  todos?: Array<{ id: string; title: string }>;
+  todos?: ConversationTodo[];
   todoId?: string;
+}
+
+export interface ConversationTodo {
+  id: string;
+  title: string;
+  description?: string;
+  dueAtUtc?: string;
+  status?: "pending" | "completed";
+  reminderScheduled?: boolean;
+  reminderChannels?: string[];
 }
 
 export type ConversationFailureReason =
@@ -114,6 +125,7 @@ export async function postConversationMessage(
   }
 
   if (!response.ok) {
+    recoverExpiredSession(response);
     return classifyFailureResponse(response);
   }
 
@@ -217,22 +229,13 @@ function isConversationResponse(value: unknown): value is ConversationResponse {
   if (value.todos !== undefined) {
     if (
       !Array.isArray(value.todos) ||
-      !value.todos.every(
-        (item) =>
-          isRecord(item) &&
-          isNonEmptyString(item.id) &&
-          typeof item.title === "string",
-      )
+      !value.todos.every((item) => isConversationTodo(item))
     ) {
       return false;
     }
   }
   if (value.todo !== undefined) {
-    if (
-      !isRecord(value.todo) ||
-      !isNonEmptyString(value.todo.id) ||
-      typeof value.todo.title !== "string"
-    ) {
+    if (!isConversationTodo(value.todo)) {
       return false;
     }
   }
@@ -270,7 +273,13 @@ function hasKindSpecificShape(
       );
     case "confirmation_required":
       return (
-        hasAllowedKeys(value, [...base, "confirmationId", "expiresAt"]) &&
+        hasAllowedKeys(value, [
+          ...base,
+          "confirmationId",
+          "expiresAt",
+          "todo",
+          "candidates",
+        ]) &&
         isNonEmptyString(value.confirmationId) &&
         isRFC3339(value.expiresAt)
       );
@@ -285,6 +294,26 @@ function hasKindSpecificShape(
     case "unsupported":
       return hasAllowedKeys(value, base);
   }
+}
+
+function isConversationTodo(value: unknown): value is ConversationTodo {
+  return (
+    isRecord(value) &&
+    isNonEmptyString(value.id) &&
+    typeof value.title === "string" &&
+    isStringOrUndefined(value.description) &&
+    (value.dueAtUtc === undefined || isRFC3339(value.dueAtUtc)) &&
+    (value.status === undefined ||
+      value.status === "pending" ||
+      value.status === "completed") &&
+    (value.reminderScheduled === undefined ||
+      typeof value.reminderScheduled === "boolean") &&
+    (value.reminderChannels === undefined ||
+      (Array.isArray(value.reminderChannels) &&
+        value.reminderChannels.every(
+          (channel) => channel === "email" || channel === "sms",
+        )))
+  );
 }
 
 function isCandidate(value: unknown): value is ConversationCandidate {

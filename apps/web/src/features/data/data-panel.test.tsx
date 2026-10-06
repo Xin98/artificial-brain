@@ -69,6 +69,68 @@ it("renders the export button and the bundle file input", () => {
   expect(screen.getByLabelText(/选择导出包/)).toBeInTheDocument();
 });
 
+it("shows honest export scope including conversation history", () => {
+  render(<DataPanel />);
+  expect(screen.getByText(/会话与完整消息历史/)).toBeInTheDocument();
+});
+
+it("can cancel a readable preview and choose another bundle", async () => {
+  const fetcher = vi.fn().mockResolvedValue(
+    json(201, {
+      ...uploadBody,
+      preview: {
+        ...uploadBody.preview,
+        details: [
+          {
+            kind: "session",
+            sourceRecordId: "opaque-id",
+            label: "旅行计划",
+            outcome: "new",
+            reason: "",
+          },
+        ],
+      },
+    }),
+  );
+  render(<DataPanel fetcher={fetcher as unknown as typeof fetch} />);
+  selectBundleFile();
+  expect(await screen.findByText("旅行计划")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "取消导入 / 更换文件" }));
+  expect(screen.getByLabelText(/选择导出包/)).toBeInTheDocument();
+  expect(
+    screen.queryByRole("button", { name: "确认导入" }),
+  ).not.toBeInTheDocument();
+});
+
+it("reports partial restore with readable reasons and lets the user restart", async () => {
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(json(201, uploadBody))
+    .mockResolvedValueOnce(
+      json(200, {
+        ...reportBody,
+        invalid: 1,
+        details: [
+          {
+            kind: "message",
+            sourceRecordId: "1",
+            label: "历史消息",
+            outcome: "invalid",
+            reason: "session_not_found_or_conflict",
+          },
+        ],
+      }),
+    );
+  render(<DataPanel fetcher={fetcher as unknown as typeof fetch} />);
+  selectBundleFile();
+  fireEvent.click(await screen.findByRole("button", { name: "确认导入" }));
+  expect(await screen.findByText(/部分记录未导入/)).toBeInTheDocument();
+  expect(screen.getByText("历史消息")).toBeInTheDocument();
+  expect(screen.queryByText(/2026-08-21T03:00:00Z/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "继续导入其他文件" }));
+  expect(screen.getByLabelText(/选择导出包/)).toBeInTheDocument();
+});
+
 it("uploads the bundle and renders the preview counts with a confirm button", async () => {
   const fetcher = vi.fn().mockResolvedValue(json(201, uploadBody));
   render(<DataPanel fetcher={fetcher as unknown as typeof fetch} />);
@@ -104,9 +166,11 @@ it("confirms the import and renders the report", async () => {
   fireEvent.click(screen.getByRole("button", { name: "确认导入" }));
 
   await waitFor(() =>
-    expect(screen.getByRole("status")).toHaveTextContent("导入完成"),
+    expect(screen.getByRole("status")).toHaveTextContent("导入已提交"),
   );
-  expect(screen.getByText(/2026-08-21T03:00:00Z/)).toBeInTheDocument();
+  expect(screen.getByText(/提交于/)).toHaveTextContent(
+    new Date(reportBody.committedAt).toLocaleString(),
+  );
   expect(screen.getByText("新增").parentElement).toHaveTextContent("3");
   expect(fetcher).toHaveBeenCalledWith(
     "/api/v1/portability/imports/import-1/confirm",
@@ -115,7 +179,7 @@ it("confirms the import and renders the report", async () => {
 });
 
 it.each([
-  ["bundle_too_large", "导出包超过上限，请拆分后重试"],
+  ["bundle_too_large", "导出包超过本实例的上传上限"],
   ["checksum_mismatch", "导出包已损坏，请重新导出"],
   ["unsupported_schema_version", "导出包版本不受支持"],
   ["bundle_invalid", "导出包内容无效"],

@@ -218,8 +218,9 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	for name, target := range map[string]**time.Time{
-		"dueFrom": &filters.DueFrom,
-		"dueTo":   &filters.DueTo,
+		"dueFrom":        &filters.DueFrom,
+		"dueTo":          &filters.DueTo,
+		"completedSince": &filters.CompletedSince,
 	} {
 		if value := query.Get(name); value != "" {
 			parsed, err := time.Parse(time.RFC3339, value)
@@ -227,7 +228,8 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 				writeValidationError(w, r)
 				return
 			}
-			*target = &parsed
+			utc := parsed.UTC()
+			*target = &utc
 		}
 	}
 	todos, err := h.List.Handle(r.Context(), principal.WorkspaceID, principal.UserID, filters)

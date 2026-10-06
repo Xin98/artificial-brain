@@ -162,7 +162,7 @@ func buildBundle(t *testing.T, spec bundleSpec) ([]byte, domain.Manifest) {
 
 	schemaVersion := spec.schemaVersion
 	if schemaVersion == "" {
-		schemaVersion = domain.SchemaVersion
+		schemaVersion = "1"
 	}
 	instanceID := spec.instanceID
 	if instanceID == "" {

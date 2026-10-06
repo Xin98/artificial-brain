@@ -200,6 +200,7 @@ func (f *fakeImportStore) Commit(_ context.Context, workspaceID, importID string
 // fakeSourceRecordStore never has seen an imported record before.
 type fakeSourceRecordStore struct{}
 
+func (f fakeSourceRecordStore) ForOwner(_ ports.Principal) ports.SourceRecordStore { return f }
 func (fakeSourceRecordStore) Fingerprints(context.Context, string, []string) (map[string]string, error) {
 	return map[string]string{}, nil
 }
@@ -613,6 +614,7 @@ func TestGetImportReturnsView(t *testing.T) {
 	preview := dto.Preview{New: 1, Details: []dto.Decision{{Kind: domain.KindTodo, SourceRecordID: "todo-src-1", Outcome: string(domain.OutcomeNew)}}}
 	imports.rows["ws-1/import-1"] = dto.ImportRecordRow{
 		ID:               "import-1",
+		UserID:           "user-1",
 		WorkspaceID:      "ws-1",
 		State:            dto.ImportStatePending,
 		SourceInstanceID: "instance-src",
@@ -648,10 +650,27 @@ func TestGetImportMapsNotFoundTo404(t *testing.T) {
 	assertEnvelope(t, recorder, http.StatusNotFound, "not_found")
 }
 
+func TestPrivateUploadCannotBeViewedOrConfirmedByAnotherUser(t *testing.T) {
+	for _, owner := range []string{"another-user", ""} {
+		imports := newFakeImportStore()
+		imports.rows["ws-1/import-1"] = dto.ImportRecordRow{ID: "import-1", WorkspaceID: "ws-1", UserID: owner, State: dto.ImportStatePending, CreatedAt: testNow()}
+		parser := &fakeBundleParser{}
+		handler := newTestHandler(nil, nil, newConfirmHandler(imports, parser), newGetQuery(imports), 1024)
+		get := serve(t, handler, allowAuth, http.MethodGet, "/api/v1/portability/imports/import-1", nil, "")
+		assertEnvelope(t, get, http.StatusNotFound, "not_found")
+		confirm := serve(t, handler, allowAuth, http.MethodPost, "/api/v1/portability/imports/import-1/confirm", nil, "")
+		assertEnvelope(t, confirm, http.StatusNotFound, "not_found")
+		if parser.calls != 0 {
+			t.Fatal("private bundle parsed for unauthorized owner")
+		}
+	}
+}
+
 func TestConfirmReturnsReportAndCommitsRow(t *testing.T) {
 	imports := newFakeImportStore()
 	imports.rows["ws-1/import-1"] = dto.ImportRecordRow{
 		ID:               "import-1",
+		UserID:           "user-1",
 		WorkspaceID:      "ws-1",
 		State:            dto.ImportStatePending,
 		SourceInstanceID: "instance-src",
@@ -687,6 +706,7 @@ func TestConfirmMapsCommittedAndExpiredToImportConflict(t *testing.T) {
 	imports := newFakeImportStore()
 	imports.rows["ws-1/import-1"] = dto.ImportRecordRow{
 		ID:          "import-1",
+		UserID:      "user-1",
 		WorkspaceID: "ws-1",
 		State:       dto.ImportStateCommitted,
 		CreatedAt:   testNow().Add(-time.Hour),
@@ -702,6 +722,7 @@ func TestConfirmMapsCommittedAndExpiredToImportConflict(t *testing.T) {
 	imports = newFakeImportStore()
 	imports.rows["ws-1/import-1"] = dto.ImportRecordRow{
 		ID:          "import-1",
+		UserID:      "user-1",
 		WorkspaceID: "ws-1",
 		State:       dto.ImportStatePending,
 		CreatedAt:   testNow().Add(-48 * time.Hour),

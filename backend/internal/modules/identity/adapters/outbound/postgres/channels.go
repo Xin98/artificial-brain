@@ -47,13 +47,26 @@ func (s *ChannelStore) Update(ctx context.Context, channel domain.ContactChannel
 }
 
 func (s *ChannelStore) ByID(ctx context.Context, workspaceID, userID, channelID string) (domain.ContactChannel, error) {
+	return s.byID(ctx, workspaceID, userID, channelID, false)
+}
+
+// ByIDForUpdate locks a channel until the caller's transaction completes.
+func (s *ChannelStore) ByIDForUpdate(ctx context.Context, workspaceID, userID, channelID string) (domain.ContactChannel, error) {
+	return s.byID(ctx, workspaceID, userID, channelID, true)
+}
+
+func (s *ChannelStore) byID(ctx context.Context, workspaceID, userID, channelID string, lock bool) (domain.ContactChannel, error) {
 	exec := database.ExecutorFromContextOr(ctx, s.pool)
-	channel, err := scanChannel(exec.QueryRow(ctx, `
+	query := `
 		select id, user_id, workspace_id, kind, address, verified, enabled,
 		       code_hash, code_expires_at, created_at
 		from identity.contact_channels
 		where id = $1 and user_id = $2 and workspace_id = $3
-	`, channelID, userID, workspaceID))
+	`
+	if lock {
+		query += " for update"
+	}
+	channel, err := scanChannel(exec.QueryRow(ctx, query, channelID, userID, workspaceID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return domain.ContactChannel{}, domain.ErrChannelNotFound
 	}

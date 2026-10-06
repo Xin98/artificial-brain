@@ -6,6 +6,14 @@ paths:
   /api/v1/todos:
     get:
       operationId: listTodos
+      parameters:
+        - in: query
+          name: completedSince
+          required: false
+          description: Inclusive RFC3339 completion instant, normalized to UTC and filtered before the 200-row limit.
+          schema:
+            type: string
+            format: date-time
       responses:
         '200':
           description: Matching todos, capped at 200; deleted never listed.
@@ -187,6 +195,13 @@ components:
           type: boolean
         reminderVersion:
           type: integer
+        reminderScheduled:
+          type: boolean
+          description: Whether this command scheduled deliveries; false with no usable channels. Omitted when scheduling state is unknown.
+        reminderChannels:
+          type: array
+          items:
+            type: string
         version:
           type: integer
         createdAt:

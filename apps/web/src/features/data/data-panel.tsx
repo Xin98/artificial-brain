@@ -13,11 +13,13 @@ import type {
 // Portability envelope codes mapped to actionable copy; the strings are the
 // iteration's agreed wording, verbatim.
 const ERROR_COPY: Record<string, string> = {
-  bundle_too_large: "导出包超过上限，请拆分后重试",
+  bundle_too_large:
+    "导出包超过本实例的上传上限。请联系实例管理员提高导入容量后重试。",
   checksum_mismatch: "导出包已损坏，请重新导出",
   unsupported_schema_version: "导出包版本不受支持",
   bundle_invalid: "导出包内容无效",
   import_conflict: "该导入已确认或已过期",
+  not_found: "导入预览已失效或不属于当前账户，请重新选择文件生成预览。",
 };
 
 const FALLBACK_COPY = "操作失败,请稍后再试。";
@@ -33,6 +35,8 @@ const KIND_LABELS: Record<string, string> = {
   todo: "待办",
   channel: "渠道",
   delivery: "提醒记录",
+  session: "会话",
+  message: "消息",
 };
 
 // DETAILS_LIMIT caps the decision list the panel renders; the server caps
@@ -43,6 +47,22 @@ type Phase = "idle" | "previewing" | "preview" | "confirming" | "report";
 
 function errorCopy(code: string): string {
   return ERROR_COPY[code] ?? FALLBACK_COPY;
+}
+
+function reasonCopy(reason: string): string {
+  const labels: Record<string, string> = {
+    "fingerprint unchanged since last import": "与上次导入内容相同",
+    "fingerprint changed since last import": "与已导入内容不同，保留现有版本",
+    "channel already exists": "联系渠道已存在",
+    todo_not_found: "关联待办未恢复",
+    legacy_source_owner_unverified:
+      "此工作区已导入过该记录，无法核实旧记录的账户归属；请联系管理员核对，已保留原数据",
+    session_not_found: "关联会话不存在",
+    session_not_found_or_conflict: "关联会话未恢复或有冲突",
+    "duplicate session id": "会话编号重复",
+    "duplicate message id or order": "消息编号或顺序重复",
+  };
+  return labels[reason] ?? reason;
 }
 
 function exportFilename(): string {
@@ -80,6 +100,13 @@ export function DataPanel({
   const [report, setReport] = useState<ImportReport | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [exporting, setExporting] = useState(false);
+
+  function restartImport(): void {
+    setPreview(null);
+    setReport(null);
+    setError(null);
+    setPhase("idle");
+  }
 
   async function handleExport(): Promise<void> {
     setExporting(true);
@@ -123,9 +150,17 @@ export function DataPanel({
     setPhase("confirming");
     const result = await confirmImport("", fetcher, preview.importId);
     if (!result.ok) {
-      setError(errorCopy(result.code));
-      setPreview(null);
-      setPhase("idle");
+      setError(
+        result.code === "unknown"
+          ? "导入结果尚未确认，请再次确认同一导入以核对结果。不要重新上传文件。"
+          : errorCopy(result.code),
+      );
+      if (result.code === "import_conflict" || result.code === "not_found") {
+        setPreview(null);
+        setPhase("idle");
+      } else {
+        setPhase("preview");
+      }
       return;
     }
     setPreview(null);
@@ -143,7 +178,9 @@ export function DataPanel({
 
       <div className="data-export">
         <h2>导出数据</h2>
-        <p>将本实例的全部数据(待办、提醒记录与联系渠道偏好)打包下载。</p>
+        <p>
+          下载当前账户的待办、联系渠道偏好、会话与完整消息历史，以及当前工作区的提醒记录。导入仅恢复历史，不会重新执行会话操作或发送旧提醒。
+        </p>
         <button
           className="btn-primary"
           disabled={exporting}
@@ -177,25 +214,30 @@ export function DataPanel({
         {phase === "preview" && preview !== null ? (
           <>
             <CountList counts={preview} />
+            <p>仅新增记录会被恢复；冲突和无效记录不会覆盖现有数据。</p>
             {preview.details.length > 0 ? (
               <ul className="data-details">
                 {preview.details.slice(0, DETAILS_LIMIT).map((decision) => (
-                  <li key={`${decision.kind}-${decision.sourceRecordId}`}>
+                  <li
+                    key={`${decision.kind}-${decision.label || decision.sourceRecordId}`}
+                  >
                     <span className="data-detail-kind">
                       {KIND_LABELS[decision.kind] ?? decision.kind}
                     </span>
                     <span className="data-detail-id">
-                      {decision.sourceRecordId}
+                      {decision.label || decision.sourceRecordId}
                     </span>
                     <span className="data-detail-outcome">
                       {OUTCOME_LABELS[decision.outcome]}
                     </span>
-                    {decision.reason ? <span>{decision.reason}</span> : null}
+                    {decision.reason ? (
+                      <span>{reasonCopy(decision.reason)}</span>
+                    ) : null}
                   </li>
                 ))}
               </ul>
             ) : null}
-            {preview.truncated ? (
+            {preview.truncated || preview.details.length > DETAILS_LIMIT ? (
               <p className="data-truncated" role="status">
                 明细较多,仅显示前 {DETAILS_LIMIT} 条。
               </p>
@@ -207,6 +249,13 @@ export function DataPanel({
             >
               确认导入
             </button>
+            <button
+              className="btn-secondary"
+              onClick={restartImport}
+              type="button"
+            >
+              取消导入 / 更换文件
+            </button>
           </>
         ) : null}
 
@@ -214,8 +263,53 @@ export function DataPanel({
 
         {phase === "report" && report !== null ? (
           <>
-            <p role="status">导入完成,提交于 {report.committedAt}。</p>
+            <p role="status">
+              {report.conflicts > 0 || report.invalid > 0
+                ? "导入已提交，部分记录未导入"
+                : "导入完成"}
+              ，提交于 {new Date(report.committedAt).toLocaleString()}。
+            </p>
             <CountList counts={report} />
+            {report.conflicts > 0 || report.invalid > 0 ? (
+              <p>
+                冲突记录保留了现有版本；无效记录未恢复。请根据下方明细检查原始数据后重新导出。
+              </p>
+            ) : null}
+            {(report.details ?? []).length > 0 ? (
+              <ul className="data-details">
+                {(report.details ?? [])
+                  .slice(0, DETAILS_LIMIT)
+                  .map((decision) => (
+                    <li key={`${decision.kind}-${decision.sourceRecordId}`}>
+                      <span className="data-detail-kind">
+                        {KIND_LABELS[decision.kind] ?? decision.kind}
+                      </span>
+                      <span className="data-detail-id">
+                        {decision.label || decision.sourceRecordId}
+                      </span>
+                      <span className="data-detail-outcome">
+                        {OUTCOME_LABELS[decision.outcome]}
+                      </span>
+                      {decision.reason ? (
+                        <span>{reasonCopy(decision.reason)}</span>
+                      ) : null}
+                    </li>
+                  ))}
+              </ul>
+            ) : null}
+            {report.truncated ||
+            (report.details ?? []).length > DETAILS_LIMIT ? (
+              <p className="data-truncated">
+                明细较多，仅显示前 {DETAILS_LIMIT} 条。
+              </p>
+            ) : null}
+            <button
+              className="btn-secondary"
+              onClick={restartImport}
+              type="button"
+            >
+              继续导入其他文件
+            </button>
           </>
         ) : null}
       </div>

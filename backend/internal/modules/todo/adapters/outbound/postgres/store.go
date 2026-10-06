@@ -98,6 +98,9 @@ func (s *Store) List(ctx context.Context, workspaceID, ownerUserID string, filte
 	if filters.Status != "" {
 		add("status = $%d", filters.Status)
 	}
+	if filters.CompletedSince != nil {
+		add("completed_at >= $%d", filters.CompletedSince.UTC())
+	}
 	if filters.DueFrom != nil {
 		add("due_at_utc >= $%d", *filters.DueFrom)
 	}

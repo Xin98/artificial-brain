@@ -1,3 +1,4 @@
+import { recoverExpiredSession } from "../auth/session-recovery";
 import {
   hasExactKeys,
   isInteger,
@@ -32,6 +33,7 @@ export async function fetchDashboardSummary(
       cache: "no-store",
       headers: { accept: "application/json" },
     });
+    if (recoverExpiredSession(response)) return null;
     if (!response.ok) {
       return null;
     }

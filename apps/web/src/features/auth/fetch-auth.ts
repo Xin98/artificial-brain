@@ -14,7 +14,8 @@ export type AuthErrorCode =
   | "unauthenticated"
   | "unavailable"
   | "sms_unavailable"
-  | "verification_send_failed";
+  | "verification_send_failed"
+  | "registration_closed";
 
 export interface LoginIdentifier {
   phone?: string;
@@ -146,6 +147,7 @@ async function classifyStatus(response: Response): Promise<AuthErrorCode> {
   // classifyErrorPayload collapses unknown codes to "other", so inspect the
   // raw payload's code field for the auth-specific codes it does not enum.
   if (isRecord(payload) && typeof payload.code === "string") {
+    if (payload.code === "registration_closed") return "registration_closed";
     if (payload.code === "sms_unavailable") {
       return "sms_unavailable";
     }

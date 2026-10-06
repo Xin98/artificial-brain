@@ -57,6 +57,18 @@ type MessageLogStore interface {
 	ListBySession(ctx context.Context, workspaceID, userID, sessionID string, limit int) ([]MessageLogEntry, error)
 }
 
+// PagedMessageLogStore is an additive read seam. before is an exclusive
+// decimal insertion ID; empty means the latest rows.
+type PagedMessageLogStore interface {
+	ListBefore(ctx context.Context, workspaceID, userID, sessionID, before string, limit int) ([]MessageLogEntry, error)
+}
+
+// PagedSessionStore provides bounded offset pages in the same stable order
+// as List. Keeping it separate preserves existing store consumers.
+type PagedSessionStore interface {
+	ListPage(ctx context.Context, workspaceID, userID string, offset, limit int) ([]domain.Session, error)
+}
+
 // SessionStore persists conversation sessions. Implementations resolve
 // their executor from context so writes join the caller's transaction.
 // Every accessor is scoped to workspace+user; a miss yields

@@ -10,7 +10,7 @@ import (
 
 // SchemaVersion identifies the export bundle format this build reads and
 // writes. Bumping it is a compatibility decision, never silent.
-const SchemaVersion = "1"
+const SchemaVersion = "2"
 
 // Manifest describes an export bundle: which instance produced it, when,
 // how many records it carries, and the sha256 hex digest of every entry
@@ -28,13 +28,15 @@ type ManifestCounts struct {
 	Todos      int
 	Deliveries int
 	Channels   int
+	Sessions   int
+	Messages   int
 }
 
 // ValidateManifest checks the manifest invariants. The schema version is
 // checked first so unsupported bundles fail before any field is trusted;
 // every other violation reports ErrManifestInvalid.
 func ValidateManifest(m Manifest) error {
-	if m.SchemaVersion != SchemaVersion {
+	if m.SchemaVersion != SchemaVersion && m.SchemaVersion != "1" {
 		return ErrUnsupportedSchemaVersion
 	}
 	if m.SourceInstanceID == "" {
@@ -43,7 +45,7 @@ func ValidateManifest(m Manifest) error {
 	if m.ExportedAt.IsZero() {
 		return fmt.Errorf("%w: exported at is required", ErrManifestInvalid)
 	}
-	if m.Counts.Todos < 0 || m.Counts.Deliveries < 0 || m.Counts.Channels < 0 {
+	if m.Counts.Todos < 0 || m.Counts.Deliveries < 0 || m.Counts.Channels < 0 || m.Counts.Sessions < 0 || m.Counts.Messages < 0 {
 		return fmt.Errorf("%w: counts must not be negative", ErrManifestInvalid)
 	}
 	if len(m.Files) == 0 {

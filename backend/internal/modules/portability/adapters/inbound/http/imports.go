@@ -69,7 +69,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	view, err := h.Get.Handle(r.Context(), principal.WorkspaceID, r.PathValue("importId"))
+	view, err := h.Get.HandleForOwner(r.Context(), principal, r.PathValue("importId"))
 	if err != nil {
 		writePortabilityError(w, r, err)
 		return

@@ -51,6 +51,7 @@ function routingFetcher(
 ) {
   return vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
     const url = String(input);
+    if (url.startsWith("/api/v1/todos")) return jsonResponse({ todos: [] });
     if (url.startsWith("/api/v1/dashboard/summary")) {
       return summaryBody === "fail"
         ? new Response("{}", { status: 500 })
@@ -151,6 +152,8 @@ it("keeps the controlled records region mounted while a filter is loading", asyn
     resolveReminders = resolve;
   });
   const fetcher = vi.fn((input: RequestInfo | URL): Promise<Response> => {
+    if (String(input).startsWith("/api/v1/todos"))
+      return Promise.resolve(jsonResponse({ todos: [] }));
     if (String(input).startsWith("/api/v1/dashboard/summary")) {
       return Promise.resolve(jsonResponse(summary));
     }
@@ -224,4 +227,24 @@ it("fails closed when the dashboard summary cannot load", async () => {
   await waitFor(() =>
     expect(screen.getByRole("alert")).toHaveTextContent("仪表盘暂时不可用"),
   );
+});
+
+it("refreshes stats and reminders and presents actionable empty-day onboarding", async () => {
+  const fetcher = routingFetcher(summary, { deliveries: [] });
+  render(<DashboardPanel fetcher={fetcher} />);
+  await screen.findByText("待处理");
+  await screen.findByRole("link", { name: "新建待办" });
+  fireEvent.click(screen.getByRole("button", { name: "刷新概况" }));
+  await waitFor(() =>
+    expect(
+      fetcher.mock.calls.filter(([input]) =>
+        String(input).startsWith("/api/v1/dashboard/summary"),
+      ),
+    ).toHaveLength(2),
+  );
+  expect(
+    fetcher.mock.calls.filter(
+      ([input]) => String(input) === "/api/v1/reminders",
+    ),
+  ).toHaveLength(2);
 });

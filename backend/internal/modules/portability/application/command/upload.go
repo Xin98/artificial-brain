@@ -19,7 +19,7 @@ const maxDetailsPerOutcome = 100
 // without re-parsing; confirm never reads it back.
 type UploadImportHandler struct {
 	Imports   ports.ImportStore
-	Sources   ports.SourceRecordStore
+	Sources   ports.ScopedSourceRecordStore
 	Parser    ports.BundleParser
 	NewID     func() string
 	Now       func() time.Time
@@ -35,7 +35,7 @@ func (h *UploadImportHandler) Handle(ctx context.Context, principal ports.Princi
 	if err != nil {
 		return "", dto.Preview{}, err
 	}
-	existing, err := h.Sources.Fingerprints(ctx, parsed.Manifest.SourceInstanceID, allRecordIDs(parsed))
+	existing, err := h.Sources.ForOwner(principal).Fingerprints(ctx, parsed.Manifest.SourceInstanceID, allRecordIDs(parsed))
 	if err != nil {
 		return "", dto.Preview{}, err
 	}
@@ -45,6 +45,7 @@ func (h *UploadImportHandler) Handle(ctx context.Context, principal ports.Princi
 	importID := h.NewID()
 	row := dto.ImportRecordRow{
 		ID:               importID,
+		UserID:           principal.UserID,
 		WorkspaceID:      principal.WorkspaceID,
 		State:            dto.ImportStatePending,
 		SourceInstanceID: parsed.Manifest.SourceInstanceID,
@@ -62,6 +63,8 @@ func (h *UploadImportHandler) Handle(ctx context.Context, principal ports.Princi
 // fixed kind order, every decision, and the fingerprints of the valid records
 // keyed by source record id.
 type bundlePlan struct {
+	sessions      []domain.SessionRecord
+	messages      []domain.MessageRecord
 	todos         []domain.TodoRecord
 	channels      []domain.ChannelRecord
 	deliveries    []domain.DeliveryRecord
@@ -91,7 +94,7 @@ func classifyBundle(parsed ports.ParsedBundle, existing map[string]string) *bund
 		plan.todos = append(plan.todos, record)
 		fingerprint := domain.Fingerprint(record)
 		plan.fingerprints[record.ID] = fingerprint
-		entries = append(entries, domain.ImportEntry{Kind: domain.KindTodo, SourceRecordID: record.ID, Fingerprint: fingerprint})
+		entries = append(entries, domain.ImportEntry{SourceInstanceID: parsed.Manifest.SourceInstanceID, Kind: domain.KindTodo, SourceRecordID: record.ID, Fingerprint: fingerprint})
 	}
 	for _, record := range parsed.Channels {
 		if err := domain.ValidateChannelRecord(record); err != nil {
@@ -101,7 +104,7 @@ func classifyBundle(parsed ports.ParsedBundle, existing map[string]string) *bund
 		plan.channels = append(plan.channels, record)
 		fingerprint := domain.Fingerprint(record)
 		plan.fingerprints[record.ID] = fingerprint
-		entries = append(entries, domain.ImportEntry{Kind: domain.KindChannel, SourceRecordID: record.ID, Fingerprint: fingerprint})
+		entries = append(entries, domain.ImportEntry{SourceInstanceID: parsed.Manifest.SourceInstanceID, Kind: domain.KindChannel, SourceRecordID: record.ID, Fingerprint: fingerprint})
 	}
 	for _, record := range parsed.Deliveries {
 		if err := domain.ValidateDeliveryRecord(record); err != nil {
@@ -111,7 +114,7 @@ func classifyBundle(parsed ports.ParsedBundle, existing map[string]string) *bund
 		plan.deliveries = append(plan.deliveries, record)
 		fingerprint := domain.Fingerprint(record)
 		plan.fingerprints[record.ID] = fingerprint
-		entries = append(entries, domain.ImportEntry{Kind: domain.KindDelivery, SourceRecordID: record.ID, Fingerprint: fingerprint})
+		entries = append(entries, domain.ImportEntry{SourceInstanceID: parsed.Manifest.SourceInstanceID, Kind: domain.KindDelivery, SourceRecordID: record.ID, Fingerprint: fingerprint})
 	}
 
 	for _, decision := range domain.Decide(entries, existing) {
@@ -122,8 +125,32 @@ func classifyBundle(parsed ports.ParsedBundle, existing map[string]string) *bund
 			Reason:         decision.Reason,
 		})
 	}
+	plan.classifyConversations(parsed, existing)
 	for _, decision := range invalid {
 		plan.appendDecision(decision)
+	}
+	labels := map[string]string{}
+	for _, record := range parsed.Todos {
+		labels[domain.KindTodo+"\x00"+record.ID] = record.Title
+	}
+	for _, record := range parsed.Channels {
+		labels[domain.KindChannel+"\x00"+record.ID] = record.Address
+	}
+	for _, record := range parsed.Deliveries {
+		labels[domain.KindDelivery+"\x00"+record.ID] = record.TodoTitleSnapshot
+	}
+	for _, record := range parsed.Sessions {
+		labels[domain.KindSession+"\x00"+record.ID] = record.Title
+	}
+	for _, record := range parsed.Messages {
+		label := []rune(record.Body)
+		if len(label) > 80 {
+			label = label[:80]
+		}
+		labels[domain.KindMessage+"\x00"+record.ID] = string(label)
+	}
+	for i := range plan.decisions {
+		plan.decisions[i].Label = labels[plan.decisions[i].Kind+"\x00"+plan.decisions[i].SourceRecordID]
 	}
 	return plan
 }
@@ -174,6 +201,12 @@ func allRecordIDs(parsed ports.ParsedBundle) []string {
 	}
 	for _, record := range parsed.Deliveries {
 		appendID(record.ID)
+	}
+	for _, record := range parsed.Sessions {
+		appendID(conversationRecordID(domain.KindSession, record.ID))
+	}
+	for _, record := range parsed.Messages {
+		appendID(conversationRecordID(domain.KindMessage, record.ID))
 	}
 	return ids
 }

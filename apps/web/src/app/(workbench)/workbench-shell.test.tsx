@@ -1,5 +1,6 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
+import { useEffect } from "react";
 
 import { WorkbenchShell } from "./workbench-shell";
 
@@ -16,27 +17,69 @@ it("renders navigation to the workbench areas", () => {
     </WorkbenchShell>,
   );
 
-  expect(screen.getByRole("link", { name: "Dashboard" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "概况" })).toHaveAttribute(
     "href",
     "/",
   );
-  expect(screen.getByRole("link", { name: "Todos" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "待办" })).toHaveAttribute(
     "href",
     "/todos",
   );
-  expect(screen.getByRole("link", { name: "Conversation" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "对话" })).toHaveAttribute(
     "href",
     "/conversation",
   );
-  expect(screen.getByRole("link", { name: "Settings" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "设置" })).toHaveAttribute(
     "href",
     "/settings",
   );
-  expect(screen.getByRole("link", { name: "Data" })).toHaveAttribute(
+  expect(screen.getByRole("link", { name: "数据" })).toHaveAttribute(
     "href",
     "/data",
   );
   expect(screen.getByText("page content")).toBeInTheDocument();
+});
+
+it("shows the account and clears owned drafts only after successful logout", async () => {
+  sessionStorage.setItem("ab.conversation.draft.new", "private draft");
+  const navigate = vi.fn();
+  const fetcher = vi
+    .fn()
+    .mockResolvedValue(new Response("{}", { status: 200 }));
+  render(
+    <WorkbenchShell
+      session={{ userId: "user-1", workspaceId: "ws-1", sessionId: "s-1" }}
+      fetcher={fetcher}
+      onNavigate={navigate}
+    >
+      <p>content</p>
+    </WorkbenchShell>,
+  );
+  expect(screen.getByText(/user-1/)).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "退出登录" }));
+  await waitFor(() => expect(navigate).toHaveBeenCalledWith("/login"));
+  expect(sessionStorage.getItem("ab.conversation.draft.new")).toBeNull();
+  expect(String(fetcher.mock.calls[0][0])).toBe("/api/v1/auth/logout");
+});
+
+it("clears a previous account's drafts before child features restore them", async () => {
+  sessionStorage.setItem("ab.conversation.owner", "previous-user");
+  sessionStorage.setItem("ab.conversation.draft.new", "private draft");
+  const restored = vi.fn();
+  function RestoringChild(): React.JSX.Element {
+    useEffect(() => {
+      restored(sessionStorage.getItem("ab.conversation.draft.new"));
+    }, []);
+    return <p>child</p>;
+  }
+  render(
+    <WorkbenchShell
+      session={{ userId: "new-user", workspaceId: "ws-1", sessionId: "s-1" }}
+    >
+      <RestoringChild />
+    </WorkbenchShell>,
+  );
+  await waitFor(() => expect(restored).toHaveBeenCalledWith(null));
 });
 
 it("does not leak internal URLs or configuration names", () => {

@@ -1,13 +1,19 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Export bundle manifest",
-  "description": "The manifest.json entry of an export bundle: the wire shape of the portability module's BundleManifest. The manifest is always the final zip entry and is never listed in its own files map; files maps every other entry name to the sha256 hex digest of its bytes.",
+  "description": "The manifest.json entry of an export bundle: the wire shape of the portability module's BundleManifest. The manifest is always the final zip entry and is never listed in its own files map; files maps every other entry name to the sha256 hex digest of its bytes. Schema 2 requires checksummed conversation-sessions.json and conversation-messages.json. Import also accepts schema 1 using manifest-v1.schema.json.",
   "type": "object",
   "additionalProperties": false,
-  "required": ["schemaVersion", "sourceInstanceId", "exportedAt", "counts", "files"],
+  "required": [
+    "schemaVersion",
+    "sourceInstanceId",
+    "exportedAt",
+    "counts",
+    "files"
+  ],
   "properties": {
     "schemaVersion": {
-      "const": "1"
+      "const": "2"
     },
     "sourceInstanceId": {
       "type": "string"
@@ -19,7 +25,13 @@
     "counts": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["todos", "deliveries", "channels"],
+      "required": [
+        "todos",
+        "deliveries",
+        "channels",
+        "sessions",
+        "messages"
+      ],
       "properties": {
         "todos": {
           "type": "integer",
@@ -30,6 +42,14 @@
           "minimum": 0
         },
         "channels": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "sessions": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "messages": {
           "type": "integer",
           "minimum": 0
         }

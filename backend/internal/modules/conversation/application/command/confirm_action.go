@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/Xin98/artificial-brain/backend/internal/modules/conversation/application"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/conversation/application/dto"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/conversation/application/ports"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/conversation/domain"
@@ -16,14 +17,30 @@ import (
 type ConfirmActionHandler struct {
 	Confirmations ports.ConfirmationStore
 	Todos         ports.TodoGateway
+	Sessions      ports.SessionStore
+	Messages      ports.MessageLogStore
 	UoW           ports.UnitOfWork
 	Now           func() time.Time
 }
 
 // Handle confirms and executes the bound action.
 func (h *ConfirmActionHandler) Handle(ctx context.Context, workspaceID, userID, confirmationID string) (dto.MessageResponse, error) {
+	return h.HandleWithSession(ctx, workspaceID, userID, confirmationID, "")
+}
+
+// HandleWithSession records the outcome in an owned session in the same
+// transaction as the delete. Empty sessionID preserves legacy requests.
+func (h *ConfirmActionHandler) HandleWithSession(ctx context.Context, workspaceID, userID, confirmationID, sessionID string) (dto.MessageResponse, error) {
 	var todoID string
 	err := h.UoW.Run(ctx, func(ctx context.Context) error {
+		if sessionID != "" {
+			if h.Sessions == nil || h.Messages == nil {
+				return domain.ErrSessionNotFound
+			}
+			if _, err := h.Sessions.Get(ctx, workspaceID, userID, sessionID); err != nil {
+				return err
+			}
+		}
 		confirmation, err := h.Confirmations.Get(ctx, workspaceID, userID, confirmationID)
 		if err != nil {
 			return err
@@ -38,19 +55,26 @@ func (h *ConfirmActionHandler) Handle(ctx context.Context, workspaceID, userID, 
 		if todo.Version != confirmation.TodoVersion {
 			return domain.ErrConfirmationTodoVersionStale
 		}
-		if _, err := h.Todos.DeleteTodo(ctx, tododto.DeleteTodoRequest{
+		_, err = h.Todos.DeleteTodo(ctx, tododto.DeleteTodoRequest{
 			WorkspaceID: workspaceID,
 			UserID:      userID,
 			TodoID:      confirmation.TodoID,
 			Version:     todo.Version,
-		}); err != nil {
+		})
+		if err != nil {
 			return err
 		}
 		todoID = confirmation.TodoID
+		if sessionID != "" {
+			if err := h.Messages.Append(ctx, ports.MessageLog{WorkspaceID: workspaceID, UserID: userID, Role: ports.RoleAssistant, Body: application.DeletedSummary(todo.Title), SessionID: &sessionID, CreatedAt: h.Now()}); err != nil {
+				return err
+			}
+			return h.Sessions.Touch(ctx, workspaceID, userID, sessionID, h.Now())
+		}
 		return nil
 	})
 	if err != nil {
 		return dto.MessageResponse{}, err
 	}
-	return dto.MessageResponse{Kind: dto.KindTodoDeleted, TodoID: todoID}, nil
+	return dto.MessageResponse{Kind: dto.KindTodoDeleted, TodoID: todoID, SessionID: sessionID}, nil
 }

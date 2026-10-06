@@ -64,14 +64,19 @@ func (s *SessionStore) Get(ctx context.Context, workspaceID, userID, sessionID s
 // List returns up to limit sessions ordered by UpdatedAt descending; ties
 // break on the id so paging-free listings stay stable.
 func (s *SessionStore) List(ctx context.Context, workspaceID, userID string, limit int) ([]domain.Session, error) {
+	return s.ListPage(ctx, workspaceID, userID, 0, limit)
+}
+
+// ListPage reads a scoped page, breaking activity-time ties by ID.
+func (s *SessionStore) ListPage(ctx context.Context, workspaceID, userID string, offset, limit int) ([]domain.Session, error) {
 	exec := database.ExecutorFromContextOr(ctx, s.pool)
 	rows, err := exec.Query(ctx, `
 		select id, workspace_id, user_id, title, created_at, updated_at
 		from conversation.sessions
 		where workspace_id = $1 and user_id = $2
 		order by updated_at desc, id desc
-		limit $3
-	`, workspaceID, userID, limit)
+		limit $3 offset $4
+	`, workspaceID, userID, limit, offset)
 	if err != nil {
 		return nil, err
 	}

@@ -11,6 +11,7 @@ interface StatTile {
   label: string;
   value: number;
   tone: "danger" | "warn" | null;
+  view?: string;
 }
 
 interface ReminderStatTile extends StatTile {
@@ -25,6 +26,21 @@ const STATE_BADGES: Record<ReminderState, string> = {
   succeeded: "badge badge-ok",
   failed: "badge badge-danger",
   suppressed: "badge badge-muted",
+};
+
+const STATE_LABELS: Record<ReminderState, string> = {
+  scheduled: "等待发送",
+  sending: "发送中 / 重试中",
+  succeeded: "已提交发送",
+  failed: "投递失败",
+  suppressed: "已停止提醒",
+};
+const SUPPRESSION_LABELS: Record<string, string> = {
+  todo_completed: "待办已完成",
+  todo_deleted: "待办已删除",
+  version_stale: "到期时间已更新",
+  channel_unavailable: "联系方式未验证或已停用，请前往设置检查",
+  plan_revoked: "提醒计划已取消",
 };
 
 function tileClass(tile: StatTile): string {
@@ -53,11 +69,26 @@ export function DashboardView({
   onSelectReminderStatus?: (status: ReminderStatusFilter | null) => void;
 }): React.JSX.Element {
   const todoTiles: StatTile[] = [
-    { label: "待处理", value: summary.pendingTotal, tone: null },
-    { label: "今日到期", value: summary.dueToday, tone: null },
-    { label: "已逾期", value: summary.overdue, tone: "danger" },
-    { label: "无到期时间", value: summary.noDue, tone: null },
-    { label: "近 7 天完成", value: summary.completedLast7Days, tone: null },
+    {
+      label: "待处理",
+      value: summary.pendingTotal,
+      tone: null,
+      view: "pending",
+    },
+    { label: "今日到期", value: summary.dueToday, tone: null, view: "today" },
+    {
+      label: "已逾期",
+      value: summary.overdue,
+      tone: "danger",
+      view: "overdue",
+    },
+    { label: "无到期时间", value: summary.noDue, tone: null, view: "noDue" },
+    {
+      label: "近 7 天完成",
+      value: summary.completedLast7Days,
+      tone: null,
+      view: "completed7d",
+    },
   ];
   const reminderTiles: ReminderStatTile[] = [
     {
@@ -99,7 +130,7 @@ export function DashboardView({
               <Link
                 aria-label={`打开待办页面，${tile.label} ${tile.value} 项`}
                 className={`${tileClass(tile)} stat-tile-action`}
-                href="/todos"
+                href={`/todos?view=${tile.view}`}
                 key={tile.label}
               >
                 <span className="stat-value">{tile.value}</span>
@@ -191,9 +222,11 @@ export function DashboardView({
                 <span className="reminder-record-title">
                   《{delivery.todoTitle}》
                 </span>
-                <span className="badge badge-muted">{delivery.channel}</span>
+                <span className="badge badge-muted">
+                  {delivery.channel === "email" ? "邮箱" : "短信"}
+                </span>
                 <span className={STATE_BADGES[delivery.state]}>
-                  {delivery.state}
+                  {STATE_LABELS[delivery.state]}
                 </span>
                 <time dateTime={delivery.scheduledAt}>
                   {new Date(delivery.scheduledAt).toLocaleString()}
@@ -206,7 +239,23 @@ export function DashboardView({
                         : "badge badge-danger"
                     }
                   >
-                    {delivery.receiptState}
+                    {delivery.receiptState === "received_ok"
+                      ? "已确认接收"
+                      : "接收失败"}
+                  </span>
+                ) : null}
+                {delivery.state === "succeeded" && !delivery.receiptState ? (
+                  <span className="reminder-guidance">
+                    尚无接收回执，请检查收件箱
+                  </span>
+                ) : null}
+                {delivery.state === "failed" ||
+                delivery.receiptState === "received_failed" ? (
+                  <Link href="/settings">检查联系方式</Link>
+                ) : null}
+                {delivery.suppressionReason ? (
+                  <span className="reminder-guidance">
+                    {SUPPRESSION_LABELS[delivery.suppressionReason]}
                   </span>
                 ) : null}
               </li>

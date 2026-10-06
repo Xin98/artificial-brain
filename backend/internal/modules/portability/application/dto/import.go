@@ -21,6 +21,7 @@ const (
 // execution decision stale.
 type ImportRecordRow struct {
 	ID               string
+	UserID           string // uploader binding; existing metadata stores it without a migration
 	WorkspaceID      string
 	State            string
 	SourceInstanceID string
@@ -31,17 +32,14 @@ type ImportRecordRow struct {
 	CommittedAt      *time.Time
 }
 
-// SourceRecord is one portability_source_records row: the Source Identity
-// entry that marks a bundle record as imported and remembers which row in
-// this instance it became. (sourceInstanceID, sourceRecordID) is unique
-// instance-wide — deliberately not workspace-scoped — so re-importing the
-// same bundle classifies records as skipped/conflict instead of copying them
-// again.
+// SourceRecord remembers one restored target and its content fingerprint.
+// Owner-bound adapters namespace source instances by workspace and user;
+// conversation kinds use existing instance metadata without a schema change.
 type SourceRecord struct {
 	WorkspaceID        string
 	SourceInstanceID   string
 	SourceRecordID     string
-	TargetKind         string // todo|channel|delivery
+	TargetKind         string // todo|channel|delivery|session|message
 	TargetID           string
 	ContentFingerprint string
 }

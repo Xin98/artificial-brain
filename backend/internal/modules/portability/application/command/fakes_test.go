@@ -286,6 +286,8 @@ type fakeSourceRecordStore struct {
 	targetIDSets      [][]string
 }
 
+func (f *fakeSourceRecordStore) ForOwner(_ ports.Principal) ports.SourceRecordStore { return f }
+
 func (f *fakeSourceRecordStore) Fingerprints(_ context.Context, sourceInstanceID string, ids []string) (map[string]string, error) {
 	f.gotInstanceID = sourceInstanceID
 	f.fingerprintIDSets = append(f.fingerprintIDSets, ids)

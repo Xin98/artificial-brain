@@ -129,7 +129,7 @@ func TestProcessMessageCreateHappyPathEchoesResolvedTime(t *testing.T) {
 		t.Fatalf("create request = %#v", request)
 	}
 	assertTranscript(t, log, "session-1", string(domain.IntentTodoCreate),
-		"已创建待办「提交周报」，提醒时间 2026-08-19 15:00（Asia/Shanghai）。")
+		"已创建待办「提交周报」。到期时间 2026-08-19 15:00（Asia/Shanghai）。未安排提醒：没有可用的提醒渠道，请先配置并验证渠道。")
 
 	// The auto-created session borrows its title from the first message.
 	session, err := sessions.Get(ctx(), "ws-1", "user-1", "session-1")
@@ -244,7 +244,7 @@ func TestProcessMessageListMapsFilters(t *testing.T) {
 	if len(gateway.listFilters) != 1 || gateway.listFilters[0].Keyword != "周报" || gateway.listFilters[0].Status != "pending" {
 		t.Fatalf("filters = %#v", gateway.listFilters)
 	}
-	assertTranscript(t, log, "session-1", string(domain.IntentTodoList), "已列出 1 条待办。")
+	assertTranscript(t, log, "session-1", string(domain.IntentTodoList), "已列出 1 条待办。\n- 提交周报 | pending | 2026-08-18T09:00:00Z")
 }
 
 func TestProcessMessageDeleteBranchesByCandidateCount(t *testing.T) {

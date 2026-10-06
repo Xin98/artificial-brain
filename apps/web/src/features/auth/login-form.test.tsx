@@ -170,3 +170,50 @@ it("shows the sms-unavailable message when phone login is rejected", async () =>
     expect(screen.getByRole("alert")).toHaveTextContent("暂不支持手机号登录"),
   );
 });
+
+it("keeps a safe return path and offers a resend countdown", async () => {
+  const navigate = vi.fn();
+  const fetcher = vi
+    .fn()
+    .mockResolvedValueOnce(challengeResponse())
+    .mockResolvedValueOnce(verifyResponse());
+  render(
+    <LoginForm
+      fetcher={fetcher}
+      onNavigate={navigate}
+      returnTo="/todos?view=today"
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("手机号或邮箱"), {
+    target: { value: "admin@example.com" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "获取验证码" }));
+  await screen.findByLabelText("验证码");
+  expect(screen.getByRole("button", { name: /秒后重新发送/ })).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("验证码"), {
+    target: { value: "123456" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "登录" }));
+  await waitFor(() =>
+    expect(navigate).toHaveBeenCalledWith("/todos?view=today"),
+  );
+});
+
+it("explains closed registration separately from invalid verification", async () => {
+  render(
+    <LoginForm
+      fetcher={vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ code: "registration_closed" }), {
+          status: 403,
+        }),
+      )}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("手机号或邮箱"), {
+    target: { value: "unknown@example.com" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "获取验证码" }));
+  await waitFor(() =>
+    expect(screen.getByRole("alert")).toHaveTextContent("注册已关闭"),
+  );
+});

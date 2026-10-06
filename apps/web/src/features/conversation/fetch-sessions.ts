@@ -6,6 +6,7 @@ import {
   isStringOrUndefined,
   safeTimeout,
 } from "../validation";
+import { recoverExpiredSession } from "../auth/session-recovery";
 
 export interface SessionView {
   id: string;
@@ -26,6 +27,8 @@ export interface SessionHistory {
   sessionId: string;
   title: string;
   messages: SessionMessage[];
+  hasMore?: boolean;
+  nextBefore?: string;
 }
 
 export type SessionFailureReason =
@@ -38,7 +41,12 @@ export type SessionFailureReason =
   | "network";
 
 export type SessionListResult =
-  | { ok: true; sessions: SessionView[] }
+  | {
+      ok: true;
+      sessions: SessionView[];
+      hasMore?: boolean;
+      nextOffset?: number;
+    }
   | { ok: false; reason: SessionFailureReason; correlationId?: string };
 
 export type SessionResult =
@@ -70,22 +78,36 @@ export async function listSessions(
   baseURL: string,
   fetcher: typeof fetch,
   timeoutMs = DEFAULT_SESSION_TIMEOUT_MS,
+  offset = 0,
 ): Promise<SessionListResult> {
   return requestJSON(
     fetcher,
-    `${baseURL}/api/v1/conversation/sessions`,
+    `${baseURL}/api/v1/conversation/sessions${offset > 0 ? `?offset=${offset}` : ""}`,
     { method: "GET" },
     timeoutMs,
     (payload) => {
       if (
         !isRecord(payload) ||
-        !hasAllowedKeys(payload, ["sessions"]) ||
+        !hasAllowedKeys(payload, ["sessions", "hasMore", "nextOffset"]) ||
+        (payload.hasMore !== undefined &&
+          typeof payload.hasMore !== "boolean") ||
+        (payload.nextOffset !== undefined &&
+          (!Number.isSafeInteger(payload.nextOffset) ||
+            Number(payload.nextOffset) < 0)) ||
         !Array.isArray(payload.sessions) ||
         !payload.sessions.every(isSessionView)
       ) {
         return undefined;
       }
-      return { sessions: payload.sessions };
+      return {
+        sessions: payload.sessions,
+        ...(payload.hasMore !== undefined
+          ? { hasMore: payload.hasMore as boolean }
+          : {}),
+        ...(payload.nextOffset !== undefined
+          ? { nextOffset: payload.nextOffset as number }
+          : {}),
+      };
     },
   );
 }
@@ -140,16 +162,28 @@ export async function fetchSessionMessages(
   fetcher: typeof fetch,
   sessionId: string,
   timeoutMs = DEFAULT_SESSION_TIMEOUT_MS,
+  before?: string,
 ): Promise<SessionHistoryResult> {
   return requestJSON(
     fetcher,
-    `${baseURL}/api/v1/conversation/sessions/${encodeURIComponent(sessionId)}/messages`,
+    `${baseURL}/api/v1/conversation/sessions/${encodeURIComponent(sessionId)}/messages${before ? `?before=${encodeURIComponent(before)}` : ""}`,
     { method: "GET" },
     timeoutMs,
     (payload) => {
       if (
         !isRecord(payload) ||
-        !hasAllowedKeys(payload, ["sessionId", "title", "messages"]) ||
+        !hasAllowedKeys(payload, [
+          "sessionId",
+          "title",
+          "messages",
+          "hasMore",
+          "nextBefore",
+        ]) ||
+        (payload.hasMore !== undefined &&
+          typeof payload.hasMore !== "boolean") ||
+        (payload.nextBefore !== undefined &&
+          (typeof payload.nextBefore !== "string" ||
+            !/^[1-9]\d*$/.test(payload.nextBefore))) ||
         !isNonEmptyString(payload.sessionId) ||
         !isNonEmptyString(payload.title) ||
         !Array.isArray(payload.messages) ||
@@ -162,6 +196,12 @@ export async function fetchSessionMessages(
           sessionId: payload.sessionId,
           title: payload.title,
           messages: payload.messages,
+          ...(payload.hasMore !== undefined
+            ? { hasMore: payload.hasMore as boolean }
+            : {}),
+          ...(payload.nextBefore !== undefined
+            ? { nextBefore: payload.nextBefore as string }
+            : {}),
         },
       };
     },
@@ -213,6 +253,7 @@ async function requestJSON<T extends object>(
   }
 
   if (!response.ok) {
+    recoverExpiredSession(response);
     return classifyFailureResponse(response);
   }
 

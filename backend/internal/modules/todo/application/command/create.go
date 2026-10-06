@@ -31,6 +31,7 @@ func (h *CreateTodoHandler) Handle(ctx context.Context, request dto.CreateTodoRe
 	if err != nil {
 		return dto.Todo{}, err
 	}
+	channels := []string{}
 	err = h.UoW.Run(ctx, func(ctx context.Context) error {
 		if err := h.Store.Insert(ctx, todo); err != nil {
 			return err
@@ -38,7 +39,8 @@ func (h *CreateTodoHandler) Handle(ctx context.Context, request dto.CreateTodoRe
 		if todo.DueAtUTC == nil {
 			return nil
 		}
-		channels, err := channelsSnapshot(ctx, h.Channels, todo.WorkspaceID, todo.OwnerUserID)
+		var err error
+		channels, err = channelsSnapshot(ctx, h.Channels, todo.WorkspaceID, todo.OwnerUserID)
 		if err != nil {
 			return err
 		}
@@ -55,7 +57,10 @@ func (h *CreateTodoHandler) Handle(ctx context.Context, request dto.CreateTodoRe
 	if err != nil {
 		return dto.Todo{}, err
 	}
-	return dto.FromDomain(todo, now), nil
+	view := dto.FromDomain(todo, now)
+	scheduled := todo.DueAtUTC != nil && len(channels) > 0
+	view.ReminderScheduled, view.ReminderChannels = &scheduled, &channels
+	return view, nil
 }
 
 // channelsSnapshot resolves the owner's channel snapshot, treating a nil
@@ -64,5 +69,9 @@ func channelsSnapshot(ctx context.Context, provider ports.ChannelsProvider, work
 	if provider == nil {
 		return []string{}, nil
 	}
-	return provider(ctx, workspaceID, ownerUserID)
+	channels, err := provider(ctx, workspaceID, ownerUserID)
+	if channels == nil {
+		channels = []string{}
+	}
+	return channels, err
 }

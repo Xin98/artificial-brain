@@ -27,12 +27,27 @@ export function authHeaders(cookie: string): Record<string, string> {
 
 // fetchSession validates the session against the API and fails closed: any
 // non-2xx response, malformed payload, or timeout yields null.
+export type SessionLookup =
+  | { kind: "authenticated"; session: SessionContext }
+  | { kind: "unauthenticated" }
+  | { kind: "unavailable" };
+
 export async function fetchSession(
   baseURL: string,
   fetcher: typeof fetch,
   cookie: string,
   timeoutMs = 1500,
 ): Promise<SessionContext | null> {
+  const result = await lookupSession(baseURL, fetcher, cookie, timeoutMs);
+  return result.kind === "authenticated" ? result.session : null;
+}
+
+export async function lookupSession(
+  baseURL: string,
+  fetcher: typeof fetch,
+  cookie: string,
+  timeoutMs = 1500,
+): Promise<SessionLookup> {
   try {
     const endpoint = new URL("/api/v1/auth/session", baseURL).toString();
     const response = await fetcher(endpoint, {
@@ -41,14 +56,15 @@ export async function fetchSession(
       headers: { accept: "application/json", ...authHeaders(cookie) },
     });
 
-    if (!response.ok) {
-      return null;
-    }
+    if (response.status === 401) return { kind: "unauthenticated" };
+    if (!response.ok) return { kind: "unavailable" };
 
     const payload: unknown = await response.json();
-    return isSessionContext(payload) ? payload : null;
+    return isSessionContext(payload)
+      ? { kind: "authenticated", session: payload }
+      : { kind: "unavailable" };
   } catch {
-    return null;
+    return { kind: "unavailable" };
   }
 }
 

@@ -56,3 +56,64 @@ it("shows a fail-closed message when the list cannot load", async () => {
     expect(screen.getByRole("alert")).toHaveTextContent("待办加载失败"),
   );
 });
+
+it("offers description details and a cancellable edit without losing filters", async () => {
+  const fetcher = vi
+    .fn()
+    .mockImplementation(async () =>
+      listResponse([{ ...pendingTodo, description: "准备数据" }]),
+    );
+  render(<TodoList fetcher={fetcher} />);
+  await screen.findByText("提交周报");
+  expect(screen.getByText("准备数据")).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("关键词"), {
+    target: { value: "周报" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "筛选" }));
+  await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2));
+  fireEvent.click(screen.getByRole("button", { name: "编辑" }));
+  expect(screen.getByLabelText("标题")).toHaveValue("提交周报");
+  fireEvent.click(screen.getByRole("button", { name: "取消编辑" }));
+  expect(screen.queryByLabelText("标题")).not.toBeInTheDocument();
+  expect(screen.getByLabelText("关键词")).toHaveValue("周报");
+});
+
+it("requests completion filtering before the API limit so recent completed todos are visible", async () => {
+  const recent = {
+    ...pendingTodo,
+    status: "completed",
+    completedAt: new Date().toISOString(),
+  };
+  const stored = [
+    ...Array.from({ length: 201 }, (_unused, index) => ({
+      ...recent,
+      id: `old-${index}`,
+      title: `旧完成记录 ${index}`,
+      completedAt: "2020-01-01T00:00:00Z",
+    })),
+    recent,
+  ];
+  const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+    const cutoff = new URL(
+      String(input),
+      "https://workbench.test",
+    ).searchParams.get("completedSince");
+    const matches = cutoff
+      ? stored.filter(
+          (todo) => Date.parse(todo.completedAt) >= Date.parse(cutoff),
+        )
+      : stored;
+    return listResponse(matches.slice(0, 200));
+  });
+  render(<TodoList fetcher={fetcher} initialView="completed7d" />);
+  await screen.findByText("提交周报");
+  expect(screen.queryByText(/旧完成记录/)).not.toBeInTheDocument();
+  const query = new URL(
+    String(fetcher.mock.calls[0][0]),
+    "https://workbench.test",
+  ).searchParams;
+  expect(query.get("status")).toBe("completed");
+  const since = Date.parse(query.get("completedSince") ?? "");
+  expect(since).toBeGreaterThan(Date.now() - 7 * 86400000 - 2000);
+  expect(since).toBeLessThanOrEqual(Date.now() - 7 * 86400000);
+});

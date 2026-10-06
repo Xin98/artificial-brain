@@ -1,10 +1,12 @@
 package http
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"time"
 
+	"github.com/Xin98/artificial-brain/backend/internal/modules/conversation/application/dto"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/conversation/domain"
 )
 
@@ -49,9 +51,25 @@ func (h *Handler) confirm(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	response, err := h.ConfirmAction.Handle(r.Context(), principal.WorkspaceID, principal.UserID, r.PathValue("confirmationId"))
+	var body struct {
+		SessionID string `json:"sessionId"`
+	}
+	if !decodeOptionalJSON(w, r, &body) {
+		return
+	}
+	var response dto.MessageResponse
+	var err error
+	if scoped, ok := h.ConfirmAction.(interface {
+		HandleWithSession(context.Context, string, string, string, string) (dto.MessageResponse, error)
+	}); ok {
+		response, err = scoped.HandleWithSession(r.Context(), principal.WorkspaceID, principal.UserID, r.PathValue("confirmationId"), body.SessionID)
+	} else {
+		response, err = h.ConfirmAction.Handle(r.Context(), principal.WorkspaceID, principal.UserID, r.PathValue("confirmationId"))
+	}
 	if err != nil {
 		switch {
+		case errors.Is(err, domain.ErrSessionNotFound):
+			writeSessionNotFound(w, r)
 		case errors.Is(err, domain.ErrConfirmationNotFound), errors.Is(err, domain.ErrTodoNotFound):
 			writeError(w, r, http.StatusNotFound, "not_found", "confirmation not found")
 		case errors.Is(err, domain.ErrConfirmationConsumed), errors.Is(err, domain.ErrConfirmationTodoVersionStale):

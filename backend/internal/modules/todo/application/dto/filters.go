@@ -12,4 +12,7 @@ type ListFilters struct {
 	DueFrom *time.Time
 	DueTo   *time.Time
 	NoDue   bool
+	// CompletedSince is an inclusive completion instant, applied before the
+	// list limit so recent completions cannot be hidden by older rows.
+	CompletedSince *time.Time
 }

@@ -166,7 +166,7 @@ func TestParseUnexpectedEntryReportsBundleStructure(t *testing.T) {
 
 func TestParseUnsupportedSchemaVersion(t *testing.T) {
 	spec := fullSpec()
-	spec.schemaVersion = "2"
+	spec.schemaVersion = "3"
 	data, _ := buildBundle(t, spec)
 
 	_, err := Parse(data)

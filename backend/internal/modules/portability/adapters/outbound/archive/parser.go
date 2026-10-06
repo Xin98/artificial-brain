@@ -57,6 +57,9 @@ func Parse(data []byte) (ports.ParsedBundle, error) {
 	if err != nil {
 		return ports.ParsedBundle{}, err
 	}
+	if err := checkVersionedEntrySet(entries, manifest.SchemaVersion); err != nil {
+		return ports.ParsedBundle{}, err
+	}
 	if err := verifyChecksums(entries, manifest); err != nil {
 		return ports.ParsedBundle{}, err
 	}
@@ -95,35 +98,8 @@ func readEntries(data []byte) (map[string][]byte, error) {
 		}
 		entries[file.Name] = content
 	}
-	if err := checkEntrySet(entries); err != nil {
-		return nil, err
-	}
+
 	return entries, nil
-}
-
-// checkEntrySet requires exactly the contract's entry names: every required
-// entry present and no entry beyond them.
-func checkEntrySet(entries map[string][]byte) error {
-	for _, name := range requiredEntries {
-		if _, ok := entries[name]; !ok {
-			return fmt.Errorf("%w: missing entry %q", domain.ErrBundleStructure, name)
-		}
-	}
-	for name := range entries {
-		if !isRequiredEntry(name) {
-			return fmt.Errorf("%w: unexpected entry %q", domain.ErrBundleStructure, name)
-		}
-	}
-	return nil
-}
-
-func isRequiredEntry(name string) bool {
-	for _, entry := range requiredEntries {
-		if entry == name {
-			return true
-		}
-	}
-	return false
 }
 
 // readEntry decompresses one entry, capped at maxEntryBytes+1 bytes so an
@@ -162,6 +138,8 @@ func parseManifest(data []byte) (domain.Manifest, error) {
 			Todos:      wire.Counts.Todos,
 			Deliveries: wire.Counts.Deliveries,
 			Channels:   wire.Counts.Channels,
+			Sessions:   wire.Counts.Sessions,
+			Messages:   wire.Counts.Messages,
 		},
 		Files: wire.Files,
 	}
@@ -175,7 +153,11 @@ func parseManifest(data []byte) (domain.Manifest, error) {
 // the manifest's recorded digest; a missing or mismatched digest reports
 // ErrChecksumMismatch naming the entry.
 func verifyChecksums(entries map[string][]byte, manifest domain.Manifest) error {
-	for _, name := range checksummedEntries {
+	names := append([]string{}, checksummedEntries...)
+	if manifest.SchemaVersion == "2" {
+		names = append(names, dto.SessionsEntry, dto.MessagesEntry)
+	}
+	for _, name := range names {
 		want, ok := manifest.Files[name]
 		if !ok {
 			return fmt.Errorf("%w: manifest carries no checksum for %q", domain.ErrChecksumMismatch, name)
@@ -236,6 +218,17 @@ func decodeRecords(entries map[string][]byte, manifest domain.Manifest) (ports.P
 		bundle.Channels = append(bundle.Channels, record)
 	}
 
+	if manifest.SchemaVersion == "2" {
+		if err := json.Unmarshal(entries[dto.SessionsEntry], &bundle.Sessions); err != nil {
+			return ports.ParsedBundle{}, fmt.Errorf("%w: sessions: %s", domain.ErrRecordInvalid, err)
+		}
+		if err := json.Unmarshal(entries[dto.MessagesEntry], &bundle.Messages); err != nil {
+			return ports.ParsedBundle{}, fmt.Errorf("%w: messages: %s", domain.ErrRecordInvalid, err)
+		}
+		if len(bundle.Sessions) != manifest.Counts.Sessions || len(bundle.Messages) != manifest.Counts.Messages {
+			return ports.ParsedBundle{}, fmt.Errorf("%w: conversation counts mismatch", domain.ErrManifestInvalid)
+		}
+	}
 	return bundle, nil
 }
 

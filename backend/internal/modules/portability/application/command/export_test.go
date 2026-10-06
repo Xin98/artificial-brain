@@ -200,7 +200,7 @@ func TestExportBundleStreamsEntriesInContractOrder(t *testing.T) {
 	if !fixture.archive.closed {
 		t.Fatalf("archive not closed on success")
 	}
-	if manifest.SchemaVersion != domain.SchemaVersion {
+	if manifest.SchemaVersion != "1" {
 		t.Fatalf("manifest schema version = %q, want %q", manifest.SchemaVersion, domain.SchemaVersion)
 	}
 	if manifest.SourceInstanceID != "instance-1" {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/Xin98/artificial-brain/backend/internal/modules/portability/application/dto"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/portability/application/ports"
+	"github.com/Xin98/artificial-brain/backend/internal/modules/portability/domain"
 )
 
 // GetImportQuery renders one import row for its workspace: the preview
@@ -41,4 +42,16 @@ func (q *GetImportQuery) Handle(ctx context.Context, workspaceID, importID strin
 		view.Preview = *row.Preview
 	}
 	return view, nil
+}
+
+// HandleForOwner enforces the uploader binding for newly created imports.
+func (q *GetImportQuery) HandleForOwner(ctx context.Context, p ports.Principal, id string) (dto.ImportView, error) {
+	row, err := q.Imports.Get(ctx, p.WorkspaceID, id)
+	if err != nil {
+		return dto.ImportView{}, err
+	}
+	if row.UserID == "" || row.UserID != p.UserID {
+		return dto.ImportView{}, domain.ErrImportNotFound
+	}
+	return q.Handle(ctx, p.WorkspaceID, id)
 }

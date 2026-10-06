@@ -103,3 +103,59 @@ it("rejects invalid input from the API with a stable message", async () => {
   );
   expect(screen.getByRole("alert")).not.toHaveTextContent("raw details");
 });
+
+it("resets a successful create and announces the result", async () => {
+  render(
+    <TodoForm
+      fetcher={vi.fn().mockResolvedValue(json(201, createdTodo))}
+      onDone={vi.fn()}
+    />,
+  );
+  fireEvent.change(screen.getByLabelText("标题"), {
+    target: { value: "提交周报" },
+  });
+  fireEvent.click(screen.getByRole("button", { name: "新建" }));
+  await waitFor(() => expect(screen.getByLabelText("标题")).toHaveValue(""));
+  expect(screen.getByRole("status")).toHaveTextContent("已创建");
+});
+
+it("keeps the same instant when an edit saves an unchanged local due time", async () => {
+  const fetcher = vi.fn().mockResolvedValue(json(200, createdTodo));
+  const dueAtUtc = "2026-08-19T07:00:00Z";
+  render(
+    <TodoForm
+      editing={{ ...createdTodo, dueAtUtc }}
+      fetcher={fetcher}
+      onDone={vi.fn()}
+    />,
+  );
+  const due = new Date(dueAtUtc);
+  const local = `${due.getFullYear()}-${String(due.getMonth() + 1).padStart(2, "0")}-${String(due.getDate()).padStart(2, "0")}T${String(due.getHours()).padStart(2, "0")}:${String(due.getMinutes()).padStart(2, "0")}`;
+  expect(screen.getByLabelText("到期时间")).toHaveValue(local);
+  fireEvent.click(screen.getByRole("button", { name: "保存" }));
+  await waitFor(() => expect(fetcher).toHaveBeenCalled());
+  expect(JSON.parse(String(fetcher.mock.calls[0][1]?.body)).dueAtUtc).toBe(
+    dueAtUtc,
+  );
+});
+
+it("ignores duplicate form submissions while creation is pending", async () => {
+  let resolve: ((response: Response) => void) | undefined;
+  const fetcher = vi.fn(
+    () =>
+      new Promise<Response>((done) => {
+        resolve = done;
+      }),
+  );
+  render(<TodoForm fetcher={fetcher} onDone={vi.fn()} />);
+  fireEvent.change(screen.getByLabelText("标题"), {
+    target: { value: "提交周报" },
+  });
+  fireEvent.submit(screen.getByRole("form", { name: "新建待办" }));
+  fireEvent.submit(screen.getByRole("form", { name: "新建待办" }));
+  expect(fetcher).toHaveBeenCalledTimes(1);
+  resolve?.(json(201, createdTodo));
+  await waitFor(() =>
+    expect(screen.getByRole("status")).toHaveTextContent("已创建"),
+  );
+});

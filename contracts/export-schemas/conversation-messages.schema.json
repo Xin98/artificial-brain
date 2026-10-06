@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "conversation-messages",
+  "type": "array",
+  "items": {
+    "type": "object",
+    "additionalProperties": false,
+    "required": [
+      "id",
+      "role",
+      "body",
+      "order",
+      "createdAt"
+    ],
+    "properties": {
+      "id": {
+        "type": "string"
+      },
+      "sessionId": {
+        "type": "string"
+      },
+      "role": {
+        "type": "string",
+        "enum": [
+          "user",
+          "assistant"
+        ]
+      },
+      "body": {
+        "type": "string"
+      },
+      "order": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "resolvedIntent": {
+        "type": "string"
+      },
+      "createdAt": {
+        "type": "string",
+        "format": "date-time"
+      }
+    }
+  }
+}

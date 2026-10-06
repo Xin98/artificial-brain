@@ -32,7 +32,7 @@ func TestValidateManifestAcceptsValidManifest(t *testing.T) {
 
 func TestValidateManifestRejectsUnsupportedSchemaVersion(t *testing.T) {
 	manifest := validManifest()
-	manifest.SchemaVersion = "2"
+	manifest.SchemaVersion = "3"
 	if err := ValidateManifest(manifest); !errors.Is(err, ErrUnsupportedSchemaVersion) {
 		t.Fatalf("ValidateManifest(version 2) error = %v, want ErrUnsupportedSchemaVersion", err)
 	}

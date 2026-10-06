@@ -1,3 +1,4 @@
+import { recoverExpiredSession } from "../auth/session-recovery";
 import {
   hasAllowedKeys,
   hasExactKeys,
@@ -13,6 +14,8 @@ import {
 } from "../validation";
 
 export interface Todo {
+  reminderScheduled?: boolean;
+  reminderChannels?: string[];
   id: string;
   title: string;
   description?: string;
@@ -33,6 +36,7 @@ export interface TodoFilters {
   status?: string;
   dueFrom?: string;
   dueTo?: string;
+  completedSince?: string;
   noDue?: boolean;
 }
 
@@ -69,6 +73,8 @@ const TODO_REQUIRED = [
   "updatedAt",
 ] as const;
 const TODO_OPTIONAL = [
+  "reminderScheduled",
+  "reminderChannels",
   "description",
   "dueAtUtc",
   "timezoneAtInput",
@@ -96,6 +102,8 @@ export async function listTodos(
     if (filters.dueTo) {
       query.set("dueTo", filters.dueTo);
     }
+    if (filters.completedSince)
+      query.set("completedSince", filters.completedSince);
     if (filters.noDue) {
       query.set("noDue", "true");
     }
@@ -105,6 +113,7 @@ export async function listTodos(
       cache: "no-store",
       headers: { accept: "application/json" },
     });
+    if (recoverExpiredSession(response)) return null;
     if (!response.ok) {
       return null;
     }
@@ -258,6 +267,7 @@ export async function confirmAction(
   fetcher: typeof fetch,
   confirmationId: string,
   timeoutMs = 5000,
+  sessionId?: string,
 ): Promise<ConfirmActionOutcome> {
   try {
     const response = await fetcher(
@@ -270,7 +280,7 @@ export async function confirmAction(
           "content-type": "application/json",
           accept: "application/json",
         },
-        body: JSON.stringify({}),
+        body: JSON.stringify(sessionId ? { sessionId } : {}),
       },
     );
     if (response.status === 200) {
@@ -309,6 +319,7 @@ async function mutateTodo(
 }
 
 async function classifyResponse(response: Response): Promise<TodoErrorCode> {
+  recoverExpiredSession(response);
   if (response.status === 404) {
     return "not_found";
   }
@@ -327,6 +338,19 @@ function isTodo(value: unknown): value is Todo {
   if (!isRecord(value)) {
     return false;
   }
+  if (
+    value.reminderScheduled !== undefined &&
+    !isBoolean(value.reminderScheduled)
+  )
+    return false;
+  if (
+    value.reminderChannels !== undefined &&
+    (!Array.isArray(value.reminderChannels) ||
+      !value.reminderChannels.every(
+        (channel) => channel === "email" || channel === "sms",
+      ))
+  )
+    return false;
   const keys = [...TODO_REQUIRED, ...TODO_OPTIONAL];
   if (!hasAllowedKeys(value, keys)) {
     return false;

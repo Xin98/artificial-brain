@@ -60,7 +60,9 @@ type SessionView struct {
 
 // SessionListView is the sidebar listing envelope.
 type SessionListView struct {
-	Sessions []SessionView `json:"sessions"`
+	Sessions   []SessionView `json:"sessions"`
+	HasMore    bool          `json:"hasMore"`
+	NextOffset *int          `json:"nextOffset,omitempty"`
 }
 
 // MessageView is one persisted transcript row in session history.
@@ -75,7 +77,9 @@ type MessageView struct {
 // SessionHistoryView is the history envelope for one session: the latest
 // messages in ascending insertion order.
 type SessionHistoryView struct {
-	SessionID string        `json:"sessionId"`
-	Title     string        `json:"title"`
-	Messages  []MessageView `json:"messages"`
+	SessionID  string        `json:"sessionId"`
+	Title      string        `json:"title"`
+	Messages   []MessageView `json:"messages"`
+	HasMore    bool          `json:"hasMore"`
+	NextBefore string        `json:"nextBefore,omitempty"`
 }

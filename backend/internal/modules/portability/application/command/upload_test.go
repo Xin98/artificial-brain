@@ -113,10 +113,10 @@ func TestUploadImportHappyPathDecidesPerKindAgainstExistingFingerprints(t *testi
 		Conflicts: 1,
 		Invalid:   0,
 		Details: []dto.Decision{
-			{Kind: domain.KindTodo, SourceRecordID: "todo-1", Outcome: string(domain.OutcomeSkipped), Reason: "fingerprint unchanged since last import"},
-			{Kind: domain.KindTodo, SourceRecordID: "todo-2", Outcome: string(domain.OutcomeNew)},
-			{Kind: domain.KindChannel, SourceRecordID: "channel-1", Outcome: string(domain.OutcomeConflict), Reason: "fingerprint changed since last import"},
-			{Kind: domain.KindDelivery, SourceRecordID: "delivery-1", Outcome: string(domain.OutcomeNew)},
+			{Kind: domain.KindTodo, Label: "already imported", SourceRecordID: "todo-1", Outcome: string(domain.OutcomeSkipped), Reason: "fingerprint unchanged since last import"},
+			{Kind: domain.KindTodo, Label: "fresh todo", SourceRecordID: "todo-2", Outcome: string(domain.OutcomeNew)},
+			{Kind: domain.KindChannel, Label: "channel-1@example.com", SourceRecordID: "channel-1", Outcome: string(domain.OutcomeConflict), Reason: "fingerprint changed since last import"},
+			{Kind: domain.KindDelivery, Label: "snapshot", SourceRecordID: "delivery-1", Outcome: string(domain.OutcomeNew)},
 		},
 	}
 	if !reflect.DeepEqual(preview, wantPreview) {

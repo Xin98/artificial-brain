@@ -96,8 +96,8 @@ func TestListSessionsProjectsAndBounds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Handle() error = %v", err)
 	}
-	if sessions.listLimit != MaxListedSessions {
-		t.Fatalf("limit = %d, want %d", sessions.listLimit, MaxListedSessions)
+	if sessions.listLimit != MaxListedSessions+1 {
+		t.Fatalf("limit = %d, want %d", sessions.listLimit, MaxListedSessions+1)
 	}
 	if len(got.Sessions) != 2 || got.Sessions[0].ID != "s-2" || got.Sessions[1].ID != "s-1" {
 		t.Fatalf("sessions = %#v, want scoped list, most recent first", got.Sessions)
@@ -124,8 +124,8 @@ func TestGetHistoryReplaysTranscript(t *testing.T) {
 	if got.SessionID != "s-1" || got.Title != "周报" {
 		t.Fatalf("envelope = %#v", got)
 	}
-	if log.gotLimit != MaxHistoryMessages || log.gotSessID != "s-1" {
-		t.Fatalf("read = %#v, want ListBySession(s-1, %d)", log, MaxHistoryMessages)
+	if log.gotLimit != MaxHistoryMessages+1 || log.gotSessID != "s-1" {
+		t.Fatalf("read = %#v, want ListBySession(s-1, %d)", log, MaxHistoryMessages+1)
 	}
 	if len(got.Messages) != 2 {
 		t.Fatalf("messages = %#v", got.Messages)

@@ -93,10 +93,24 @@ func (h *AddChannelHandler) Handle(ctx context.Context, principal dto.Principal,
 type VerifyChannelHandler struct {
 	Channels ports.ChannelStore
 	Now      func() time.Time
+	UoW      ports.VerificationUnitOfWork
 }
 
 func (h *VerifyChannelHandler) Handle(ctx context.Context, principal dto.Principal, channelID, code string) error {
-	channel, err := h.Channels.ByID(ctx, principal.WorkspaceID, principal.UserID, channelID)
+	if h.UoW != nil {
+		return h.UoW.Run(ctx, func(ctx context.Context) error { return h.verify(ctx, principal, channelID, code, true) })
+	}
+	return h.verify(ctx, principal, channelID, code, false)
+}
+
+func (h *VerifyChannelHandler) verify(ctx context.Context, principal dto.Principal, channelID, code string, lock bool) error {
+	var channel domain.ContactChannel
+	var err error
+	if locking, ok := h.Channels.(ports.ChannelVerificationStore); lock && ok {
+		channel, err = locking.ByIDForUpdate(ctx, principal.WorkspaceID, principal.UserID, channelID)
+	} else {
+		channel, err = h.Channels.ByID(ctx, principal.WorkspaceID, principal.UserID, channelID)
+	}
 	if err != nil {
 		return domain.ErrChannelNotFound
 	}
@@ -115,6 +129,13 @@ type SetChannelEnabledHandler struct {
 }
 
 func (h *SetChannelEnabledHandler) Handle(ctx context.Context, principal dto.Principal, channelID string, enabled bool) (dto.ContactChannelView, error) {
+	if targeted, ok := h.Channels.(ports.ChannelEnabledStore); ok {
+		channel, err := targeted.SetEnabled(ctx, principal.WorkspaceID, principal.UserID, channelID, enabled)
+		if err != nil {
+			return dto.ContactChannelView{}, err
+		}
+		return dto.ToChannelView(channel), nil
+	}
 	channel, err := h.Channels.ByID(ctx, principal.WorkspaceID, principal.UserID, channelID)
 	if err != nil {
 		return dto.ContactChannelView{}, domain.ErrChannelNotFound

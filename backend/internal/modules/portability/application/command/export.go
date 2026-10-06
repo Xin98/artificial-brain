@@ -28,13 +28,14 @@ const defaultPageSize = 200
 // the response is aborted anyway; on the success path the close error is
 // returned, because an unfinalized archive is a failed export.
 type ExportBundleHandler struct {
-	Instance   ports.InstanceIdentityStore
-	Todos      ports.TodoExporter
-	Channels   ports.ChannelExporter
-	Deliveries ports.DeliveryExporter
-	Archive    ports.ArchiveFactory
-	PageSize   int
-	Now        func() time.Time
+	Conversations ports.ConversationExporter
+	Instance      ports.InstanceIdentityStore
+	Todos         ports.TodoExporter
+	Channels      ports.ChannelExporter
+	Deliveries    ports.DeliveryExporter
+	Archive       ports.ArchiveFactory
+	PageSize      int
+	Now           func() time.Time
 }
 
 // Handle resolves the instance id, streams the bundle entries in contract
@@ -103,10 +104,32 @@ func (h *ExportBundleHandler) writeBundle(ctx context.Context, principal ports.P
 		return domain.Manifest{}, err
 	}
 
+	version := "1"
+	if h.Conversations != nil {
+		version = domain.SchemaVersion
+		if err := archive.WriteEntry(ctx, dto.SessionsEntry, func(ctx context.Context, w io.Writer) error {
+			var err error
+			counts.Sessions, err = encodePagedJSON(ctx, w, h.pageSize(), func(ctx context.Context, offset, limit int) ([]dto.SessionExportRecord, error) {
+				return h.Conversations.ExportSessions(ctx, principal, offset, limit)
+			})
+			return err
+		}); err != nil {
+			return domain.Manifest{}, err
+		}
+		if err := archive.WriteEntry(ctx, dto.MessagesEntry, func(ctx context.Context, w io.Writer) error {
+			var err error
+			counts.Messages, err = encodePagedJSON(ctx, w, h.pageSize(), func(ctx context.Context, offset, limit int) ([]dto.MessageExportRecord, error) {
+				return h.Conversations.ExportMessages(ctx, principal, offset, limit)
+			})
+			return err
+		}); err != nil {
+			return domain.Manifest{}, err
+		}
+	}
 	// Files starts non-nil so the archive's digest fill is visible through
 	// the returned manifest (the map is shared by reference).
 	manifest := domain.Manifest{
-		SchemaVersion:    domain.SchemaVersion,
+		SchemaVersion:    version,
 		SourceInstanceID: instanceID,
 		ExportedAt:       h.Now(),
 		Counts:           counts,

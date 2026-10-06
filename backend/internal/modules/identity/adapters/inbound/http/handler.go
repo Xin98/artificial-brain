@@ -28,6 +28,9 @@ type (
 	channelVerifier interface {
 		Handle(ctx context.Context, p dto.Principal, channelID, code string) error
 	}
+	channelResender interface {
+		Handle(context.Context, dto.Principal, string) error
+	}
 	channelEnabledSetter interface {
 		Handle(ctx context.Context, p dto.Principal, channelID string, enabled bool) (dto.ContactChannelView, error)
 	}
@@ -43,6 +46,7 @@ type Handler struct {
 	Logout                logoutHandler
 	AddChannel            channelAdder
 	VerifyChannel         channelVerifier
+	ResendChannel         channelResender
 	SetChannelEnabled     channelEnabledSetter
 	Channels              channelsLister
 	SessionTTL            time.Duration
@@ -64,6 +68,7 @@ func RegisterRoutes(mux *http.ServeMux, auth func(http.Handler) http.Handler, h 
 	mux.Handle("GET /api/v1/settings/contact-channels", auth(http.HandlerFunc(h.listChannels)))
 	mux.Handle("POST /api/v1/settings/contact-channels", auth(http.HandlerFunc(h.addChannel)))
 	mux.Handle("POST /api/v1/settings/contact-channels/{channelId}/verify", auth(http.HandlerFunc(h.verifyChannel)))
+	mux.Handle("POST /api/v1/settings/contact-channels/{channelId}/resend", auth(http.HandlerFunc(h.resendChannel)))
 	mux.Handle("PATCH /api/v1/settings/contact-channels/{channelId}", auth(http.HandlerFunc(h.setChannelEnabled)))
 }
 

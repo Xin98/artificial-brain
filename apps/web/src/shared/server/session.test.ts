@@ -1,12 +1,35 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { authHeaders, fetchSession, SESSION_COOKIE_NAME } from "./session";
+import {
+  authHeaders,
+  fetchSession,
+  lookupSession,
+  SESSION_COOKIE_NAME,
+} from "./session";
 
 const validBody = {
   userId: "user-1",
   workspaceId: "ws-1",
   sessionId: "session-1",
 };
+
+it("distinguishes rejected sessions from service outages", async () => {
+  for (const status of [500, 503])
+    expect(
+      await lookupSession(
+        "http://internal:8080",
+        vi.fn().mockResolvedValue(jsonResponse(status, {})),
+        "token",
+      ),
+    ).toEqual({ kind: "unavailable" });
+  expect(
+    await lookupSession(
+      "http://internal:8080",
+      vi.fn().mockResolvedValue(jsonResponse(401, {})),
+      "token",
+    ),
+  ).toEqual({ kind: "unauthenticated" });
+});
 
 function jsonResponse(status: number, body: unknown): Response {
   return new Response(JSON.stringify(body), {

@@ -1,3 +1,4 @@
+import { recoverExpiredSession } from "../auth/session-recovery";
 import {
   classifyErrorPayload,
   hasExactKeys,
@@ -18,7 +19,12 @@ export interface ContactChannel {
   createdAt: string;
 }
 
-export type ChannelErrorCode = "validation_error" | "conflict" | "unavailable";
+export type ChannelErrorCode =
+  | "validation_error"
+  | "conflict"
+  | "unavailable"
+  | "rate_limited"
+  | "not_found";
 
 export interface ChannelOutcome {
   ok: boolean;
@@ -40,6 +46,7 @@ export async function listChannels(
         headers: { accept: "application/json" },
       },
     );
+    if (recoverExpiredSession(response)) return null;
     if (!response.ok) {
       return null;
     }
@@ -138,6 +145,34 @@ export async function verifyChannel(
   }
 }
 
+export async function resendChannelVerification(
+  baseURL: string,
+  fetcher: typeof fetch,
+  channelId: string,
+  timeoutMs = 5000,
+): Promise<ChannelOutcome> {
+  try {
+    const response = await fetcher(
+      `${baseURL}/api/v1/settings/contact-channels/${encodeURIComponent(channelId)}/resend`,
+      {
+        method: "POST",
+        signal: AbortSignal.timeout(safeTimeout(timeoutMs)),
+        cache: "no-store",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({}),
+      },
+    );
+    return response.status === 202
+      ? { ok: true }
+      : { ok: false, error: await classify(response) };
+  } catch {
+    return { ok: false, error: "unavailable" };
+  }
+}
+
 export async function setChannelEnabled(
   baseURL: string,
   fetcher: typeof fetch,
@@ -172,6 +207,9 @@ export async function setChannelEnabled(
 }
 
 async function classify(response: Response): Promise<ChannelErrorCode> {
+  recoverExpiredSession(response);
+  if (response.status === 404) return "not_found";
+  if (response.status === 429) return "rate_limited";
   const payload = await readErrorPayload(response);
   const classified = classifyErrorPayload(payload);
   if (classified.code === "validation_error") {

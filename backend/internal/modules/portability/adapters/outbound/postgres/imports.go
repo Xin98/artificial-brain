@@ -51,11 +51,13 @@ func (s *ImportStore) Save(ctx context.Context, imp dto.ImportRecordRow) error {
 		reportArg = reportJSON
 	}
 	_, err := exec.Exec(ctx, `
-		insert into portability.portability_imports
+		with saved as (insert into portability.portability_imports
 			(id, workspace_id, state, source_instance_id, bundle, preview, report, created_at, committed_at)
-		values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9) returning id)
+ insert into public.instance_meta(key,value)
+ select 'portability.import-owner:' || id::text,$10::text from saved where $10::text <> ''
 	`, imp.ID, imp.WorkspaceID, imp.State, imp.SourceInstanceID, imp.Bundle,
-		previewArg, reportArg, imp.CreatedAt, imp.CommittedAt)
+		previewArg, reportArg, imp.CreatedAt, imp.CommittedAt, imp.UserID)
 	return err
 }
 
@@ -91,6 +93,10 @@ func (s *ImportStore) Get(ctx context.Context, workspaceID, importID string) (dt
 			return dto.ImportRecordRow{}, err
 		}
 		imp.Report = &report
+	}
+	ownerErr := exec.QueryRow(ctx, `select value from public.instance_meta where key=$1`, "portability.import-owner:"+importID).Scan(&imp.UserID)
+	if ownerErr != nil && !errors.Is(ownerErr, pgx.ErrNoRows) {
+		return dto.ImportRecordRow{}, ownerErr
 	}
 	// pgx scans timestamptz in the local location; the domain works in UTC,
 	// so normalize every scanned instant before handing it back.

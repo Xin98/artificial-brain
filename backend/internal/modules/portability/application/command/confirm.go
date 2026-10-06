@@ -19,17 +19,18 @@ import (
 // the final report. The handler never begins a transaction itself: cmd
 // injects the joinable UoW so the whole confirm joins one transaction.
 type ConfirmImportHandler struct {
-	Imports    ports.ImportStore
-	Sources    ports.SourceRecordStore
-	Parser     ports.BundleParser
-	Todos      ports.TodoImporter
-	Channels   ports.ChannelImporter
-	Deliveries ports.DeliveryImporter
-	UoW        ports.UnitOfWork
-	Log        *slog.Logger
-	NewID      func() string // reserved: the importer seams own their new row ids
-	Now        func() time.Time
-	ImportTTL  time.Duration
+	Conversations ports.ConversationImporter
+	Imports       ports.ImportStore
+	Sources       ports.ScopedSourceRecordStore
+	Parser        ports.BundleParser
+	Todos         ports.TodoImporter
+	Channels      ports.ChannelImporter
+	Deliveries    ports.DeliveryImporter
+	UoW           ports.UnitOfWork
+	Log           *slog.Logger
+	NewID         func() string // reserved: the importer seams own their new row ids
+	Now           func() time.Time
+	ImportTTL     time.Duration
 }
 
 // Handle resolves the import row, enforces the committed/expired guards, and
@@ -41,6 +42,9 @@ func (h *ConfirmImportHandler) Handle(ctx context.Context, principal ports.Princ
 	row, err := h.Imports.Get(ctx, principal.WorkspaceID, importID)
 	if err != nil {
 		return dto.ImportReport{}, err
+	}
+	if row.UserID == "" || row.UserID != principal.UserID {
+		return dto.ImportReport{}, domain.ErrImportNotFound
 	}
 	if row.State == dto.ImportStateCommitted {
 		return dto.ImportReport{}, domain.ErrImportConflict
@@ -55,27 +59,28 @@ func (h *ConfirmImportHandler) Handle(ctx context.Context, principal ports.Princ
 		return dto.ImportReport{}, err
 	}
 	sourceInstanceID := parsed.Manifest.SourceInstanceID
-	existing, err := h.Sources.Fingerprints(ctx, sourceInstanceID, allRecordIDs(parsed))
+	existing, err := h.Sources.ForOwner(principal).Fingerprints(ctx, sourceInstanceID, allRecordIDs(parsed))
 	if err != nil {
 		return dto.ImportReport{}, err
 	}
 	plan := classifyBundle(parsed, existing)
 
-	previousTodoIDs, err := h.previouslyImportedTodoIDs(ctx, sourceInstanceID, plan)
+	previousTodoIDs, err := h.previouslyImportedTodoIDs(ctx, principal, sourceInstanceID, plan)
 	if err != nil {
 		return dto.ImportReport{}, err
 	}
 
+	var report dto.ImportReport
 	if err := h.UoW.Run(ctx, func(ctx context.Context) error {
-		return h.execute(ctx, principal, sourceInstanceID, plan, previousTodoIDs)
+		if err := h.execute(ctx, principal, sourceInstanceID, plan, previousTodoIDs); err != nil {
+			return err
+		}
+		report = buildReport(plan.decisions, now)
+		return h.Imports.Commit(ctx, principal.WorkspaceID, importID, report, now)
 	}); err != nil {
 		return dto.ImportReport{}, err
 	}
 
-	report := buildReport(plan.decisions, now)
-	if err := h.Imports.Commit(ctx, principal.WorkspaceID, importID, report, now); err != nil {
-		return dto.ImportReport{}, err
-	}
 	h.Log.Info("portability: import committed",
 		slog.String("workspaceId", principal.WorkspaceID),
 		slog.String("importId", importID),
@@ -91,7 +96,7 @@ func (h *ConfirmImportHandler) Handle(ctx context.Context, principal ports.Princ
 // previouslyImportedTodoIDs resolves, keyed by source record id, the todo
 // targets a previous import already registered — the delivery side of "this
 // run's source-record mapping or already registered in Sources".
-func (h *ConfirmImportHandler) previouslyImportedTodoIDs(ctx context.Context, sourceInstanceID string, plan *bundlePlan) (map[string]string, error) {
+func (h *ConfirmImportHandler) previouslyImportedTodoIDs(ctx context.Context, principal ports.Principal, sourceInstanceID string, plan *bundlePlan) (map[string]string, error) {
 	targets := map[string]string{}
 	seen := map[string]bool{}
 	referenced := []string{}
@@ -105,7 +110,7 @@ func (h *ConfirmImportHandler) previouslyImportedTodoIDs(ctx context.Context, so
 	if len(referenced) == 0 {
 		return targets, nil
 	}
-	byKey, err := h.Sources.Targets(ctx, sourceInstanceID, referenced)
+	byKey, err := h.Sources.ForOwner(principal).Targets(ctx, sourceInstanceID, referenced)
 	if err != nil {
 		return nil, err
 	}
@@ -145,7 +150,7 @@ func (h *ConfirmImportHandler) execute(ctx context.Context, principal ports.Prin
 			// re-import classifies the record instead of retrying it.
 			plan.reviseDecision(domain.KindChannel, record.ID, domain.OutcomeSkipped, "channel already exists")
 		}
-		if err := h.Sources.Register(ctx, newSourceRecord(principal.WorkspaceID, sourceInstanceID, record.ID, domain.KindChannel, targetID, plan.fingerprints[record.ID])); err != nil {
+		if err := h.Sources.ForOwner(principal).Register(ctx, newSourceRecord(principal.WorkspaceID, sourceInstanceID, record.ID, domain.KindChannel, targetID, plan.fingerprints[record.ID])); err != nil {
 			return err
 		}
 	}
@@ -159,7 +164,7 @@ func (h *ConfirmImportHandler) execute(ctx context.Context, principal ports.Prin
 		if err != nil {
 			return err
 		}
-		if err := h.Sources.Register(ctx, newSourceRecord(principal.WorkspaceID, sourceInstanceID, record.ID, domain.KindTodo, targetID, plan.fingerprints[record.ID])); err != nil {
+		if err := h.Sources.ForOwner(principal).Register(ctx, newSourceRecord(principal.WorkspaceID, sourceInstanceID, record.ID, domain.KindTodo, targetID, plan.fingerprints[record.ID])); err != nil {
 			return err
 		}
 		createdTodoIDs[record.ID] = targetID
@@ -180,14 +185,14 @@ func (h *ConfirmImportHandler) execute(ctx context.Context, principal ports.Prin
 			plan.reviseDecision(domain.KindDelivery, record.ID, domain.OutcomeInvalid, "todo_not_found")
 			continue
 		}
-		if err := h.Deliveries.ImportDelivery(ctx, principal, deliveryImportRequest(record, todoID, sourceInstanceID)); err != nil {
+		if err := h.Deliveries.ImportDelivery(ctx, principal, deliveryImportRequest(record, todoID, domain.OwnerSourceNamespace(principal.WorkspaceID, principal.UserID, sourceInstanceID))); err != nil {
 			return err
 		}
-		if err := h.Sources.Register(ctx, newSourceRecord(principal.WorkspaceID, sourceInstanceID, record.ID, domain.KindDelivery, deliveryImportKey(sourceInstanceID, record.ID), plan.fingerprints[record.ID])); err != nil {
+		if err := h.Sources.ForOwner(principal).Register(ctx, newSourceRecord(principal.WorkspaceID, sourceInstanceID, record.ID, domain.KindDelivery, deliveryImportKey(sourceInstanceID, record.ID), plan.fingerprints[record.ID])); err != nil {
 			return err
 		}
 	}
-	return nil
+	return h.executeConversations(ctx, principal, sourceInstanceID, plan)
 }
 
 func newSourceRecord(workspaceID, sourceInstanceID, sourceRecordID, targetKind, targetID, fingerprint string) dto.SourceRecord {

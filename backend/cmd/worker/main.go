@@ -6,6 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"github.com/Xin98/artificial-brain/backend/cmd/internal/investmentcompose"
+	investmentworker "github.com/Xin98/artificial-brain/backend/internal/modules/investment/adapters/inbound/worker"
+	investmentriver "github.com/Xin98/artificial-brain/backend/internal/modules/investment/adapters/outbound/river"
+	investmentdto "github.com/Xin98/artificial-brain/backend/internal/modules/investment/application/dto"
 	"log/slog"
 	"net/http"
 	"os"
@@ -143,14 +147,29 @@ func reminderQueues(cfg config.Config) map[string]riverqueue.QueueConfig {
 // queue is conditional on the SMS adapter being enabled).
 func buildRiverClient(cfg config.Config, pool *pgxpool.Pool, logger *slog.Logger) (*riverqueue.Client[pgx.Tx], error) {
 	workers := riverqueue.NewWorkers()
+	investment, err := investmentcompose.New(cfg.Investment, pool, time.Now)
+	if err != nil {
+		return nil, err
+	}
+	riverqueue.AddWorker(workers, &investmentworker.InvestmentWorker{Handler: investment.Jobs})
 	riverqueue.AddWorker(workers, &reminderworker.SendWorker{
 		Handler:     buildSendReminderHandler(cfg, pool, logger),
 		MaxAttempts: cfg.ReminderJobMaxAttempts,
 	})
-	return riverqueue.NewClient(riverpgxv5.New(pool), &riverqueue.Config{
+	queues := reminderQueues(cfg)
+	queues["investment"] = riverqueue.QueueConfig{MaxWorkers: 2}
+	client, err := riverqueue.NewClient(riverpgxv5.New(pool), &riverqueue.Config{
 		Workers: workers,
-		Queues:  reminderQueues(cfg),
+		Queues:  queues,
+		PeriodicJobs: []*riverqueue.PeriodicJob{riverqueue.NewPeriodicJob(riverqueue.PeriodicInterval(15*time.Minute), func() (riverqueue.JobArgs, *riverqueue.InsertOpts) {
+			return investmentdto.InvestmentJobArgs{JobType: "tick"}, &riverqueue.InsertOpts{Queue: "investment", MaxAttempts: 5}
+		}, &riverqueue.PeriodicJobOpts{RunOnStart: true})},
 	})
+	if err != nil {
+		return nil, err
+	}
+	investment.SetScheduler(&investmentriver.Scheduler{Client: client})
+	return client, nil
 }
 
 // runRiverClient starts the River worker client and stops it gracefully once

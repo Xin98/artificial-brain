@@ -24,6 +24,11 @@ type Signal struct {
 }
 type Exclusion struct{ InstrumentID, Reason string }
 type Evaluation struct {
+	SessionDate                                                                    time.Time
+	Purpose                                                                        string
+	FrozenPolicy                                                                   RiskPolicy
+	OrderIDs                                                                       []string
+	JobID                                                                          int64
 	ID, AccountID, SnapshotID, StrategyVersionID, UniverseVersionID, State, Reason string
 	AsOf                                                                           time.Time
 	Signals                                                                        []Signal

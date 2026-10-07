@@ -24,6 +24,10 @@ func (s *SnapshotStore) AppendMarket(ctx context.Context, dataset string, batch 
 		return e
 	}
 	if e == nil {
+		snapshot.Calendar, e = domain.MergeCalendar(old.Calendar, batch.Calendar)
+		if e != nil {
+			return e
+		}
 		snapshot.Facts = old.Facts
 		snapshot.News = old.News
 		snapshot.Bars = append(append([]domain.Bar(nil), old.Bars...), batch.Bars...)

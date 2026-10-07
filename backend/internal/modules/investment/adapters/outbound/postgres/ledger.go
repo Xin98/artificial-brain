@@ -14,7 +14,7 @@ func (s *LedgerStore) InsertAutomationEvent(ctx context.Context, scope domain.Sc
 	if e != nil {
 		return e
 	}
-	_, e = database.ExecutorFromContextOr(ctx, s.pool).Exec(ctx, `insert into investment.automation_events(id,workspace_id,owner_user_id,account_id,event_key,kind,reason,projection,effective_at,recorded_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`, id, scope.WorkspaceID, scope.OwnerUserID, account, key, kind, reason, b, effective, recorded)
+	_, e = database.ExecutorFromContextOr(ctx, s.pool).Exec(ctx, `insert into investment.automation_events(id,workspace_id,owner_user_id,account_id,event_key,kind,reason,projection,effective_at,recorded_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) on conflict(account_id,event_key) do nothing`, id, scope.WorkspaceID, scope.OwnerUserID, account, key, kind, reason, b, effective, recorded)
 	return e
 }
 

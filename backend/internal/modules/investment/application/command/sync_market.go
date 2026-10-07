@@ -32,11 +32,10 @@ func (h SyncMarketHandler) Handle(ctx context.Context, r dto.SyncRequest) (dto.S
 	if e != nil {
 		return out, e
 	}
-	ids := r.InstrumentIDs
-	if len(ids) == 0 && h.Mode == "fixture" {
-		for _, i := range instruments {
-			ids = append(ids, i.ID)
-		}
+	// Resolve user-entered symbols at the synchronization boundary; all stored economics use stable asset IDs.
+	ids := []string{}
+	for _, i := range instruments {
+		ids = append(ids, i.ID)
 	}
 	bars, e := h.Market.Bars(ctx, ids, r.From, r.To)
 	if e != nil {

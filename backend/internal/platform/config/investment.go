@@ -25,6 +25,11 @@ func loadInvestment(lookup LookupEnv) (InvestmentConfig, error) {
 		return c, fmt.Errorf("config: invalid INVESTMENT_DATA_TIMEOUT")
 	}
 	c.SettlementCalendarFile = valueOrDefault(lookup, "INVESTMENT_SETTLEMENT_CALENDAR_FILE", "")
+	news := valueOrDefault(lookup, "INVESTMENT_NEWS_ENABLED", "false")
+	if news != "true" && news != "false" {
+		return c, fmt.Errorf("config: invalid INVESTMENT_NEWS_ENABLED")
+	}
+	c.NewsEnabled = news == "true"
 	if c.Mode == "alpaca_sec" {
 		c.AlpacaKey = valueOrDefault(lookup, "INVESTMENT_ALPACA_KEY", "")
 		c.AlpacaSecret = valueOrDefault(lookup, "INVESTMENT_ALPACA_SECRET", "")

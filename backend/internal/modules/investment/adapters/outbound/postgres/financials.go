@@ -10,6 +10,9 @@ import (
 )
 
 func (s *SnapshotStore) AppendFinancials(ctx context.Context, dataset string, facts []domain.FinancialFact) error {
+	if _, e := database.ExecutorFromContextOr(ctx, s.pool).Exec(ctx, "select pg_advisory_xact_lock(hashtextextended($1,0))", dataset); e != nil {
+		return e
+	}
 	now := time.Now().UTC()
 	snapshot, e := s.Find(ctx, dataset, now)
 	if e != nil {
@@ -39,6 +42,9 @@ func (s *SnapshotStore) AppendFinancials(ctx context.Context, dataset string, fa
 	return s.Insert(ctx, snapshot)
 }
 func (s *SnapshotStore) AppendInstruments(ctx context.Context, dataset string, items []domain.Instrument, at time.Time) error {
+	if _, e := database.ExecutorFromContextOr(ctx, s.pool).Exec(ctx, "select pg_advisory_xact_lock(hashtextextended($1,0))", dataset); e != nil {
+		return e
+	}
 	snapshot, e := s.Find(ctx, dataset, at)
 	if e != nil {
 		return e

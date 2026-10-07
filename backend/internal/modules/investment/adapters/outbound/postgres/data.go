@@ -15,6 +15,9 @@ import (
 
 func (s *SnapshotStore) AppendMarket(ctx context.Context, dataset string, batch dto.MarketBatch) error {
 	exec := database.ExecutorFromContextOr(ctx, s.pool)
+	if _, e := exec.Exec(ctx, "select pg_advisory_xact_lock(hashtextextended($1,0))", dataset); e != nil {
+		return e
+	}
 	snapshot := domain.Snapshot{ID: fmt.Sprintf("market/%d", batch.AsOf.UnixNano()), DatasetVersion: dataset, AsOf: batch.AsOf, Mode: batch.Mode, Feed: batch.Feed, Calendar: batch.Calendar, Instruments: batch.Instruments, Bars: batch.Bars, Actions: batch.Actions, QualityFlags: batch.QualityFlags}
 	old, e := s.Find(ctx, dataset, batch.AsOf)
 	if e != nil && !errors.Is(e, domain.ErrNotFound) {

@@ -197,7 +197,15 @@ func Evaluate(snapshot Snapshot, universe UniverseVersion, strategy StrategyVers
 	for i, c := range candidates {
 		var groups [5]float64
 		for g, indexes := range groupIndexes {
-			ev := FactorEvidence{Group: names[g], Weight: strategy.Parameters.Weights[g], FactRefs: c.signal.Metrics.TTM.NetIncome.FactRefs}
+			priceRefs := []string{"snapshot:" + snapshot.ID + "/bars/" + c.signal.InstrumentID}
+			refs := priceRefs
+			switch g {
+			case 3:
+				refs = append(append(append([]string(nil), priceRefs...), c.signal.Metrics.Valuation.EarningsYield.FactRefs...), c.signal.Metrics.Valuation.FreeCashFlowYield.FactRefs...)
+			case 4:
+				refs = append(append(append([]string(nil), c.signal.Metrics.ROE.FactRefs...), c.signal.Metrics.TTM.OperatingCashFlow.FactRefs...), c.signal.Metrics.TTM.Revenue.FactRefs...)
+			}
+			ev := FactorEvidence{Group: names[g], Weight: strategy.Parameters.Weights[g], FactRefs: refs}
 			for _, f := range indexes {
 				ev.RawValues = append(ev.RawValues, c.raw[f])
 				ev.Percentiles = append(ev.Percentiles, ranks[f][i])

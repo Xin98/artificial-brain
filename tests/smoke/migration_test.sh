@@ -137,8 +137,8 @@ schema_version=$(compose exec -T postgres psql \
 	--dbname "$database_name" \
 	--tuples-only --no-align \
 	--command 'select version from public.schema_version limit 1')
-[ "$schema_version" = 10 ] || {
-	printf 'migration test: schema version is %s, want 10\n' "$schema_version" >&2
+[ "$schema_version" = 11 ] || {
+	printf 'migration test: schema version is %s, want 11\n' "$schema_version" >&2
 	exit 1
 }
 

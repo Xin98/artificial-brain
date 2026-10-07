@@ -29,6 +29,8 @@ type Evaluation struct {
 	Signals                                                                        []Signal
 	Excluded                                                                       []Exclusion
 	QualityFlags                                                                   []string
+	DatasetVersion, Mode                                                           string
+	IssuedOrders                                                                   bool
 }
 
 func RankPercentiles(values []float64, higherIsBetter bool) ([]float64, error) {

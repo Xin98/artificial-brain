@@ -930,8 +930,9 @@ func TestConversationSessionsEndToEnd(t *testing.T) {
 	}
 	assistantBody, _ := assistantRow["body"].(string)
 	if assistantRow["role"] != "assistant" ||
-		!strings.HasPrefix(assistantBody, "已创建待办「提交周报」，提醒时间 ") ||
-		!strings.Contains(assistantBody, "15:00（Asia/Shanghai）。") {
+		!strings.HasPrefix(assistantBody, "已创建待办「提交周报」。到期时间 ") ||
+		!strings.Contains(assistantBody, "15:00（Asia/Shanghai）。") ||
+		!strings.Contains(assistantBody, "未安排提醒：没有可用的提醒渠道，请先配置并验证渠道。") {
 		t.Fatalf("assistant row = %#v", assistantRow)
 	}
 

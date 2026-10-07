@@ -1237,8 +1237,8 @@ full_stack_test() {
 		--dbname "${POSTGRES_DB:-artificial_brain}" \
 		--tuples-only --no-align \
 		--command "select version from public.schema_version limit 1")
-	[ "$upgrade_schema_version" = 10 ] || \
-		fail "schema version after the upgrade is ${upgrade_schema_version}, want 10"
+	[ "$upgrade_schema_version" = 11 ] || \
+		fail "schema version after the upgrade is ${upgrade_schema_version}, want 11"
 	upgrade_todo_after=$(compose exec -T postgres psql \
 		--username "${POSTGRES_USER:-artificial_brain}" \
 		--dbname "${POSTGRES_DB:-artificial_brain}" \

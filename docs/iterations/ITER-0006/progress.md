@@ -16,3 +16,4 @@ Approved specification and 19-task plan: `docs/superpowers/specs/2026-10-07-inve
 
 Task 1 RED: domain tests fail on undefined exact money/account interfaces. GREEN: all 5 domain tests pass; architecture tests pass. Toolchain passes; harness fails at the existing Windows newline filename fixture.
 Task 2 RED: missing snapshot/calendar/fixture APIs. GREEN: 9 domain+fixture tests pass; architecture passes. Embedded deterministic synthetic data includes 31 instruments, 2023–2026 bars, accession facts, amendments, missing/stale/finance candidates, split/dividends, gap and halted-bar cases. Docker Linux engine now available.
+Task 3 RED: missing TTM/valuation/indicator APIs. GREEN: all 14 domain tests pass. Cumulative quarters are differenced before TTM; exact rational finances feed ratios; nonpositive denominators have reasons; RSI boundary and drawdown checks pass.

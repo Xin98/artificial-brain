@@ -1915,3 +1915,27 @@ main[data-page="login"] {
     padding: 10px 8px;
   }
 }
+.investment-cash {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin: 0;
+  padding: 20px 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.investment-cash dt {
+  color: var(--text-2);
+  font-size: 14px;
+}
+.investment-cash dd {
+  margin: 6px 0 0;
+  font-size: clamp(16px, 2vw, 25px);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 640px) {
+  .investment-cash {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}

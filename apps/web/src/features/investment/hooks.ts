@@ -22,21 +22,25 @@ export function useResource<T>(
   const retry = useCallback(() => setRevision((x) => x + 1), []);
   useEffect(() => {
     let live = true;
+    let generation = 0;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let controller = new AbortController();
     const load = async () => {
+      const requestGeneration = ++generation;
       const result = await client.request<T>(
         path,
         { signal: controller.signal },
         decode<T>(schema),
       );
-      if (live) {
+      if (live && requestGeneration === generation) {
         setState({ key, result });
         if (poll && document.visibilityState === "visible")
           timer = setTimeout(() => void load(), 5000);
       }
     };
     const visible = () => {
+      generation++;
+      if (timer) clearTimeout(timer);
       if (document.visibilityState === "hidden") {
         if (timer) clearTimeout(timer);
         controller.abort();
@@ -49,6 +53,7 @@ export function useResource<T>(
     if (poll) document.addEventListener("visibilitychange", visible);
     return () => {
       live = false;
+      generation++;
       controller.abort();
       if (timer) clearTimeout(timer);
       if (poll) document.removeEventListener("visibilitychange", visible);

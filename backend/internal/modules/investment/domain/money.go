@@ -84,3 +84,16 @@ func addMoney(a, b Money) (Money, error) {
 	}
 	return Money(n.Int64()), nil
 }
+
+func scalePrice(p Price, numerator, denominator int64) (Price, error) {
+	if p <= 0 || numerator <= 0 || denominator <= 0 {
+		return 0, ErrInvalidInput
+	}
+	n := new(big.Int).Mul(big.NewInt(int64(p)), big.NewInt(numerator))
+	n.Add(n, big.NewInt(denominator/2))
+	n.Quo(n, big.NewInt(denominator))
+	if !n.IsInt64() || n.Sign() <= 0 {
+		return 0, ErrOverflow
+	}
+	return Price(n.Int64()), nil
+}

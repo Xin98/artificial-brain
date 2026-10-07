@@ -28,6 +28,7 @@ func loadInvestment(lookup LookupEnv) (InvestmentConfig, error) {
 	if c.Mode == "alpaca_sec" {
 		c.AlpacaKey = valueOrDefault(lookup, "INVESTMENT_ALPACA_KEY", "")
 		c.AlpacaSecret = valueOrDefault(lookup, "INVESTMENT_ALPACA_SECRET", "")
+		c.SECUserAgent = valueOrDefault(lookup, "INVESTMENT_SEC_USER_AGENT", "")
 	}
 	return c, nil
 }

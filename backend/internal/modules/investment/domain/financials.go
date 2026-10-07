@@ -12,6 +12,7 @@ import (
 type FinancialValue struct {
 	Amount, Unit, Currency, Reason string
 	FactRefs                       []string
+	PeriodStart                    time.Time
 }
 type Metric struct {
 	Value    *float64
@@ -171,7 +172,7 @@ func ttmValue(facts []FinancialFact, concept string) (FinancialValue, time.Time,
 		sum.Add(sum, q.value)
 		refs = append(refs, q.refs...)
 	}
-	return FinancialValue{Amount: decimalRat(sum), Unit: unit, Currency: currency, FactRefs: refs}, quarters[3].end, nil
+	return FinancialValue{Amount: decimalRat(sum), Unit: unit, Currency: currency, FactRefs: refs, PeriodStart: quarters[0].start}, quarters[3].end, nil
 }
 func NormalizeTTM(facts []FinancialFact, asOf time.Time) (TTMFinancials, error) {
 	facts = selectedFacts(facts, asOf)
@@ -204,7 +205,7 @@ func NormalizeTTM(facts []FinancialFact, asOf time.Time) (TTMFinancials, error) 
 	ocf, _ := rat(t.OperatingCashFlow)
 	t.FreeCashFlow = FinancialValue{Amount: decimalRat(new(big.Rat).Sub(ocf, cap)), Unit: "USD", Currency: "USD", FactRefs: append(append([]string(nil), t.OperatingCashFlow.FactRefs...), t.CapitalExpenditure.FactRefs...)}
 	t.ClosingEquity = instant(facts, "Equity", t.LatestPeriodEnd)
-	t.OpeningEquity = instant(facts, "Equity", t.LatestPeriodEnd.AddDate(-1, 0, 0))
+	t.OpeningEquity = instant(facts, "Equity", t.NetIncome.PeriodStart.AddDate(0, 0, -1))
 	return t, nil
 }
 func ComputeValuation(price Price, ttm TTMFinancials, shares FinancialValue) (Valuation, error) {
@@ -219,7 +220,11 @@ func ComputeValuation(price Price, ttm TTMFinancials, shares FinancialValue) (Va
 	cap := new(big.Rat).Mul(p, share)
 	capital := FinancialValue{Amount: decimalRat(cap), Currency: "USD", Unit: "USD", FactRefs: shares.FactRefs}
 	priceValue := FinancialValue{Amount: decimalRat(p), Currency: "USD", Unit: "USD/shares"}
-	return Valuation{MarketCap: metric(cap, shares.FactRefs), PE: Ratio(priceValue, ttm.DilutedEPS, true), PB: Ratio(capital, ttm.ClosingEquity, true), EarningsYield: Ratio(ttm.NetIncome, capital, true), FreeCashFlowYield: Ratio(ttm.FreeCashFlow, capital, true)}, nil
+	pe := Ratio(priceValue, ttm.DilutedEPS, true)
+	if ttm.DilutedEPS.Unit != "USD/shares" || ttm.DilutedEPS.Currency != "USD" {
+		pe = unavailable("unit_or_currency_mismatch")
+	}
+	return Valuation{MarketCap: metric(cap, shares.FactRefs), PE: pe, PB: Ratio(capital, ttm.ClosingEquity, true), EarningsYield: Ratio(ttm.NetIncome, capital, true), FreeCashFlowYield: Ratio(ttm.FreeCashFlow, capital, true)}, nil
 }
 func averageEquity(t TTMFinancials) FinancialValue {
 	a, e := rat(t.OpeningEquity)

@@ -50,6 +50,41 @@ func TestFinancialUnitAndCurrencyMismatch(t *testing.T) {
 		t.Fatal("mixed currencies")
 	}
 }
+func TestTTMFiscalYearOpeningEquityAndEPSUnit(t *testing.T) {
+	facts := quarterFacts()
+	// 52-week fiscal year ends December 27, so opening equity is December 28 of the prior year.
+	for n := range facts {
+		f := &facts[n]
+		if !f.PeriodStart.IsZero() {
+			f.PeriodStart = f.PeriodStart.AddDate(0, 0, -3)
+			f.PeriodEnd = f.PeriodEnd.AddDate(0, 0, -4)
+		} else {
+			if f.PeriodEnd.Year() == 2024 {
+				f.PeriodEnd = at("2024-12-28T00:00:00Z")
+				f.Value = "150"
+			} else {
+				f.PeriodEnd = at("2025-12-27T00:00:00Z")
+			}
+		}
+	}
+	// Explicit independent quarter starts avoid Gregorian quarter assumptions.
+	ends := []string{"2025-03-27", "2025-06-26", "2025-09-25", "2025-12-27"}
+	for n := range facts {
+		if !facts[n].PeriodStart.IsZero() {
+			facts[n].PeriodStart = at("2024-12-29T00:00:00Z")
+			facts[n].PeriodEnd = at(ends[n%4] + "T00:00:00Z")
+		}
+	}
+	v, e := NormalizeTTM(facts, at("2026-03-01T00:00:00Z"))
+	if e != nil || v.OpeningEquity.Amount != "150" {
+		t.Fatal(v.OpeningEquity, e)
+	}
+	v.DilutedEPS.Unit = "USD"
+	valuation, e := ComputeValuation(10000000, v, FinancialValue{Amount: "1000", Unit: "shares"})
+	if e != nil || valuation.PE.Value != nil || valuation.PE.Reason == "" {
+		t.Fatal(valuation, e)
+	}
+}
 func TestIndicatorsNoPadding(t *testing.T) {
 	v, _ := ComputeIndicators([]Bar{{Close: 1000000}})
 	if v.SMA200.Value != nil || v.SMA200.Reason == "" {

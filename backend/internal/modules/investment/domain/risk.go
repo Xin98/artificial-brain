@@ -33,6 +33,7 @@ type OrderRiskInput struct {
 	ReservationBudget                          *Money
 	Prices                                     map[string]Price
 	Parameters                                 *StrategyParameters
+	TargetOpenAt                               time.Time
 }
 type RiskDecision struct {
 	Allowed     bool
@@ -213,6 +214,38 @@ func ValidateOrder(in OrderRiskInput) (RiskDecision, error) {
 		return out, nil
 	}
 	turnover := moneyLimit(in.NAV, in.Policy.TurnoverLimit) - in.SessionTurnover
+	for _, o := range in.Orders {
+		if o.ID == in.ExcludeOrderID || o.Terminal() || (!in.TargetOpenAt.IsZero() && !dateUTC(o.TargetOpenAt).Equal(dateUTC(in.TargetOpenAt))) {
+			continue
+		}
+		var gross Money
+		if o.Side == "buy" {
+			n := new(big.Int).Mul(big.NewInt(int64(o.ReservedCash)), big.NewInt(10000))
+			n.Quo(n, big.NewInt(10001))
+			if !n.IsInt64() {
+				return out, ErrOverflow
+			}
+			gross = Money(n.Int64())
+		} else {
+			price, ok := prices[o.InstrumentID]
+			if !ok {
+				return out, ErrDataStale
+			}
+			price, e = SlippedPrice(price, "sell")
+			if e != nil {
+				return out, e
+			}
+			gross, e = GrossValue(price, o.Quantity)
+			if e != nil {
+				return out, e
+			}
+		}
+		if gross > turnover {
+			turnover = 0
+		} else {
+			turnover -= gross
+		}
+	}
 	if turnover < 0 {
 		turnover = 0
 	}
@@ -257,7 +290,7 @@ func ValidateOrder(in OrderRiskInput) (RiskDecision, error) {
 			}
 			eligible := false
 			for _, s := range in.Evaluation.Signals {
-				if s.InstrumentID == in.InstrumentID && s.Score >= parameters.EntryScore && s.Rank <= parameters.MaxHoldings && s.Risk.Level != "high" && s.Risk.Level != "unknown" {
+				if in.Evaluation.State == "completed" && s.InstrumentID == in.InstrumentID && s.Score >= parameters.EntryScore && s.Rank >= 1 && s.Rank <= parameters.MaxHoldings && (s.Risk.Level == "low" || s.Risk.Level == "medium") {
 					eligible = true
 				}
 			}

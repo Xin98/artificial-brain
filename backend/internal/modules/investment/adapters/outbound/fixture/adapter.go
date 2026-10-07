@@ -130,6 +130,7 @@ func New() (*Adapter, error) {
 			return nil, fmt.Errorf("invalid volume")
 		}
 		b.Volume = domain.Quantity(v)
+		b.NoOpeningTrade = v == 0
 		s.Bars = append(s.Bars, b)
 		if b.AvailableAt.After(s.AsOf) {
 			s.AsOf = b.AvailableAt

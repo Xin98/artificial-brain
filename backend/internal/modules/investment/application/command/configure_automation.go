@@ -10,13 +10,14 @@ import (
 )
 
 type ConfigureAutomationHandler struct {
-	Mutations application.MutationExecutor
-	Accounts  ports.AccountStore
-	Catalog   ports.CatalogStore
-	Events    ports.AutomationEventStore
-	Data      ports.ResearchData
-	Now       func() time.Time
-	NewID     func() string
+	Mutations    application.MutationExecutor
+	Accounts     ports.AccountStore
+	Catalog      ports.CatalogStore
+	Events       ports.AutomationEventStore
+	Data         ports.ResearchData
+	Now          func() time.Time
+	NewID        func() string
+	Reservations *ReservationWriter
 }
 
 func (h ConfigureAutomationHandler) Handle(ctx context.Context, r dto.ConfigureAutomationRequest) (dto.AccountView, error) {
@@ -70,6 +71,16 @@ func (h ConfigureAutomationHandler) Handle(ctx context.Context, r dto.ConfigureA
 		}
 		if changed {
 			a.PendingConfig = &domain.AccountConfig{StrategyVersionID: r.StrategyVersionID, UniverseVersionID: r.UniverseVersionID, Policy: r.Policy, EffectiveAt: next.OpenAt}
+		}
+		if h.Reservations != nil && (!r.Enabled || changed) {
+			reason := "user_paused"
+			if r.Enabled {
+				reason = "configuration_changed"
+			}
+			a, e = h.Reservations.CancelBeforeOpen(ctx, a, reason, r.Enabled)
+			if e != nil {
+				return dto.AccountView{}, e
+			}
 		}
 		a.AutomationEnabled = r.Enabled
 		a.PauseReason = ""

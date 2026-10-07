@@ -22,6 +22,7 @@ type Bar struct {
 	SessionDate, AvailableAt time.Time
 	Open, High, Low, Close   Price
 	Volume                   Quantity
+	NoOpeningTrade           bool
 }
 type FinancialFact struct {
 	Provenance

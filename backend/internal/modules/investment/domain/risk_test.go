@@ -2,7 +2,6 @@ package domain
 
 import (
 	"testing"
-	"time"
 )
 
 func riskFixture() PortfolioInput {
@@ -95,5 +94,21 @@ func TestRiskCountsPendingBuysAndOrdinaryTurnover(t *testing.T) {
 	if e != nil || !d.Allowed {
 		t.Fatal(d, e)
 	}
-	_ = time.UTC
+}
+func TestRiskRequiresKnownAutomaticRiskAndRank(t *testing.T) {
+	p := riskFixture()
+	p.Evaluation.Signals[0].Risk.Level = ""
+	input := OrderRiskInput{Account: p.Account, Snapshot: p.Snapshot, Evaluation: p.Evaluation, InstrumentID: "a", Side: "buy", Quantity: 1, Price: 100000000, NAV: p.NAV, Policy: p.Policy, Automatic: true}
+	decision, e := ValidateOrder(input)
+	if e != nil || decision.Allowed {
+		t.Fatal(decision, e)
+	}
+}
+func TestRiskIncludesPendingExecutionTurnover(t *testing.T) {
+	p := riskFixture()
+	orders := []Order{{ID: "one", InstrumentID: "b", Side: "buy", State: OrderPending, Quantity: 90, ReservedCash: 900090}, {ID: "two", InstrumentID: "d", Side: "buy", State: OrderPending, Quantity: 90, ReservedCash: 900090}}
+	decision, e := ValidateOrder(OrderRiskInput{Account: p.Account, Snapshot: p.Snapshot, Orders: orders, InstrumentID: "a", Side: "buy", Quantity: 30, Price: 100000000, NAV: p.NAV, Policy: p.Policy})
+	if e != nil || decision.Allowed || decision.MaxQuantity != 20 {
+		t.Fatal(decision, e)
+	}
 }

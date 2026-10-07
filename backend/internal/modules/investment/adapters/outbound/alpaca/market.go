@@ -222,6 +222,7 @@ func (m *Market) Bars(ctx context.Context, ids []string, from, to time.Time) ([]
 					return nil, domain.ErrInvalidInput
 				}
 				b.Volume = domain.Quantity(volume)
+				b.NoOpeningTrade = volume == 0
 				out = append(out, b)
 			}
 		}

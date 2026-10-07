@@ -36,6 +36,8 @@ type CorporateAction struct {
 	RatioNumerator, RatioDenominator int64
 	Amount                           Price
 	CashInLieu                       *Money
+	// CashInLieu is an explicitly sourced USD rate per post-split share, applied only to the fractional remainder.
+	CashInLieuUnit string
 }
 type NewsItem struct {
 	Provenance

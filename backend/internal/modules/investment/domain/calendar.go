@@ -43,6 +43,19 @@ func (c Calendar) NextSettlement(after time.Time) (time.Time, error) {
 	}
 	return time.Time{}, ErrDataStale
 }
+
+// SettlementDays are nominal UTC dates; funds become usable at midnight in New York, not the prior New York evening.
+func (c Calendar) SettlementStart(after time.Time) (time.Time, error) {
+	date, e := c.NextSettlement(after)
+	if e != nil {
+		return time.Time{}, e
+	}
+	location, e := time.LoadLocation("America/New_York")
+	if e != nil {
+		return time.Time{}, ErrDataNotConfigured
+	}
+	return time.Date(date.Year(), date.Month(), date.Day(), 0, 0, 0, 0, location).UTC(), nil
+}
 func (c Calendar) Session(date time.Time) (Session, error) {
 	for _, s := range c.Sessions {
 		if s.Date.Format("2006-01-02") == date.Format("2006-01-02") {

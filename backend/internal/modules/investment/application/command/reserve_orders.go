@@ -67,7 +67,6 @@ func (w ReservationWriter) CancelBeforeOpen(ctx context.Context, a domain.Accoun
 	for _, o := range orders {
 		advanced := domain.AdvanceOrder(o, now)
 		if advanced.State != o.State {
-			advanced.Reason = "awaiting_daily_bar"
 			if e = w.Orders.SaveOrder(ctx, a.Scope, a.ID, advanced, o.Version); e != nil {
 				return a, fmt.Errorf("advance effective order: %w", e)
 			}

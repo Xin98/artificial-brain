@@ -25,6 +25,7 @@ type ExecuteOrdersRequest struct {
 type ExecutionResult struct {
 	AccountID                 string
 	Filled, Expired, Awaiting int
+	Blocked                   []domain.Exclusion
 }
 type FillView struct {
 	ID          string     `json:"id"`

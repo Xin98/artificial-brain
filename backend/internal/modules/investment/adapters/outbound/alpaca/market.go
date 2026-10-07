@@ -319,7 +319,10 @@ func (m *Market) Actions(ctx context.Context, ids []string, from, to time.Time) 
 					}
 					pay, pe := time.Parse("2006-01-02", r.PayDate)
 					if pe == nil {
-						a.PayAt = pay
+						location, le := time.LoadLocation("America/New_York")
+						if le == nil {
+							a.PayAt = time.Date(pay.Year(), pay.Month(), pay.Day(), 0, 0, 0, 0, location).UTC()
+						}
 					}
 				}
 				if a.ID == "" {

@@ -134,7 +134,7 @@ func MatchAtOpen(in MatchInput) (FillResult, error) {
 	}
 	fill := Fill{AccountID: o.AccountID, OrderID: o.ID, InstrumentID: o.InstrumentID, Side: o.Side, Reason: o.Reason, Quantity: qty, Price: price, Gross: gross, Fee: fee, ReservedCash: o.ReservedCash, ReservedQuantity: o.ReservedQuantity, EffectiveAt: o.TargetOpenAt, RecordedAt: in.RecordedAt}
 	if o.Side == "sell" {
-		fill.SettlesAt, e = in.Portfolio.Snapshot.Calendar.NextSettlement(o.TargetOpenAt)
+		fill.SettlesAt, e = in.Portfolio.Snapshot.Calendar.SettlementStart(o.TargetOpenAt)
 		if e != nil {
 			return out, e
 		}

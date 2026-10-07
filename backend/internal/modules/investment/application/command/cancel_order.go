@@ -35,7 +35,6 @@ func (h CancelOrderHandler) Handle(ctx context.Context, r dto.CancelOrderRequest
 		now := h.Now()
 		advanced := domain.AdvanceOrder(o, now)
 		if advanced.State != o.State {
-			advanced.Reason = "awaiting_daily_bar"
 			if e = h.Orders.SaveOrder(ctx, r.Scope, a.ID, advanced, o.Version); e != nil {
 				return dto.OrderView{}, fmt.Errorf("advance open order: %w", e)
 			}

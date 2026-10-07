@@ -48,7 +48,7 @@ func newOrderHarness(t *testing.T) *orderHarness {
 	h.place = command.PlaceOrderHandler{Mutations: mutations, Accounts: h.accounts, Orders: h.orders, Data: h.data, Reservations: writer, Now: now, NewID: uuid}
 	h.cancel = command.CancelOrderHandler{Mutations: mutations, Accounts: h.accounts, Orders: h.orders, Ledger: ledger, Now: now, NewID: uuid}
 	h.pause = command.ConfigureAutomationHandler{Mutations: mutations, Accounts: h.accounts, Catalog: NewCatalogStore(h.pool), Events: ledger, Data: h.data, Reservations: &writer, Now: now, NewID: uuid}
-	h.execute = command.ExecuteOrdersHandler{UOW: tx, Accounts: h.accounts, Orders: h.orders, Ledger: ledger, Data: h.data, Now: now, NewID: uuid}
+	h.execute = command.ExecuteOrdersHandler{UOW: tx, Accounts: h.accounts, Orders: h.orders, Ledger: ledger, Actions: ledger, Data: h.data, Now: now, NewID: uuid}
 	return h
 }
 func (h *orderHarness) buy(t *testing.T, quantity string) dto.OrderView {

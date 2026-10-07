@@ -2,6 +2,7 @@ package command
 
 import (
 	"context"
+	"errors"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/investment/application/dto"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/investment/application/ports"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/investment/domain"
@@ -17,6 +18,7 @@ type ExecuteOrdersHandler struct {
 	Data     ports.ResearchData
 	Now      func() time.Time
 	NewID    func() string
+	Actions  ports.ReconciliationStore
 }
 
 func (h ExecuteOrdersHandler) Handle(ctx context.Context, r dto.ExecuteOrdersRequest) (dto.ExecutionResult, error) {
@@ -63,6 +65,38 @@ func (h ExecuteOrdersHandler) Apply(ctx context.Context, r dto.ExecuteOrdersRequ
 		}
 		original := order
 		order = domain.AdvanceOrder(order, now)
+		blockedReason := ""
+		for _, action := range snapshot.Actions {
+			if action.InstrumentID != order.InstrumentID || (!action.EffectiveAt.IsZero() && (action.EffectiveAt.Before(account.CreatedAt) || action.EffectiveAt.After(order.TargetOpenAt))) {
+				continue
+			}
+			if _, e := domain.ApplyCorporateAction(account, nil, action, nil); e != nil {
+				blockedReason = "corporate_action_incomplete"
+				break
+			}
+			if h.Actions == nil {
+				if action.Kind == "split" {
+					blockedReason = "corporate_action_unreconciled"
+					break
+				}
+				continue
+			}
+			recorded, e := h.Actions.RecordedAction(ctx, r.Scope, account.ID, action.ID)
+			if e != nil && !errors.Is(e, domain.ErrNotFound) {
+				return result, e
+			}
+			if e == nil && !domain.SameActionEconomics(recorded, action) {
+				blockedReason = "corporate_action_revision_requires_review"
+				break
+			}
+			if action.Kind == "split" && errors.Is(e, domain.ErrNotFound) {
+				blockedReason = "corporate_action_unreconciled"
+				break
+			}
+		}
+		if blockedReason != "" {
+			result.Blocked = append(result.Blocked, domain.Exclusion{InstrumentID: order.InstrumentID, Reason: blockedReason})
+		}
 		targetDate := order.TargetOpenAt.UTC().Format("2006-01-02")
 		opening := map[string]domain.Price{}
 		var bar *domain.Bar
@@ -79,6 +113,9 @@ func (h ExecuteOrdersHandler) Apply(ctx context.Context, r dto.ExecuteOrdersRequ
 			return result, e
 		}
 		var fillResult domain.FillResult
+		if blockedReason != "" {
+			bar = nil
+		}
 		if bar != nil {
 			prior, e := domain.SelectSnapshot(snapshot, order.TargetOpenAt.Add(-time.Nanosecond))
 			if e != nil {
@@ -116,7 +153,6 @@ func (h ExecuteOrdersHandler) Apply(ctx context.Context, r dto.ExecuteOrdersRequ
 		if bar == nil {
 			if now.Before(order.ExpiresAt) {
 				if original.State != order.State {
-					order.Reason = "awaiting_daily_bar"
 					if e = h.Orders.SaveOrder(ctx, r.Scope, account.ID, order, original.Version); e != nil {
 						return result, e
 					}
@@ -126,6 +162,9 @@ func (h ExecuteOrdersHandler) Apply(ctx context.Context, r dto.ExecuteOrdersRequ
 			}
 			order.State = domain.OrderExpired
 			order.Reason = "expired_data_unavailable"
+			if blockedReason != "" {
+				order.Reason = "expired_corporate_action_unresolved"
+			}
 		} else if fillResult.Fill != nil {
 			fill := *fillResult.Fill
 			fill.ID = h.NewID()

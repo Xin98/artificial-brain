@@ -9,9 +9,11 @@ import (
 const IndustryMapVersion = "sic-major-groups-v1"
 
 type StrategyParameters struct {
-	Weights                              [5]float64
-	EntryScore, ExitScore, RebalanceBand float64
-	MaxHoldings                          int
+	Weights       [5]float64 `json:"weights"`
+	EntryScore    float64    `json:"entryScore"`
+	ExitScore     float64    `json:"exitScore"`
+	RebalanceBand float64    `json:"rebalanceBand"`
+	MaxHoldings   int        `json:"maxHoldings"`
 }
 
 func DefaultStrategyParameters() StrategyParameters {

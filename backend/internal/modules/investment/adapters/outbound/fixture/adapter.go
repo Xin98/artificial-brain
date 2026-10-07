@@ -1,6 +1,7 @@
 package fixture
 
 import (
+	"context"
 	"embed"
 	"encoding/csv"
 	"encoding/json"
@@ -15,6 +16,16 @@ import (
 var files embed.FS
 
 type Adapter struct{ Snapshot domain.Snapshot }
+
+func (a *Adapter) Read(ctx context.Context, mode string, asOf time.Time) (domain.Snapshot, error) {
+	if e := ctx.Err(); e != nil {
+		return domain.Snapshot{}, e
+	}
+	if mode != "fixture" {
+		return domain.Snapshot{}, domain.ErrDataNotConfigured
+	}
+	return domain.SelectSnapshot(a.Snapshot, asOf)
+}
 
 func New() (*Adapter, error) {
 	s := domain.Snapshot{ID: "fixture-v1", DatasetVersion: "fixture-v1", Mode: "fixture", Feed: "synthetic", QualityFlags: []string{"demonstration_data", "fixed_universe_survivorship_bias"}}

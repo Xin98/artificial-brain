@@ -11,6 +11,7 @@ type AnalysisRequest struct {
 	AsOf                    time.Time
 }
 type AnalysisView struct {
+	AccountRisk                *domain.RiskDecision
 	Instrument                 domain.Instrument
 	AsOf                       time.Time
 	Mode, Feed, DatasetVersion string

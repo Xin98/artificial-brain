@@ -12,6 +12,7 @@ type AnalysisQuery struct {
 	Data        ports.ResearchData
 	Accounts    ports.AccountStore
 	Catalog     ports.CatalogStore
+	RiskBook    ports.RiskBookReader
 	Mode        string
 	NewsEnabled bool
 	Now         func() time.Time
@@ -126,6 +127,35 @@ func (h AnalysisQuery) Handle(ctx context.Context, r dto.AnalysisRequest) (dto.A
 		if s.InstrumentID == r.InstrumentID {
 			out.Signal = &evaluated.Signals[n]
 			out.Recommendation = s.Recommendation
+		}
+	}
+	if r.AccountID != "" {
+		decision := domain.RiskDecision{ReasonCode: "account_risk_not_evaluated"}
+		if h.RiskBook != nil {
+			book, err := h.RiskBook.LoadRiskBook(ctx, r.Scope, r.AccountID, r.AsOf)
+			if err != nil {
+				return out, err
+			}
+			nav, err := domain.ComputeNAV(account, book.Positions, snapshot, nil)
+			price := domain.Price(0)
+			for _, bar := range bars {
+				price = bar.Close
+			}
+			if err != nil {
+				decision.ReasonCode = err.Error()
+			} else if price <= 0 {
+				decision.ReasonCode = "data_stale"
+			} else {
+				decision, err = domain.ValidateOrder(domain.OrderRiskInput{Account: account, Positions: book.Positions, Orders: book.Orders, Snapshot: snapshot, Evaluation: evaluated, InstrumentID: r.InstrumentID, Side: "buy", Quantity: 1, Price: price, NAV: nav, Policy: account.Policy, SessionTurnover: book.SessionTurnover, Automatic: true, Parameters: &strategy.Parameters})
+				if err != nil {
+					decision = domain.RiskDecision{ReasonCode: err.Error()}
+				}
+			}
+		}
+		out.AccountRisk = &decision
+		if !decision.Allowed {
+			out.Recommendation.Action = "account_buy_blocked"
+			out.Recommendation.Unknowns = append(out.Recommendation.Unknowns, decision.ReasonCode)
 		}
 	}
 	out.NewsStatus = "available"

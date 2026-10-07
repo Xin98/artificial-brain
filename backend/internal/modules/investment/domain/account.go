@@ -98,5 +98,5 @@ type LedgerEntry struct {
 type Position struct {
 	InstrumentID, Industry     string
 	Quantity, ReservedQuantity Quantity
-	Cost                       Money
+	CostBasis                  Money
 }

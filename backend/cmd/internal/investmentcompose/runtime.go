@@ -97,6 +97,19 @@ type sourceService struct {
 	financialAt map[string]time.Time
 }
 
+type currentMarket struct {
+	ports.MarketDataPort
+	instruments []domain.Instrument
+}
+
+func (m *currentMarket) Instruments(ctx context.Context, ids []string) ([]domain.Instrument, error) {
+	items, e := m.MarketDataPort.Instruments(ctx, ids)
+	if e == nil {
+		m.instruments = append([]domain.Instrument(nil), items...)
+	}
+	return items, e
+}
+
 func (s *sourceService) Sync(ctx context.Context, request dto.SyncRequest) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -126,7 +139,8 @@ func (s *sourceService) Sync(ctx context.Context, request dto.SyncRequest) error
 	if s.fixture != nil {
 		feed = "synthetic"
 	}
-	marketHandler := command.SyncMarketHandler{Market: market, Store: r.Snapshots, UOW: r.UOW, Mode: r.Mode, Feed: feed, DatasetVersion: r.DatasetVersion, Now: r.Now}
+	current := &currentMarket{MarketDataPort: market}
+	marketHandler := command.SyncMarketHandler{Market: current, Store: r.Snapshots, UOW: r.UOW, Mode: r.Mode, Feed: feed, DatasetVersion: r.DatasetVersion, Now: r.Now}
 	if _, e := marketHandler.Handle(ctx, request); e != nil {
 		return e
 	}
@@ -134,10 +148,11 @@ func (s *sourceService) Sync(ctx context.Context, request dto.SyncRequest) error
 	if e != nil {
 		return e
 	}
-	// The sync request may contain symbols during initial setup; subsequent commands use the ingested stable IDs.
+	// Symbols bind to this provider response, never an older security that
+	// reused the same ticker in the persisted research history.
 	resolved := []string{}
 	for _, wanted := range request.InstrumentIDs {
-		for _, i := range data.Instruments {
+		for _, i := range current.instruments {
 			if i.ID == wanted || i.Ticker == wanted {
 				resolved = append(resolved, i.ID)
 				break
@@ -157,7 +172,7 @@ func (s *sourceService) Sync(ctx context.Context, request dto.SyncRequest) error
 		if s.fixture != nil {
 			facts = s.fixture
 		} else {
-			v, e := sec.NewFinancials(&http.Client{}, sec.SECConfig{BaseURL: "https://data.sec.gov", DirectoryURL: "https://www.sec.gov", UserAgent: s.cfg.SECUserAgent, Timeout: s.cfg.Timeout, Calendar: data.Calendar})
+			v, e := sec.NewFinancials(&http.Client{}, sec.SECConfig{BaseURL: "https://data.sec.gov", UserAgent: s.cfg.SECUserAgent, Timeout: s.cfg.Timeout, Calendar: data.Calendar})
 			if e != nil {
 				return e
 			}
@@ -189,9 +204,9 @@ func (s *sourceService) Sync(ctx context.Context, request dto.SyncRequest) error
 		news = v
 	}
 	h := command.SyncNewsHandler{News: news, Store: r.Snapshots, UOW: r.UOW, Mode: r.Mode, DatasetVersion: r.DatasetVersion, Now: r.Now}
-	_, e = h.Handle(ctx, request)
+	status, e := h.Handle(ctx, request)
 	// News is informational and never changes the trading score. Its failure is persisted as a quality flag.
-	if e == domain.ErrDataNotConfigured {
+	if status.ErrorCode == "news_unavailable" || status.ErrorCode == "news_not_configured" {
 		return nil
 	}
 	return e

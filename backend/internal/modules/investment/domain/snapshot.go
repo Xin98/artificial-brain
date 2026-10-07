@@ -103,9 +103,13 @@ func AdjustedBars(bars []Bar, actions []CorporateAction, asOf time.Time) ([]Bar,
 		if a.RatioNumerator <= 0 || a.RatioDenominator <= 0 {
 			return nil, ErrCorporateActionIncomplete
 		}
+		// Providers bind splits to the session opening; date-only fixtures use
+		// the same UTC date encoding as Bar.SessionDate. The effective day's
+		// raw bar already uses the new shares in either representation.
+		effectiveSession := dateUTC(a.EffectiveAt)
 		for i := range out {
 			b := &out[i]
-			if b.InstrumentID == a.InstrumentID && b.SessionDate.Before(a.EffectiveAt) {
+			if b.InstrumentID == a.InstrumentID && b.SessionDate.Before(effectiveSession) {
 				for _, p := range []*Price{&b.Open, &b.High, &b.Low, &b.Close} {
 					v, e := scalePrice(*p, a.RatioDenominator, a.RatioNumerator)
 					if e != nil {

@@ -8,7 +8,7 @@
 
 **Tech Stack:** Go 1.26.5（或较新的 1.26 patch）、Node.js 24.18.0、pnpm 11.19.0、现有 Next.js/React、PostgreSQL、pgx、River；不增加 Go/Web 依赖。
 
-**Spec:** [已批准的投资设计](../specs/2026-10-07-investment-us-equities-design.md)；[领域词汇](../../../CONTEXT.md)。设计批准日期 2026-10-07；本计划待审阅及执行方式选择。
+**Spec:** [已批准的投资设计](../specs/2026-10-07-investment-us-equities-design.md)；[领域词汇](../../../CONTEXT.md)。设计批准日期 2026-10-07；用户已批准本计划并选择 Native 执行。19 项任务及最终独立复核修复已完成，逐项证据见 [验收记录](../../iterations/ITER-0006/acceptance.md)、[执行记录](../../iterations/ITER-0006/progress.md) 和 [复核记录](../../iterations/ITER-0006/review.md)。下文保留原执行步骤供追溯。
 
 ## Global Constraints
 

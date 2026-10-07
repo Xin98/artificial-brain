@@ -90,7 +90,7 @@ func (h AnalysisQuery) Handle(ctx context.Context, r dto.AnalysisRequest) (dto.A
 		out.QualityFlags = append(out.QualityFlags, e.Error())
 		bars = nil
 	}
-	out.Metrics, e = domain.ComputeFinancialMetrics(facts, bars, r.AsOf)
+	out.Metrics, e = domain.ComputeFinancialMetrics(facts, bars, r.AsOf, actions...)
 	if e != nil {
 		out.QualityFlags = append(out.QualityFlags, e.Error())
 	}
@@ -161,6 +161,21 @@ func (h AnalysisQuery) Handle(ctx context.Context, r dto.AnalysisRequest) (dto.A
 			} else if price <= 0 {
 				decision.ReasonCode = "data_stale"
 			} else {
+				plan, planErr := domain.BuildRebalance(domain.PortfolioInput{Account: account, Positions: book.Positions, Orders: book.Orders, Snapshot: snapshot, Evaluation: evaluated, Policy: account.Policy, NAV: nav, PeakNAV: book.PeakNAV, SessionTurnover: book.SessionTurnover, Parameters: &strategy.Parameters})
+				if planErr != nil {
+					out.Recommendation.Unknowns = append(out.Recommendation.Unknowns, planErr.Error())
+				} else if plan.Pause {
+					out.Recommendation.Action = "pause_automation"
+					out.Recommendation.Evidence = append(out.Recommendation.Evidence, "drawdown_pause")
+				} else {
+					for _, order := range plan.Orders {
+						if order.InstrumentID == r.InstrumentID && order.Side == "sell" {
+							out.Recommendation.Action = "reduce_holding"
+							out.Recommendation.Evidence = append(out.Recommendation.Evidence, order.Reason)
+						}
+					}
+					out.Recommendation.Unknowns = append(out.Recommendation.Unknowns, plan.Reasons...)
+				}
 				decision, err = domain.ValidateOrder(domain.OrderRiskInput{Account: account, Positions: book.Positions, Orders: book.Orders, Snapshot: snapshot, Evaluation: evaluated, InstrumentID: r.InstrumentID, Side: "buy", Quantity: 1, Price: price, NAV: nav, PeakNAV: book.PeakNAV, Policy: account.Policy, SessionTurnover: book.SessionTurnover, Automatic: true, Parameters: &strategy.Parameters})
 				if err != nil {
 					decision = domain.RiskDecision{ReasonCode: err.Error()}
@@ -169,7 +184,9 @@ func (h AnalysisQuery) Handle(ctx context.Context, r dto.AnalysisRequest) (dto.A
 		}
 		out.AccountRisk = &decision
 		if !decision.Allowed {
-			out.Recommendation.Action = "account_buy_blocked"
+			if out.Recommendation.Action != "reduce_holding" && out.Recommendation.Action != "pause_automation" {
+				out.Recommendation.Action = "account_buy_blocked"
+			}
 			out.Recommendation.Unknowns = append(out.Recommendation.Unknowns, decision.ReasonCode)
 		}
 	}

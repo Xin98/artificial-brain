@@ -61,5 +61,11 @@ export const reasonText = (reason: string) =>
       sharpe_requires_60_returns: "Sharpe 需要 60 个有效收益样本",
       zero_return_variance: "收益波动为零，Sharpe 不适用",
       drawdown_pause: "账户回撤达到限制，买入暂停",
+      stop_loss: "持仓亏损达到止损阈值",
+      exit_signal: "量化评分低于退出阈值",
+      ranking_unavailable_risk_only: "量化候选不足，本次只执行明确的减仓规则",
+      split_reporting_basis_unverified:
+        "拆股后的财报每股单位尚未确认，相关估值不可用",
+      insufficient_universe: "共同合格候选不足，等待数据补齐",
     }) as Record<string, string>
   )[reason] ?? reason;

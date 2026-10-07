@@ -148,7 +148,7 @@ func Evaluate(snapshot Snapshot, universe UniverseVersion, strategy StrategyVers
 			out.Excluded = append(out.Excluded, Exclusion{id, "data_stale"})
 			continue
 		}
-		metrics, me := ComputeFinancialMetrics(facts, bars, s.AsOf)
+		metrics, me := ComputeFinancialMetrics(facts, bars, s.AsOf, actions...)
 		if me != nil || s.AsOf.Sub(metrics.TTM.LatestPeriodEnd) > 180*24*time.Hour {
 			reason = "factor_unavailable"
 			if me == nil {

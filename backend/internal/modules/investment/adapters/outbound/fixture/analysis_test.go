@@ -26,6 +26,17 @@ func TestAnalysisAccountScope(t *testing.T) {
 		t.Fatal(e)
 	}
 }
+
+func TestAnalysisWithholdsUnprovenSplitFinancialUnits(t *testing.T) {
+	f, _ := fixture.New()
+	now := time.Date(2026, 10, 7, 21, 0, 0, 0, time.UTC)
+	f.Snapshot.Actions = append(f.Snapshot.Actions, domain.CorporateAction{ID: "unit-proof", InstrumentID: "fixture-01", Kind: "split", EffectiveAt: time.Date(2026, 10, 6, 13, 30, 0, 0, time.UTC), AvailableAt: time.Date(2026, 10, 5, 20, 0, 0, 0, time.UTC), RatioNumerator: 2, RatioDenominator: 1})
+	q := query.AnalysisQuery{Data: f, Mode: "fixture", Now: func() time.Time { return now }}
+	v, e := q.Handle(context.Background(), dto.AnalysisRequest{InstrumentID: "fixture-01"})
+	if e != nil || v.Metrics.Valuation.PE.Value != nil || v.Metrics.Valuation.MarketCap.Value != nil || v.Metrics.Valuation.PE.Reason != "split_reporting_basis_unverified" || v.Signal != nil || v.Metrics.Indicators.SMA200.Value == nil {
+		t.Fatal(v.Metrics.Valuation, v.Signal, e)
+	}
+}
 func TestNewsDoesNotChangeTradingSignal(t *testing.T) {
 	f, _ := fixture.New()
 	now := time.Date(2026, 10, 6, 21, 0, 0, 0, time.UTC)

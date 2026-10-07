@@ -234,7 +234,7 @@ func averageEquity(t TTMFinancials) FinancialValue {
 	}
 	return FinancialValue{Amount: decimalRat(new(big.Rat).Quo(new(big.Rat).Add(a, b), big.NewRat(2, 1))), Currency: t.ClosingEquity.Currency, Unit: t.ClosingEquity.Unit, FactRefs: append(append([]string(nil), t.OpeningEquity.FactRefs...), t.ClosingEquity.FactRefs...)}
 }
-func ComputeFinancialMetrics(facts []FinancialFact, bars []Bar, asOf time.Time) (FinancialMetrics, error) {
+func ComputeFinancialMetrics(facts []FinancialFact, bars []Bar, asOf time.Time, actions ...CorporateAction) (FinancialMetrics, error) {
 	ind, e := ComputeIndicators(bars)
 	m := FinancialMetrics{Indicators: ind}
 	if e != nil {
@@ -247,6 +247,22 @@ func ComputeFinancialMetrics(facts []FinancialFact, bars []Bar, asOf time.Time) 
 	}
 	selected := selectedFacts(facts, asOf)
 	m.Valuation, e = ComputeValuation(bars[len(bars)-1].Close, t, instant(selected, "Shares", t.LatestPeriodEnd))
+	// Publication date cannot prove whether historical per-share figures were restated.
+	// A TTM window crossing a split requires explicit reporting-basis evidence, which
+	// the current sources do not provide. Preserve independent price/quality metrics.
+	var sharesEnd time.Time
+	for _, fact := range selected {
+		if fact.Concept == "Shares" && !fact.PeriodEnd.After(t.LatestPeriodEnd) && fact.PeriodEnd.After(sharesEnd) {
+			sharesEnd = fact.PeriodEnd
+		}
+	}
+	for _, action := range actions {
+		if action.Kind == "split" && !action.EffectiveAt.After(asOf) && !action.AvailableAt.After(asOf) && (!action.EffectiveAt.Before(t.NetIncome.PeriodStart) || sharesEnd.Before(dateUTC(action.EffectiveAt))) {
+			missing := unavailable("split_reporting_basis_unverified")
+			m.Valuation = Valuation{PE: missing, PB: missing, MarketCap: missing, EarningsYield: missing, FreeCashFlowYield: missing}
+			break
+		}
+	}
 	m.ROE = Ratio(t.NetIncome, averageEquity(t), true)
 	m.DebtRatio = Ratio(instant(selected, "Debt", t.LatestPeriodEnd), instant(selected, "Assets", t.LatestPeriodEnd), true)
 	priorFacts := make([]FinancialFact, 0)

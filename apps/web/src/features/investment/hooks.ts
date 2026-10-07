@@ -17,6 +17,7 @@ export function useResource<T>(
   const [state, setState] = useState<{
     key: string;
     result: Outcome<T>;
+    lastGood: T | null;
   } | null>(null);
   const key = path + "|" + schema;
   const retry = useCallback(() => setRevision((x) => x + 1), []);
@@ -33,7 +34,20 @@ export function useResource<T>(
         decode<T>(schema),
       );
       if (live && requestGeneration === generation) {
-        setState({ key, result });
+        setState((previous) => ({
+          key,
+          result,
+          lastGood: result.ok
+            ? result.value
+            : [
+                  "network",
+                  "timeout",
+                  "service_unavailable",
+                  "invalid_response",
+                ].includes(result.code) && previous?.key === key
+              ? previous.lastGood
+              : null,
+        }));
         if (poll && document.visibilityState === "visible")
           timer = setTimeout(() => void load(), 5000);
       }
@@ -59,7 +73,11 @@ export function useResource<T>(
       if (poll) document.removeEventListener("visibilitychange", visible);
     };
   }, [client, key, path, schema, revision, poll]);
-  return { result: state?.key === key ? state.result : null, retry };
+  return {
+    result: state?.key === key ? state.result : null,
+    lastGood: state?.key === key ? state.lastGood : null,
+    retry,
+  };
 }
 export function useMutation<T>(client: InvestmentClient, schema: string) {
   const intent = useRef<Intent | null>(null);

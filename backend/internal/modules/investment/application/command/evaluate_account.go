@@ -28,11 +28,96 @@ type EvaluateAccountHandler struct {
 }
 
 func (h EvaluateAccountHandler) Prepare(ctx context.Context, r dto.EvaluateRequest) (domain.Evaluation, error) {
+	input, e := h.readyInput(ctx, r)
+	if e != nil {
+		return domain.Evaluation{}, e
+	}
 	var out domain.Evaluation
-	e := h.UOW.Run(ctx, func(ctx context.Context) error { var e error; out, e = h.prepare(ctx, r); return e })
+	e = h.UOW.Run(ctx, func(ctx context.Context) error { var e error; out, e = h.prepare(ctx, r, input); return e })
 	return out, e
 }
-func (h EvaluateAccountHandler) prepare(ctx context.Context, r dto.EvaluateRequest) (domain.Evaluation, error) {
+
+type evaluationInput struct {
+	version int
+	data    domain.Snapshot
+}
+
+// Readiness calculation stays outside the account transaction. The version
+// check in prepare prevents a concurrently changed portfolio/config from
+// consuming this checked input; once claimed, retries use the immutable run.
+func (h EvaluateAccountHandler) readyInput(ctx context.Context, r dto.EvaluateRequest) (*evaluationInput, error) {
+	if r.Purpose != "automatic" || r.RunID != "" {
+		return nil, nil
+	}
+	account, e := h.Accounts.Get(ctx, r.Scope, r.AccountID)
+	if e != nil {
+		return nil, e
+	}
+	version := account.Version
+	now := h.Now()
+	if cfg := account.PendingConfig; cfg != nil && !now.Before(cfg.EffectiveAt) {
+		account.StrategyVersionID = cfg.StrategyVersionID
+		account.UniverseVersionID = cfg.UniverseVersionID
+		account.Policy = cfg.Policy
+	}
+	data, e := h.Data.Read(ctx, account.Mode, now)
+	if e != nil {
+		return nil, e
+	}
+	if e = domain.ValidateAccountDataset(account, data); e != nil {
+		return nil, e
+	}
+	var session domain.Session
+	if r.SessionDate.IsZero() {
+		session, e = data.Calendar.LatestCompleted(now)
+	} else {
+		session, e = data.Calendar.Session(r.SessionDate)
+	}
+	if e != nil {
+		return nil, e
+	}
+	if now.Before(session.CloseAt.Add(30 * time.Minute)) {
+		return nil, domain.ErrDataStale
+	}
+	claim, e := h.Runs.ClaimEvaluation(ctx, r.Scope, account.ID, session.Date, account.StrategyVersionID, account.Mode, r.Purpose)
+	if e != nil {
+		return nil, e
+	}
+	if claim.Found {
+		return nil, nil
+	}
+	universe, e := h.Catalog.GetUniverse(ctx, r.Scope, account.UniverseVersionID)
+	if e != nil {
+		return nil, e
+	}
+	strategy, e := h.Catalog.GetStrategy(ctx, r.Scope, account.StrategyVersionID)
+	if e != nil {
+		return nil, e
+	}
+	_, rankingErr := domain.Evaluate(data, universe, strategy)
+	if rankingErr != nil {
+		if !errors.Is(rankingErr, domain.ErrInsufficientUniverse) && !errors.Is(rankingErr, domain.ErrFactorUnavailable) {
+			return nil, rankingErr
+		}
+		book, e := h.Orders.LoadRiskBook(ctx, r.Scope, account.ID, session.Date)
+		if e != nil {
+			return nil, e
+		}
+		nav, e := domain.ComputeNAV(account, book.Positions, data, nil)
+		if e != nil {
+			return nil, e
+		}
+		risk, e := domain.BuildRebalance(domain.PortfolioInput{Account: account, Positions: book.Positions, Orders: book.Orders, Snapshot: data, Policy: account.Policy, NAV: nav, PeakNAV: book.PeakNAV, SessionTurnover: book.SessionTurnover, Parameters: &strategy.Parameters})
+		if e != nil {
+			return nil, e
+		}
+		if !risk.Pause && len(risk.Orders) == 0 {
+			return nil, rankingErr
+		}
+	}
+	return &evaluationInput{version: version, data: data}, nil
+}
+func (h EvaluateAccountHandler) prepare(ctx context.Context, r dto.EvaluateRequest, input *evaluationInput) (domain.Evaluation, error) {
 	if r.Purpose == "" {
 		r.Purpose = "research"
 	}
@@ -54,6 +139,12 @@ func (h EvaluateAccountHandler) prepare(ctx context.Context, r dto.EvaluateReque
 		return v, nil
 	}
 	now := h.Now()
+	if input != nil {
+		if account.Version != input.version {
+			return domain.Evaluation{}, domain.ErrVersionConflict
+		}
+		now = input.data.AsOf
+	}
 	if account.PendingConfig != nil && !now.Before(account.PendingConfig.EffectiveAt) {
 		cfg := account.PendingConfig
 		account.StrategyVersionID = cfg.StrategyVersionID
@@ -65,7 +156,12 @@ func (h EvaluateAccountHandler) prepare(ctx context.Context, r dto.EvaluateReque
 		}
 		account.Version++
 	}
-	data, e := h.Data.Read(ctx, account.Mode, now)
+	var data domain.Snapshot
+	if input != nil {
+		data = input.data
+	} else {
+		data, e = h.Data.Read(ctx, account.Mode, now)
+	}
 	if e != nil {
 		return domain.Evaluation{}, e
 	}
@@ -106,8 +202,8 @@ func (h EvaluateAccountHandler) prepare(ctx context.Context, r dto.EvaluateReque
 func evaluationRunView(v domain.Evaluation) dto.RunView {
 	return dto.RunView{ID: v.ID, Status: v.State, Phase: "evaluation", Reason: v.Reason, CreatedAt: v.AsOf, UpdatedAt: v.AsOf}
 }
-func (h EvaluateAccountHandler) enqueue(ctx context.Context, r dto.EvaluateRequest) (dto.RunView, error) {
-	v, e := h.prepare(ctx, r)
+func (h EvaluateAccountHandler) enqueue(ctx context.Context, r dto.EvaluateRequest, input *evaluationInput) (dto.RunView, error) {
+	v, e := h.prepare(ctx, r, input)
 	if e != nil {
 		return dto.RunView{}, e
 	}
@@ -125,13 +221,20 @@ func (h EvaluateAccountHandler) enqueue(ctx context.Context, r dto.EvaluateReque
 	return evaluationRunView(v), nil
 }
 func (h EvaluateAccountHandler) Queue(ctx context.Context, r dto.EvaluateRequest) (dto.RunView, error) {
+	input, e := h.readyInput(ctx, r)
+	if e != nil {
+		return dto.RunView{}, e
+	}
 	var v dto.RunView
-	e := h.UOW.Run(ctx, func(ctx context.Context) error { var e error; v, e = h.enqueue(ctx, r); return e })
+	e = h.UOW.Run(ctx, func(ctx context.Context) error { var e error; v, e = h.enqueue(ctx, r, input); return e })
 	return v, e
 }
 func (h EvaluateAccountHandler) Start(ctx context.Context, r dto.EvaluateRequest) (dto.RunView, error) {
+	if r.Purpose != "" && r.Purpose != "research" {
+		return dto.RunView{}, domain.ErrInvalidInput
+	}
 	r.Mutation.Scope = r.Scope
-	return application.RunMutation(h.Mutations, ctx, r.Mutation, r, func(ctx context.Context) (dto.RunView, error) { return h.enqueue(ctx, r) })
+	return application.RunMutation(h.Mutations, ctx, r.Mutation, r, func(ctx context.Context) (dto.RunView, error) { return h.enqueue(ctx, r, nil) })
 }
 func (h EvaluateAccountHandler) Handle(ctx context.Context, r dto.EvaluateRequest) (dto.EvaluationView, error) {
 	frozen, e := h.Prepare(ctx, r)
@@ -166,6 +269,10 @@ func (h EvaluateAccountHandler) Handle(ctx context.Context, r dto.EvaluateReques
 	if evalErr != nil && !errors.Is(evalErr, domain.ErrInsufficientUniverse) && !errors.Is(evalErr, domain.ErrFactorUnavailable) {
 		return dto.EvaluationView{}, evalErr
 	}
+	if evalErr != nil && frozen.Purpose == "automatic" {
+		computed.Reason = ""
+		computed.Signals = []domain.Signal{}
+	}
 	var result domain.Evaluation
 	e = h.UOW.Run(ctx, func(ctx context.Context) error {
 		account, e := h.Accounts.Lock(ctx, r.Scope, frozen.AccountID)
@@ -192,7 +299,7 @@ func (h EvaluateAccountHandler) Handle(ctx context.Context, r dto.EvaluateReques
 		}
 		block := ""
 		switch {
-		case evalErr != nil:
+		case evalErr != nil && frozen.Purpose == "research":
 			block = evalErr.Error()
 		case frozen.Purpose == "research":
 			outcome.Reason = "research_only"
@@ -313,6 +420,12 @@ func (h EvaluateAccountHandler) Handle(ctx context.Context, r dto.EvaluateReques
 						block = plan.Reasons[0]
 					}
 				}
+			}
+		}
+		if evalErr != nil && block == "" && outcome.Reason == "" {
+			block = evalErr.Error()
+			if outcome.IssuedOrders {
+				block = "ranking_unavailable_risk_only"
 			}
 		}
 		if block != "" {

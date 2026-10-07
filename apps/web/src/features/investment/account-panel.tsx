@@ -132,23 +132,30 @@ function AccountDetail({
   client: InvestmentClient;
   accountId: string;
 }) {
-  const { result, retry } = useResource<AccountView>(
+  const { result, lastGood, retry } = useResource<AccountView>(
     client,
     "/accounts/" + accountId,
     "AccountView",
     true,
   );
   if (!result) return <p role="status">正在读取账户…</p>;
-  if (!result.ok)
+  if (!result.ok && !lastGood)
     return (
       <p role="alert">
         {failureText(result.code)} <button onClick={retry}>重试账户</button>
       </p>
     );
-  const a = result.value;
+  const a = result.ok ? result.value : lastGood!;
   return (
     <div className="investment-layout">
       <Link href="/investment/accounts">返回我的模拟账户</Link>
+      {!result.ok ? (
+        <p role="alert">
+          {failureText(result.code)}{" "}
+          当前显示上次成功读取的账户，金额可能已变化。
+          <button onClick={retry}>重试账户</button>
+        </p>
+      ) : null}
       <SourceNotice data={a} />
       <header>
         <h1>{a.name || "模拟账户"}</h1>

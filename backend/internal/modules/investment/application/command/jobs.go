@@ -6,6 +6,7 @@ import (
 	"github.com/Xin98/artificial-brain/backend/internal/modules/investment/application/dto"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/investment/application/ports"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/investment/domain"
+	"sort"
 	"time"
 )
 
@@ -67,7 +68,7 @@ func (h *InvestmentJobHandler) HandleJob(ctx context.Context, args dto.Investmen
 		return e
 	case "account":
 		e := h.maintain(ctx, scope, args.AccountID)
-		if e != nil && (final || errors.Is(e, domain.ErrDataNotConfigured) || errors.Is(e, domain.ErrDataStale) || errors.Is(e, domain.ErrCorporateActionIncomplete) || errors.Is(e, domain.ErrInvalidInput)) {
+		if e != nil && (final || errors.Is(e, domain.ErrDataNotConfigured) || errors.Is(e, domain.ErrDataStale) || errors.Is(e, domain.ErrInsufficientUniverse) || errors.Is(e, domain.ErrFactorUnavailable) || errors.Is(e, domain.ErrCorporateActionIncomplete) || errors.Is(e, domain.ErrInvalidInput)) {
 			mark := h.UOW.Run(ctx, func(ctx context.Context) error {
 				_, err := h.Accounts.Lock(ctx, scope, args.AccountID)
 				if err != nil {
@@ -142,29 +143,79 @@ func (h *InvestmentJobHandler) maintain(ctx context.Context, scope domain.Scope,
 		return e
 	}
 	if a.Mode != "fixture" {
-		pool, e := h.Reconcile.Catalog.GetUniverse(ctx, scope, a.UniverseVersionID)
+		ids := []string{}
+		e = h.UOW.Run(ctx, func(ctx context.Context) error {
+			current, err := h.Accounts.Lock(ctx, scope, id)
+			if err != nil {
+				return err
+			}
+			a = current
+			seen := map[string]bool{}
+			versions := []string{current.UniverseVersionID}
+			if current.PendingConfig != nil {
+				versions = append(versions, current.PendingConfig.UniverseVersionID)
+			}
+			for _, version := range versions {
+				pool, err := h.Reconcile.Catalog.GetUniverse(ctx, scope, version)
+				if err != nil {
+					return err
+				}
+				for _, instrument := range pool.InstrumentIDs {
+					seen[instrument] = true
+				}
+			}
+			positions, err := h.Orders.LoadPositions(ctx, scope, id)
+			if err != nil {
+				return err
+			}
+			for _, position := range positions {
+				if position.Quantity > 0 {
+					seen[position.InstrumentID] = true
+				}
+			}
+			orders, err := h.Orders.ListPending(ctx, scope, id)
+			if err != nil {
+				return err
+			}
+			for _, order := range orders {
+				seen[order.InstrumentID] = true
+			}
+			for instrument := range seen {
+				ids = append(ids, instrument)
+			}
+			sort.Strings(ids)
+			return nil
+		})
 		if e != nil {
 			return e
 		}
-		// Incremental market refresh precedes reconciliation. Financial refresh is selected by the source service's daily cache.
-		request := dto.SyncRequest{Mode: a.Mode, DatasetVersion: a.DatasetVersion, InstrumentIDs: pool.InstrumentIDs, From: h.Now().AddDate(0, 0, -7), To: h.Now()}
-		run := dto.SyncRun{Scope: scope, Request: request, View: dto.RunView{ID: h.NewID(), Status: "running", Phase: "automatic_sources", CreatedAt: h.Now(), UpdatedAt: h.Now()}}
-		if e = h.UOW.Run(ctx, func(ctx context.Context) error { return h.SyncRuns.InsertSync(ctx, run) }); e != nil {
-			return e
-		}
-		sourceErr := h.Source.Sync(ctx, request)
-		run.View.Status = "completed"
-		run.View.UpdatedAt = h.Now()
-		if sourceErr != nil {
-			run.View.Status = "failed"
-			run.View.ErrorCode = "source_unavailable"
-			run.View.Reason = "automatic_sync_failed"
-		}
-		if e = h.UOW.Run(ctx, func(ctx context.Context) error { return h.SyncRuns.SaveSync(ctx, run) }); e != nil {
-			return e
-		}
-		if sourceErr != nil {
-			return sourceErr
+		// Keep each provider request within the public 100-security bound, while
+		// retaining held/ordered securities and both configuration generations.
+		for start := 0; start < len(ids); start += 100 {
+			end := start + 100
+			if end > len(ids) {
+				end = len(ids)
+			}
+			// Incremental market refresh precedes reconciliation. Financial refresh is selected by the source service's daily cache.
+			request := dto.SyncRequest{Mode: a.Mode, DatasetVersion: a.DatasetVersion, InstrumentIDs: ids[start:end], From: h.Now().AddDate(0, 0, -7), To: h.Now()}
+			run := dto.SyncRun{Scope: scope, Request: request, View: dto.RunView{ID: h.NewID(), Status: "running", Phase: "automatic_sources", CreatedAt: h.Now(), UpdatedAt: h.Now()}}
+			if e = h.UOW.Run(ctx, func(ctx context.Context) error { return h.SyncRuns.InsertSync(ctx, run) }); e != nil {
+				return e
+			}
+			sourceErr := h.Source.Sync(ctx, request)
+			run.View.Status = "completed"
+			run.View.UpdatedAt = h.Now()
+			if sourceErr != nil {
+				run.View.Status = "failed"
+				run.View.ErrorCode = "source_unavailable"
+				run.View.Reason = "automatic_sync_failed"
+			}
+			if e = h.UOW.Run(ctx, func(ctx context.Context) error { return h.SyncRuns.SaveSync(ctx, run) }); e != nil {
+				return e
+			}
+			if sourceErr != nil {
+				return sourceErr
+			}
 		}
 	}
 	// First recover old fills; the executor blocks any split that has not yet been reconciled.

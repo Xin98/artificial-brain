@@ -71,13 +71,17 @@ export function StockAnalysis({
       <section className="investment-section">
         <h2>量化结论</h2>
         <p>
-          {v.recommendation.action === "avoid_new_automatic_buy"
-            ? "风险较高，自动策略避免新买入。"
-            : v.recommendation.action === "account_buy_blocked"
-              ? "当前账户风控不允许买入。"
-              : v.recommendation.potential === "high"
-                ? "相对潜力较高，仍需满足账户风控。"
-                : "观察或补充证据后再评估。"}
+          {v.recommendation.action === "reduce_holding"
+            ? "当前持仓触发减仓规则，请查看具体原因及待执行订单。"
+            : v.recommendation.action === "pause_automation"
+              ? "账户回撤触发暂停规则，应先核查持仓与账户风险。"
+              : v.recommendation.action === "avoid_new_automatic_buy"
+                ? "风险较高，自动策略避免新买入。"
+                : v.recommendation.action === "account_buy_blocked"
+                  ? "当前账户风控不允许买入。"
+                  : v.recommendation.potential === "high"
+                    ? "相对潜力较高，仍需满足账户风控。"
+                    : "观察或补充证据后再评估。"}
         </p>
         <p>
           采用可解释的研究多因子方法；未接入幻方私有模型，权重尚未通过实盘验证。
@@ -91,6 +95,7 @@ export function StockAnalysis({
         <ul>
           {[
             ...v.risk.reasons,
+            ...v.recommendation.evidence,
             ...v.recommendation.unknowns,
             ...v.qualityFlags,
           ].map((s, i) => (

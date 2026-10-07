@@ -13,7 +13,7 @@ const analysis = (name: string) => ({
   recommendation: {
     potential: "high",
     action: "avoid_new_automatic_buy",
-    evidence: [],
+    evidence: [] as string[],
     unknowns: [],
   },
   metrics: {
@@ -37,6 +37,20 @@ it("renders unavailable PE and news reason", async () => {
   );
   expect(await screen.findByText("市盈率不适用：盈利非正")).toBeVisible();
   expect(screen.getByText(/新闻权限未验证/)).toBeVisible();
+});
+it("renders account holding reduction separately from buy permission", async () => {
+  const value = analysis("A");
+  value.recommendation.action = "reduce_holding";
+  value.recommendation.evidence = ["stop_loss"];
+  render(
+    <StockAnalysis
+      instrumentId="a"
+      accountId="one"
+      client={{ request: vi.fn().mockResolvedValue({ ok: true, value }) }}
+    />,
+  );
+  expect(await screen.findByText(/当前持仓触发减仓规则/)).toBeVisible();
+  expect(screen.getByText("持仓亏损达到止损阈值")).toBeVisible();
 });
 it("late analysis response cannot overwrite another stock or account", async () => {
   let resolve: (v: unknown) => void = () => {};

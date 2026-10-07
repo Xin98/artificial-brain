@@ -2,6 +2,7 @@ package domain
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 	"time"
@@ -390,8 +391,11 @@ func (b *replayBook) plan(s Snapshot, in BacktestInput, target Session) error {
 		}
 	}
 	evaluation, e := Evaluate(s, in.Universe, in.Strategy)
-	if e != nil {
+	if e != nil && !errors.Is(e, ErrInsufficientUniverse) && !errors.Is(e, ErrFactorUnavailable) {
 		return e
+	}
+	if e != nil {
+		evaluation.Signals = []Signal{}
 	}
 	nav, e := ComputeNAV(b.account, b.positions, s, nil)
 	if e != nil {

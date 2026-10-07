@@ -4,10 +4,12 @@ ITER-0003 turns the ITER-0002 reminder seam into a reliable delivery closed loop
 
 ## Prerequisites
 
+US equities investment is available at `/investment`, `/investment/accounts` and `/investment/research`. It includes explainable daily multifactor research, independent risk/potential labels, virtual accounts, automatic next-open paper orders and asynchronous backtests. Default data is synthetic demonstration data, automation starts off, and no real broker orders are supported. Read the [investment runbook](docs/runbooks/investment.md) for read-only Alpaca/SEC configuration, settlement calendars, costs and recovery; real sources remain unconfigured and separately require verification.
+
 - Go 1.26.5 (or a newer 1.26 patch)
 - Node.js 24.18.0, Corepack, and pnpm 11.19.0
 - Docker with Docker Compose v2
-- `curl`, `jq`, and Ruby (used by bounded migration and smoke tests)
+- `curl`, `jq`, Ruby, OpenSSL, and full `zip`/`unzip` tools (used by bounded migration and smoke tests)
 
 Check the local toolchain with `make toolchain-check`, then install JavaScript dependencies with `corepack pnpm install --frozen-lockfile`.
 

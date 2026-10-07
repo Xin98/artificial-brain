@@ -6,7 +6,7 @@ import (
 
 func TestInvestmentConfigFixtureDoesNotNeedSecrets(t *testing.T) {
 	readSecrets := 0
-	lookup := mapLookup(map[string]string{"DATABASE_URL": "postgres://test:test@localhost/test", "APP_ENV": "development", "REMINDER_RECEIPT_SECRET": "fixture-secret"})
+	lookup := mapLookup(map[string]string{"DATABASE_URL": "postgres://localhost/test", "APP_ENV": "development", "REMINDER_RECEIPT_SECRET": "fixture-secret"})
 	cfg, e := Load(RoleAPI, func(key string) (string, bool) {
 		if key == "INVESTMENT_ALPACA_KEY" || key == "INVESTMENT_ALPACA_SECRET" {
 			readSecrets++

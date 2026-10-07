@@ -152,6 +152,20 @@ worker_table_count=$(compose exec -T postgres psql \
 	exit 1
 }
 
+investment_constraints=$(compose exec -T postgres psql \
+	--username "$database_user" --dbname "$database_name" --tuples-only --no-align \
+	--command "select
+	  (select count(*) from information_schema.tables where table_schema='investment') >= 20
+	  and to_regclass('investment.one_evaluation_per_purpose') is not null
+	  and to_regclass('investment.one_order_batch_per_session') is not null
+	  and (select count(*) from pg_constraint where conrelid='investment.accounts'::regclass and contype='c') >= 7
+	  and (select count(*) from pg_constraint where conrelid='investment.orders'::regclass and contype='f') = 1
+	  and (select count(*) from information_schema.columns where table_schema='investment' and table_name='accounts' and column_name='dataset_version') = 1")
+[ "$investment_constraints" = t ] || {
+	printf 'migration test: investment tables, scoped relations or money constraints missing\n' >&2
+	exit 1
+}
+
 compose --profile test run --build --no-deps --rm backend-test \
 	go test -p=1 -race -v \
 	./backend/internal/platform/database \

@@ -37,8 +37,20 @@ func SelectSnapshot(input Snapshot, asOf time.Time) (Snapshot, error) {
 			facts[key] = f
 		}
 	}
+	// Format the existing deterministic sort key once per fact, rather than
+	// allocating time/string representations for every O(n log n) comparison.
+	type orderedFact struct {
+		key  string
+		fact FinancialFact
+	}
+	orderedFacts := make([]orderedFact, 0, len(facts))
 	for _, f := range facts {
-		out.Facts = append(out.Facts, f)
+		orderedFacts = append(orderedFacts, orderedFact{fmt.Sprint(f.InstrumentID, f.Concept, f.PeriodEnd, f.PeriodStart, f.Unit, f.Currency), f})
+	}
+	sort.Slice(orderedFacts, func(i, j int) bool { return orderedFacts[i].key < orderedFacts[j].key })
+	out.Facts = make([]FinancialFact, 0, len(orderedFacts))
+	for _, f := range orderedFacts {
+		out.Facts = append(out.Facts, f.fact)
 	}
 	actions := map[string]CorporateAction{}
 	for _, a := range input.Actions {
@@ -76,10 +88,6 @@ func SelectSnapshot(input Snapshot, asOf time.Time) (Snapshot, error) {
 			return a.InstrumentID < b.InstrumentID
 		}
 		return a.SessionDate.Before(b.SessionDate)
-	})
-	sort.Slice(out.Facts, func(i, j int) bool {
-		a, b := out.Facts[i], out.Facts[j]
-		return fmt.Sprint(a.InstrumentID, a.Concept, a.PeriodEnd, a.PeriodStart, a.Unit, a.Currency) < fmt.Sprint(b.InstrumentID, b.Concept, b.PeriodEnd, b.PeriodStart, b.Unit, b.Currency)
 	})
 	return out, nil
 }

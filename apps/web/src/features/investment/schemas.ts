@@ -1,0 +1,2112 @@
+// Runtime boundary for the closed OpenAPI investment schemas.
+import type { Schema } from "./schema";
+export const investmentSchemas: Record<string, Schema> = {
+  AccountConfig: {
+    additionalProperties: false,
+    properties: {
+      effectiveAt: {
+        format: "date-time",
+        type: "string",
+      },
+      policy: {
+        $ref: "#/components/schemas/RiskPolicy",
+      },
+      strategyVersionId: {
+        type: "string",
+      },
+      universeVersionId: {
+        type: "string",
+      },
+    },
+    required: [
+      "strategyVersionId",
+      "universeVersionId",
+      "policy",
+      "effectiveAt",
+    ],
+    type: "object",
+  },
+  AccountView: {
+    additionalProperties: false,
+    properties: {
+      asOf: {
+        format: "date-time",
+        type: "string",
+      },
+      automationEnabled: {
+        type: "boolean",
+      },
+      blockReasons: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+      cash: {
+        $ref: "#/components/schemas/CashView",
+      },
+      createdAt: {
+        format: "date-time",
+        type: "string",
+      },
+      datasetVersion: {
+        type: "string",
+      },
+      feed: {
+        type: "string",
+      },
+      id: {
+        type: "string",
+      },
+      initialCash: {
+        $ref: "#/components/schemas/Money",
+      },
+      mode: {
+        type: "string",
+      },
+      name: {
+        type: "string",
+      },
+      nav: {
+        anyOf: [
+          {
+            $ref: "#/components/schemas/Money",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      pauseReason: {
+        type: "string",
+      },
+      pendingConfig: {
+        anyOf: [
+          {
+            $ref: "#/components/schemas/AccountConfig",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      policy: {
+        $ref: "#/components/schemas/RiskPolicy",
+      },
+      qualityFlags: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+      strategyVersionId: {
+        type: "string",
+      },
+      universeVersionId: {
+        type: "string",
+      },
+      version: {
+        type: "integer",
+      },
+    },
+    required: [
+      "nav",
+      "asOf",
+      "feed",
+      "qualityFlags",
+      "blockReasons",
+      "datasetVersion",
+      "id",
+      "name",
+      "mode",
+      "strategyVersionId",
+      "universeVersionId",
+      "cash",
+      "initialCash",
+      "version",
+      "automationEnabled",
+      "pauseReason",
+      "policy",
+      "pendingConfig",
+      "createdAt",
+    ],
+    type: "object",
+  },
+  AccountsPage: {
+    additionalProperties: false,
+    properties: {
+      items: {
+        items: {
+          $ref: "#/components/schemas/AccountView",
+        },
+        maxItems: 100,
+        type: "array",
+      },
+      nextCursor: {
+        type: "string",
+      },
+    },
+    required: ["items", "nextCursor"],
+    type: "object",
+  },
+  AnalysisView: {
+    additionalProperties: false,
+    properties: {
+      accountRisk: {
+        anyOf: [
+          {
+            $ref: "#/components/schemas/RiskDecision",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      asOf: {
+        format: "date-time",
+        type: "string",
+      },
+      datasetVersion: {
+        type: "string",
+      },
+      feed: {
+        type: "string",
+      },
+      instrument: {
+        $ref: "#/components/schemas/Instrument",
+      },
+      metrics: {
+        $ref: "#/components/schemas/FinancialMetrics",
+      },
+      mode: {
+        type: "string",
+      },
+      newsReason: {
+        type: "string",
+      },
+      newsStatus: {
+        type: "string",
+      },
+      qualityFlags: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+      recommendation: {
+        $ref: "#/components/schemas/Recommendation",
+      },
+      risk: {
+        $ref: "#/components/schemas/RiskAssessment",
+      },
+      signal: {
+        anyOf: [
+          {
+            $ref: "#/components/schemas/Signal",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      topics: {
+        items: {
+          $ref: "#/components/schemas/Topic",
+        },
+        type: "array",
+      },
+    },
+    required: [
+      "accountRisk",
+      "instrument",
+      "asOf",
+      "mode",
+      "feed",
+      "datasetVersion",
+      "metrics",
+      "signal",
+      "risk",
+      "recommendation",
+      "newsStatus",
+      "newsReason",
+      "topics",
+      "qualityFlags",
+    ],
+    type: "object",
+  },
+  AutomationEventView: {
+    additionalProperties: false,
+    properties: {
+      effectiveAt: {
+        format: "date-time",
+        type: "string",
+      },
+      id: {
+        type: "string",
+      },
+      kind: {
+        type: "string",
+      },
+      reason: {
+        type: "string",
+      },
+      recordedAt: {
+        format: "date-time",
+        type: "string",
+      },
+    },
+    required: ["id", "kind", "reason", "effectiveAt", "recordedAt"],
+    type: "object",
+  },
+  AutomationRequest: {
+    additionalProperties: false,
+    properties: {
+      enabled: {
+        type: "boolean",
+      },
+      expectedVersion: {
+        type: "integer",
+      },
+      mode: {
+        type: "string",
+      },
+      policy: {
+        $ref: "#/components/schemas/RiskPolicy",
+      },
+      strategyVersionId: {
+        type: "string",
+      },
+      universeVersionId: {
+        type: "string",
+      },
+    },
+    required: [
+      "enabled",
+      "expectedVersion",
+      "strategyVersionId",
+      "universeVersionId",
+      "policy",
+    ],
+    type: "object",
+  },
+  BacktestRequest: {
+    additionalProperties: false,
+    properties: {
+      expectedVersion: {
+        type: "integer",
+      },
+      from: {
+        format: "date-time",
+        type: "string",
+      },
+      initialCash: {
+        $ref: "#/components/schemas/Money",
+      },
+      strategyVersionId: {
+        type: "string",
+      },
+      to: {
+        format: "date-time",
+        type: "string",
+      },
+      universeVersionId: {
+        type: "string",
+      },
+    },
+    required: ["strategyVersionId", "universeVersionId", "from", "to"],
+    type: "object",
+  },
+  BacktestView: {
+    additionalProperties: false,
+    properties: {
+      benchmarkCurve: {
+        items: {
+          $ref: "#/components/schemas/NAVPoint",
+        },
+        type: "array",
+      },
+      benchmarkMetrics: {
+        anyOf: [
+          {
+            $ref: "#/components/schemas/Performance",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      benchmarkReason: {
+        type: "string",
+      },
+      createdAt: {
+        format: "date-time",
+        type: "string",
+      },
+      curve: {
+        items: {
+          $ref: "#/components/schemas/NAVPoint",
+        },
+        type: "array",
+      },
+      datasetVersion: {
+        type: "string",
+      },
+      errorCode: {
+        type: "string",
+      },
+      executionModel: {
+        type: "string",
+      },
+      feed: {
+        type: "string",
+      },
+      from: {
+        format: "date-time",
+        type: "string",
+      },
+      initialCash: {
+        $ref: "#/components/schemas/Money",
+      },
+      intervalLabel: {
+        type: "string",
+      },
+      metrics: {
+        anyOf: [
+          {
+            $ref: "#/components/schemas/Performance",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      mode: {
+        type: "string",
+      },
+      phase: {
+        type: "string",
+      },
+      qualityFlags: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+      reason: {
+        type: "string",
+      },
+      runId: {
+        type: "string",
+      },
+      snapshotIds: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+      status: {
+        type: "string",
+      },
+      strategyVersionId: {
+        type: "string",
+      },
+      to: {
+        format: "date-time",
+        type: "string",
+      },
+      universeVersionId: {
+        type: "string",
+      },
+      updatedAt: {
+        format: "date-time",
+        type: "string",
+      },
+    },
+    required: [
+      "runId",
+      "status",
+      "phase",
+      "errorCode",
+      "reason",
+      "createdAt",
+      "updatedAt",
+      "mode",
+      "feed",
+      "datasetVersion",
+      "strategyVersionId",
+      "universeVersionId",
+      "initialCash",
+      "from",
+      "to",
+      "snapshotIds",
+      "curve",
+      "benchmarkCurve",
+      "metrics",
+      "benchmarkMetrics",
+      "qualityFlags",
+      "executionModel",
+      "benchmarkReason",
+      "intervalLabel",
+    ],
+    type: "object",
+  },
+  BacktestsPage: {
+    additionalProperties: false,
+    properties: {
+      items: {
+        items: {
+          $ref: "#/components/schemas/BacktestView",
+        },
+        maxItems: 100,
+        type: "array",
+      },
+      nextCursor: {
+        type: "string",
+      },
+    },
+    required: ["items", "nextCursor"],
+    type: "object",
+  },
+  Balances: {
+    additionalProperties: false,
+    properties: {
+      available: {
+        $ref: "#/components/schemas/SignedMoney",
+      },
+      dividends: {
+        $ref: "#/components/schemas/SignedMoney",
+      },
+      reserved: {
+        $ref: "#/components/schemas/SignedMoney",
+      },
+      unsettled: {
+        $ref: "#/components/schemas/SignedMoney",
+      },
+    },
+    required: ["available", "reserved", "unsettled", "dividends"],
+    type: "object",
+  },
+  CancelOrderRequest: {
+    additionalProperties: false,
+    properties: {
+      expectedVersion: {
+        type: "integer",
+      },
+    },
+    required: ["expectedVersion"],
+    type: "object",
+  },
+  CashView: {
+    additionalProperties: false,
+    properties: {
+      available: {
+        $ref: "#/components/schemas/Money",
+      },
+      dividends: {
+        $ref: "#/components/schemas/Money",
+      },
+      reserved: {
+        $ref: "#/components/schemas/Money",
+      },
+      unsettled: {
+        $ref: "#/components/schemas/Money",
+      },
+    },
+    required: ["available", "reserved", "unsettled", "dividends"],
+    type: "object",
+  },
+  CreateAccountRequest: {
+    additionalProperties: false,
+    properties: {
+      expectedVersion: {
+        type: "integer",
+      },
+      initialCash: {
+        $ref: "#/components/schemas/Money",
+      },
+      mode: {
+        type: "string",
+      },
+      name: {
+        type: "string",
+      },
+      strategyVersionId: {
+        type: "string",
+      },
+      universeVersionId: {
+        type: "string",
+      },
+    },
+    required: [],
+    type: "object",
+  },
+  CreateStrategyRequest: {
+    additionalProperties: false,
+    properties: {
+      expectedVersion: {
+        type: "integer",
+      },
+      parameters: {
+        $ref: "#/components/schemas/StrategyParameters",
+      },
+      strategyId: {
+        type: "string",
+      },
+    },
+    required: ["parameters"],
+    type: "object",
+  },
+  CreateUniverseRequest: {
+    additionalProperties: false,
+    properties: {
+      expectedVersion: {
+        type: "integer",
+      },
+      instrumentIds: {
+        items: {
+          type: "string",
+        },
+        maxItems: 100,
+        type: "array",
+      },
+      mode: {
+        type: "string",
+      },
+      name: {
+        type: "string",
+      },
+      universeId: {
+        type: "string",
+      },
+    },
+    required: ["name", "instrumentIds"],
+    type: "object",
+  },
+  DataComponentStatus: {
+    additionalProperties: false,
+    properties: {
+      asOf: {
+        format: "date-time",
+        type: "string",
+      },
+      count: {
+        type: "integer",
+      },
+      from: {
+        format: "date-time",
+        type: "string",
+      },
+      reason: {
+        type: "string",
+      },
+      state: {
+        type: "string",
+      },
+      to: {
+        format: "date-time",
+        type: "string",
+      },
+    },
+    required: ["state", "reason", "count", "from", "to", "asOf"],
+    type: "object",
+  },
+  DataStatus: {
+    additionalProperties: false,
+    properties: {
+      asOf: {
+        format: "date-time",
+        type: "string",
+      },
+      calendar: {
+        $ref: "#/components/schemas/DataComponentStatus",
+      },
+      datasetVersion: {
+        type: "string",
+      },
+      feed: {
+        type: "string",
+      },
+      financial: {
+        $ref: "#/components/schemas/DataComponentStatus",
+      },
+      lastSync: {
+        anyOf: [
+          {
+            $ref: "#/components/schemas/RunView",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      market: {
+        $ref: "#/components/schemas/DataComponentStatus",
+      },
+      mode: {
+        type: "string",
+      },
+      news: {
+        $ref: "#/components/schemas/DataComponentStatus",
+      },
+      qualityFlags: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+    },
+    required: [
+      "lastSync",
+      "mode",
+      "feed",
+      "datasetVersion",
+      "asOf",
+      "market",
+      "financial",
+      "news",
+      "calendar",
+      "qualityFlags",
+    ],
+    type: "object",
+  },
+  ErrorEnvelope: {
+    additionalProperties: false,
+    properties: {
+      code: {
+        type: "string",
+      },
+      correlationId: {
+        type: "string",
+      },
+      message: {
+        type: "string",
+      },
+    },
+    required: ["code", "message", "correlationId"],
+    type: "object",
+  },
+  EvaluateRequest: {
+    additionalProperties: false,
+    properties: {
+      expectedVersion: {
+        type: "integer",
+      },
+      purpose: {
+        type: "string",
+      },
+    },
+    required: [],
+    type: "object",
+  },
+  EvaluationReadView: {
+    additionalProperties: false,
+    properties: {
+      accountId: {
+        type: "string",
+      },
+      asOf: {
+        format: "date-time",
+        type: "string",
+      },
+      datasetVersion: {
+        type: "string",
+      },
+      excluded: {
+        items: {
+          $ref: "#/components/schemas/Exclusion",
+        },
+        type: "array",
+      },
+      id: {
+        type: "string",
+      },
+      issuedOrders: {
+        type: "boolean",
+      },
+      mode: {
+        type: "string",
+      },
+      orderIds: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+      purpose: {
+        type: "string",
+      },
+      qualityFlags: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+      reason: {
+        type: "string",
+      },
+      sessionDate: {
+        format: "date-time",
+        type: "string",
+      },
+      signals: {
+        items: {
+          $ref: "#/components/schemas/Signal",
+        },
+        type: "array",
+      },
+      snapshotId: {
+        type: "string",
+      },
+      state: {
+        type: "string",
+      },
+      strategyVersionId: {
+        type: "string",
+      },
+      universeVersionId: {
+        type: "string",
+      },
+    },
+    required: [
+      "id",
+      "accountId",
+      "snapshotId",
+      "datasetVersion",
+      "mode",
+      "strategyVersionId",
+      "universeVersionId",
+      "state",
+      "reason",
+      "purpose",
+      "asOf",
+      "sessionDate",
+      "signals",
+      "excluded",
+      "qualityFlags",
+      "orderIds",
+      "issuedOrders",
+    ],
+    type: "object",
+  },
+  EvaluationsPage: {
+    additionalProperties: false,
+    properties: {
+      items: {
+        items: {
+          $ref: "#/components/schemas/EvaluationReadView",
+        },
+        maxItems: 100,
+        type: "array",
+      },
+      nextCursor: {
+        type: "string",
+      },
+    },
+    required: ["items", "nextCursor"],
+    type: "object",
+  },
+  EventsPage: {
+    additionalProperties: false,
+    properties: {
+      items: {
+        items: {
+          $ref: "#/components/schemas/AutomationEventView",
+        },
+        maxItems: 100,
+        type: "array",
+      },
+      nextCursor: {
+        type: "string",
+      },
+    },
+    required: ["items", "nextCursor"],
+    type: "object",
+  },
+  Exclusion: {
+    additionalProperties: false,
+    properties: {
+      instrumentId: {
+        type: "string",
+      },
+      reason: {
+        type: "string",
+      },
+    },
+    required: ["instrumentId", "reason"],
+    type: "object",
+  },
+  FactorEvidence: {
+    additionalProperties: false,
+    properties: {
+      contribution: {
+        type: "number",
+      },
+      factRefs: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+      group: {
+        type: "string",
+      },
+      percentiles: {
+        items: {
+          type: "number",
+        },
+        type: "array",
+      },
+      rawValues: {
+        items: {
+          type: "number",
+        },
+        type: "array",
+      },
+      weight: {
+        type: "number",
+      },
+    },
+    required: [
+      "group",
+      "rawValues",
+      "percentiles",
+      "weight",
+      "contribution",
+      "factRefs",
+    ],
+    type: "object",
+  },
+  FillView: {
+    additionalProperties: false,
+    properties: {
+      effectiveAt: {
+        format: "date-time",
+        type: "string",
+      },
+      fee: {
+        $ref: "#/components/schemas/Money",
+      },
+      gross: {
+        $ref: "#/components/schemas/Money",
+      },
+      id: {
+        type: "string",
+      },
+      price: {
+        $ref: "#/components/schemas/Price",
+      },
+      quantity: {
+        $ref: "#/components/schemas/Quantity",
+      },
+      recordedAt: {
+        format: "date-time",
+        type: "string",
+      },
+      settlesAt: {
+        anyOf: [
+          {
+            format: "date-time",
+            type: "string",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+    },
+    required: [
+      "id",
+      "quantity",
+      "price",
+      "gross",
+      "fee",
+      "effectiveAt",
+      "recordedAt",
+      "settlesAt",
+    ],
+    type: "object",
+  },
+  FinancialMetrics: {
+    additionalProperties: false,
+    properties: {
+      debtRatio: {
+        $ref: "#/components/schemas/Metric",
+      },
+      indicators: {
+        $ref: "#/components/schemas/Indicators",
+      },
+      profitGrowth: {
+        $ref: "#/components/schemas/Metric",
+      },
+      revenueGrowth: {
+        $ref: "#/components/schemas/Metric",
+      },
+      roe: {
+        $ref: "#/components/schemas/Metric",
+      },
+      ttm: {
+        $ref: "#/components/schemas/TTMFinancials",
+      },
+      valuation: {
+        $ref: "#/components/schemas/Valuation",
+      },
+    },
+    required: [
+      "ttm",
+      "valuation",
+      "indicators",
+      "profitGrowth",
+      "revenueGrowth",
+      "debtRatio",
+      "roe",
+    ],
+    type: "object",
+  },
+  FinancialValue: {
+    additionalProperties: false,
+    properties: {
+      amount: {
+        type: "string",
+      },
+      currency: {
+        type: "string",
+      },
+      factRefs: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+      periodStart: {
+        format: "date-time",
+        type: "string",
+      },
+      reason: {
+        type: "string",
+      },
+      unit: {
+        type: "string",
+      },
+    },
+    required: [
+      "amount",
+      "unit",
+      "currency",
+      "reason",
+      "factRefs",
+      "periodStart",
+    ],
+    type: "object",
+  },
+  Indicators: {
+    additionalProperties: false,
+    properties: {
+      annualVolatility: {
+        $ref: "#/components/schemas/Metric",
+      },
+      averageTurnover20: {
+        $ref: "#/components/schemas/Metric",
+      },
+      averageVolume20: {
+        $ref: "#/components/schemas/Metric",
+      },
+      maxDrawdown: {
+        $ref: "#/components/schemas/Metric",
+      },
+      rsi14: {
+        $ref: "#/components/schemas/Metric",
+      },
+      sma20: {
+        $ref: "#/components/schemas/Metric",
+      },
+      sma200: {
+        $ref: "#/components/schemas/Metric",
+      },
+      sma50: {
+        $ref: "#/components/schemas/Metric",
+      },
+      windowDays: {
+        type: "integer",
+      },
+    },
+    required: [
+      "sma20",
+      "sma50",
+      "sma200",
+      "rsi14",
+      "annualVolatility",
+      "maxDrawdown",
+      "averageVolume20",
+      "averageTurnover20",
+      "windowDays",
+    ],
+    type: "object",
+  },
+  Instrument: {
+    additionalProperties: false,
+    properties: {
+      cik: {
+        type: "string",
+      },
+      exchange: {
+        type: "string",
+      },
+      id: {
+        type: "string",
+      },
+      ingestedAt: {
+        format: "date-time",
+        type: "string",
+      },
+      kind: {
+        type: "string",
+      },
+      name: {
+        type: "string",
+      },
+      sic: {
+        type: "string",
+      },
+      source: {
+        type: "string",
+      },
+      sourceRecordId: {
+        type: "string",
+      },
+      ticker: {
+        type: "string",
+      },
+      tickerHistory: {
+        items: {
+          $ref: "#/components/schemas/TickerChange",
+        },
+        type: "array",
+      },
+      tradable: {
+        type: "boolean",
+      },
+    },
+    required: [
+      "source",
+      "sourceRecordId",
+      "ingestedAt",
+      "id",
+      "ticker",
+      "name",
+      "cik",
+      "exchange",
+      "sic",
+      "kind",
+      "tradable",
+      "tickerHistory",
+    ],
+    type: "object",
+  },
+  InstrumentResearchView: {
+    additionalProperties: false,
+    properties: {
+      instrument: {
+        $ref: "#/components/schemas/Instrument",
+      },
+      potential: {
+        type: "string",
+      },
+      price: {
+        anyOf: [
+          {
+            $ref: "#/components/schemas/Price",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      priceAsOf: {
+        anyOf: [
+          {
+            format: "date-time",
+            type: "string",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      reason: {
+        type: "string",
+      },
+      risk: {
+        $ref: "#/components/schemas/RiskAssessment",
+      },
+      signal: {
+        anyOf: [
+          {
+            $ref: "#/components/schemas/Signal",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+    },
+    required: [
+      "instrument",
+      "signal",
+      "risk",
+      "potential",
+      "reason",
+      "price",
+      "priceAsOf",
+    ],
+    type: "object",
+  },
+  InstrumentsPage: {
+    additionalProperties: false,
+    properties: {
+      items: {
+        items: {
+          $ref: "#/components/schemas/InstrumentResearchView",
+        },
+        maxItems: 100,
+        type: "array",
+      },
+      nextCursor: {
+        type: "string",
+      },
+    },
+    required: ["items", "nextCursor"],
+    type: "object",
+  },
+  LedgerEntry: {
+    additionalProperties: false,
+    properties: {
+      accountId: {
+        type: "string",
+      },
+      delta: {
+        $ref: "#/components/schemas/Balances",
+      },
+      effectiveAt: {
+        format: "date-time",
+        type: "string",
+      },
+      eventKey: {
+        type: "string",
+      },
+      id: {
+        type: "string",
+      },
+      instrumentId: {
+        type: "string",
+      },
+      kind: {
+        type: "string",
+      },
+      quantityDelta: {
+        $ref: "#/components/schemas/SignedQuantity",
+      },
+      recordedAt: {
+        format: "date-time",
+        type: "string",
+      },
+    },
+    required: [
+      "id",
+      "accountId",
+      "eventKey",
+      "kind",
+      "instrumentId",
+      "delta",
+      "quantityDelta",
+      "effectiveAt",
+      "recordedAt",
+    ],
+    type: "object",
+  },
+  LedgerPage: {
+    additionalProperties: false,
+    properties: {
+      items: {
+        items: {
+          $ref: "#/components/schemas/LedgerEntry",
+        },
+        maxItems: 100,
+        type: "array",
+      },
+      nextCursor: {
+        type: "string",
+      },
+    },
+    required: ["items", "nextCursor"],
+    type: "object",
+  },
+  Metric: {
+    additionalProperties: false,
+    properties: {
+      factRefs: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+      reason: {
+        type: "string",
+      },
+      value: {
+        anyOf: [
+          {
+            pattern: "^-?[0-9]+(\\.[0-9]+)?$",
+            type: "string",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+    },
+    required: ["value", "reason", "factRefs"],
+    type: "object",
+  },
+  Money: {
+    pattern: "^[0-9]+\\.[0-9]{2}$",
+    type: "string",
+  },
+  NAVPoint: {
+    additionalProperties: false,
+    properties: {
+      nav: {
+        $ref: "#/components/schemas/SignedMoney",
+      },
+      sessionDate: {
+        format: "date-time",
+        type: "string",
+      },
+    },
+    required: ["sessionDate", "nav"],
+    type: "object",
+  },
+  NewsItem: {
+    additionalProperties: false,
+    properties: {
+      availableAt: {
+        format: "date-time",
+        type: "string",
+      },
+      id: {
+        type: "string",
+      },
+      ingestedAt: {
+        format: "date-time",
+        type: "string",
+      },
+      instrumentIds: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+      publishedAt: {
+        format: "date-time",
+        type: "string",
+      },
+      source: {
+        type: "string",
+      },
+      sourceRecordId: {
+        type: "string",
+      },
+      summary: {
+        type: "string",
+      },
+      title: {
+        type: "string",
+      },
+      url: {
+        type: "string",
+      },
+    },
+    required: [
+      "source",
+      "sourceRecordId",
+      "ingestedAt",
+      "id",
+      "title",
+      "summary",
+      "url",
+      "instrumentIds",
+      "publishedAt",
+      "availableAt",
+    ],
+    type: "object",
+  },
+  OrderView: {
+    additionalProperties: false,
+    properties: {
+      accountId: {
+        type: "string",
+      },
+      capacity: {
+        $ref: "#/components/schemas/Quantity",
+      },
+      createdAt: {
+        format: "date-time",
+        type: "string",
+      },
+      expiresAt: {
+        format: "date-time",
+        type: "string",
+      },
+      fill: {
+        anyOf: [
+          {
+            $ref: "#/components/schemas/FillView",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      id: {
+        type: "string",
+      },
+      instrumentId: {
+        type: "string",
+      },
+      origin: {
+        type: "string",
+      },
+      quantity: {
+        $ref: "#/components/schemas/Quantity",
+      },
+      reason: {
+        type: "string",
+      },
+      reservedCash: {
+        $ref: "#/components/schemas/Money",
+      },
+      reservedQuantity: {
+        $ref: "#/components/schemas/Quantity",
+      },
+      side: {
+        type: "string",
+      },
+      state: {
+        type: "string",
+      },
+      targetOpenAt: {
+        format: "date-time",
+        type: "string",
+      },
+      version: {
+        type: "integer",
+      },
+    },
+    required: [
+      "id",
+      "accountId",
+      "instrumentId",
+      "side",
+      "state",
+      "reason",
+      "origin",
+      "quantity",
+      "reservedQuantity",
+      "reservedCash",
+      "capacity",
+      "version",
+      "targetOpenAt",
+      "expiresAt",
+      "createdAt",
+      "fill",
+    ],
+    type: "object",
+  },
+  OrdersPage: {
+    additionalProperties: false,
+    properties: {
+      items: {
+        items: {
+          $ref: "#/components/schemas/OrderView",
+        },
+        maxItems: 100,
+        type: "array",
+      },
+      nextCursor: {
+        type: "string",
+      },
+    },
+    required: ["items", "nextCursor"],
+    type: "object",
+  },
+  Performance: {
+    additionalProperties: false,
+    properties: {
+      annualReturn: {
+        anyOf: [
+          {
+            type: "number",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      cumulativeReturn: {
+        type: "number",
+      },
+      maxDrawdown: {
+        type: "number",
+      },
+      missingReasons: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+      sharpe: {
+        anyOf: [
+          {
+            type: "number",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      tradingDays: {
+        type: "integer",
+      },
+      turnover: {
+        type: "number",
+      },
+    },
+    required: [
+      "cumulativeReturn",
+      "maxDrawdown",
+      "turnover",
+      "annualReturn",
+      "sharpe",
+      "missingReasons",
+      "tradingDays",
+    ],
+    type: "object",
+  },
+  PerformanceView: {
+    additionalProperties: false,
+    properties: {
+      asOf: {
+        format: "date-time",
+        type: "string",
+      },
+      benchmarkCurve: {
+        items: {
+          $ref: "#/components/schemas/NAVPoint",
+        },
+        type: "array",
+      },
+      benchmarkMetrics: {
+        anyOf: [
+          {
+            $ref: "#/components/schemas/Performance",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      benchmarkReason: {
+        type: "string",
+      },
+      curve: {
+        items: {
+          $ref: "#/components/schemas/NAVPoint",
+        },
+        type: "array",
+      },
+      datasetVersion: {
+        type: "string",
+      },
+      feed: {
+        type: "string",
+      },
+      kind: {
+        type: "string",
+      },
+      metrics: {
+        anyOf: [
+          {
+            $ref: "#/components/schemas/Performance",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      mode: {
+        type: "string",
+      },
+      qualityFlags: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+    },
+    required: [
+      "mode",
+      "feed",
+      "datasetVersion",
+      "asOf",
+      "curve",
+      "benchmarkCurve",
+      "metrics",
+      "benchmarkMetrics",
+      "qualityFlags",
+      "benchmarkReason",
+      "kind",
+    ],
+    type: "object",
+  },
+  PlaceOrderRequest: {
+    additionalProperties: false,
+    properties: {
+      expectedVersion: {
+        type: "integer",
+      },
+      instrumentId: {
+        type: "string",
+      },
+      quantity: {
+        $ref: "#/components/schemas/Quantity",
+      },
+      side: {
+        type: "string",
+      },
+    },
+    required: ["instrumentId", "side", "quantity", "expectedVersion"],
+    type: "object",
+  },
+  Position: {
+    additionalProperties: false,
+    properties: {
+      costBasis: {
+        $ref: "#/components/schemas/SignedMoney",
+      },
+      industry: {
+        type: "string",
+      },
+      instrumentId: {
+        type: "string",
+      },
+      quantity: {
+        $ref: "#/components/schemas/SignedQuantity",
+      },
+      reservedQuantity: {
+        $ref: "#/components/schemas/SignedQuantity",
+      },
+    },
+    required: [
+      "instrumentId",
+      "industry",
+      "quantity",
+      "reservedQuantity",
+      "costBasis",
+    ],
+    type: "object",
+  },
+  PositionsPage: {
+    additionalProperties: false,
+    properties: {
+      items: {
+        items: {
+          $ref: "#/components/schemas/Position",
+        },
+        maxItems: 100,
+        type: "array",
+      },
+      nextCursor: {
+        type: "string",
+      },
+    },
+    required: ["items", "nextCursor"],
+    type: "object",
+  },
+  Price: {
+    pattern: "^[0-9]+\\.[0-9]{6}$",
+    type: "string",
+  },
+  Quantity: {
+    pattern: "^[0-9]+$",
+    type: "string",
+  },
+  Recommendation: {
+    additionalProperties: false,
+    properties: {
+      action: {
+        type: "string",
+      },
+      asOf: {
+        format: "date-time",
+        type: "string",
+      },
+      evidence: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+      potential: {
+        type: "string",
+      },
+      strategyVersionId: {
+        type: "string",
+      },
+      universeVersionId: {
+        type: "string",
+      },
+      unknowns: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+    },
+    required: [
+      "action",
+      "potential",
+      "strategyVersionId",
+      "universeVersionId",
+      "asOf",
+      "evidence",
+      "unknowns",
+    ],
+    type: "object",
+  },
+  RiskAssessment: {
+    additionalProperties: false,
+    properties: {
+      asOf: {
+        format: "date-time",
+        type: "string",
+      },
+      level: {
+        type: "string",
+      },
+      reasons: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+    },
+    required: ["level", "reasons", "asOf"],
+    type: "object",
+  },
+  RiskDecision: {
+    additionalProperties: false,
+    properties: {
+      allowed: {
+        type: "boolean",
+      },
+      maxQuantity: {
+        $ref: "#/components/schemas/SignedQuantity",
+      },
+      reasonCode: {
+        type: "string",
+      },
+    },
+    required: ["allowed", "reasonCode", "maxQuantity"],
+    type: "object",
+  },
+  RiskPolicy: {
+    additionalProperties: false,
+    properties: {
+      drawdownPause: {
+        type: "number",
+      },
+      industryWeight: {
+        type: "number",
+      },
+      singleWeight: {
+        type: "number",
+      },
+      stockWeight: {
+        type: "number",
+      },
+      stopLoss: {
+        type: "number",
+      },
+      turnoverLimit: {
+        type: "number",
+      },
+    },
+    required: [
+      "singleWeight",
+      "industryWeight",
+      "stockWeight",
+      "drawdownPause",
+      "stopLoss",
+      "turnoverLimit",
+    ],
+    type: "object",
+  },
+  RunView: {
+    additionalProperties: false,
+    properties: {
+      createdAt: {
+        format: "date-time",
+        type: "string",
+      },
+      errorCode: {
+        type: "string",
+      },
+      phase: {
+        type: "string",
+      },
+      reason: {
+        type: "string",
+      },
+      runId: {
+        type: "string",
+      },
+      status: {
+        type: "string",
+      },
+      updatedAt: {
+        format: "date-time",
+        type: "string",
+      },
+    },
+    required: [
+      "runId",
+      "status",
+      "phase",
+      "errorCode",
+      "reason",
+      "createdAt",
+      "updatedAt",
+    ],
+    type: "object",
+  },
+  Signal: {
+    additionalProperties: false,
+    properties: {
+      factorEvidence: {
+        items: {
+          $ref: "#/components/schemas/FactorEvidence",
+        },
+        type: "array",
+      },
+      industry: {
+        type: "string",
+      },
+      instrumentId: {
+        type: "string",
+      },
+      metrics: {
+        $ref: "#/components/schemas/FinancialMetrics",
+      },
+      qualityFlags: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+      rank: {
+        type: "integer",
+      },
+      recommendation: {
+        $ref: "#/components/schemas/Recommendation",
+      },
+      risk: {
+        $ref: "#/components/schemas/RiskAssessment",
+      },
+      score: {
+        type: "number",
+      },
+    },
+    required: [
+      "instrumentId",
+      "industry",
+      "score",
+      "rank",
+      "factorEvidence",
+      "qualityFlags",
+      "metrics",
+      "risk",
+      "recommendation",
+    ],
+    type: "object",
+  },
+  SignedMoney: {
+    pattern: "^-?[0-9]+\\.[0-9]{2}$",
+    type: "string",
+  },
+  SignedQuantity: {
+    pattern: "^-?[0-9]+$",
+    type: "string",
+  },
+  StrategyParameters: {
+    additionalProperties: false,
+    properties: {
+      entryScore: {
+        type: "number",
+      },
+      exitScore: {
+        type: "number",
+      },
+      maxHoldings: {
+        type: "integer",
+      },
+      rebalanceBand: {
+        type: "number",
+      },
+      weights: {
+        items: {
+          type: "number",
+        },
+        maxItems: 5,
+        minItems: 5,
+        type: "array",
+      },
+    },
+    required: [
+      "weights",
+      "entryScore",
+      "exitScore",
+      "rebalanceBand",
+      "maxHoldings",
+    ],
+    type: "object",
+  },
+  SyncRequest: {
+    additionalProperties: false,
+    properties: {
+      expectedVersion: {
+        type: "integer",
+      },
+      from: {
+        format: "date-time",
+        type: "string",
+      },
+      instrumentIds: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+      to: {
+        format: "date-time",
+        type: "string",
+      },
+    },
+    required: ["from", "to"],
+    type: "object",
+  },
+  SyncsPage: {
+    additionalProperties: false,
+    properties: {
+      items: {
+        items: {
+          $ref: "#/components/schemas/RunView",
+        },
+        maxItems: 100,
+        type: "array",
+      },
+      nextCursor: {
+        type: "string",
+      },
+    },
+    required: ["items", "nextCursor"],
+    type: "object",
+  },
+  TTMFinancials: {
+    additionalProperties: false,
+    properties: {
+      capitalExpenditure: {
+        $ref: "#/components/schemas/FinancialValue",
+      },
+      closingEquity: {
+        $ref: "#/components/schemas/FinancialValue",
+      },
+      dilutedEps: {
+        $ref: "#/components/schemas/FinancialValue",
+      },
+      freeCashFlow: {
+        $ref: "#/components/schemas/FinancialValue",
+      },
+      latestPeriodEnd: {
+        format: "date-time",
+        type: "string",
+      },
+      netIncome: {
+        $ref: "#/components/schemas/FinancialValue",
+      },
+      openingEquity: {
+        $ref: "#/components/schemas/FinancialValue",
+      },
+      operatingCashFlow: {
+        $ref: "#/components/schemas/FinancialValue",
+      },
+      revenue: {
+        $ref: "#/components/schemas/FinancialValue",
+      },
+    },
+    required: [
+      "netIncome",
+      "revenue",
+      "operatingCashFlow",
+      "capitalExpenditure",
+      "freeCashFlow",
+      "dilutedEps",
+      "openingEquity",
+      "closingEquity",
+      "latestPeriodEnd",
+    ],
+    type: "object",
+  },
+  TickerChange: {
+    additionalProperties: false,
+    properties: {
+      effectiveAt: {
+        format: "date-time",
+        type: "string",
+      },
+      ticker: {
+        type: "string",
+      },
+    },
+    required: ["ticker", "effectiveAt"],
+    type: "object",
+  },
+  Topic: {
+    additionalProperties: false,
+    properties: {
+      articles: {
+        items: {
+          $ref: "#/components/schemas/NewsItem",
+        },
+        type: "array",
+      },
+      change24Hours: {
+        type: "integer",
+      },
+      count24Hours: {
+        type: "integer",
+      },
+      count7Days: {
+        type: "integer",
+      },
+      mappingVersion: {
+        type: "string",
+      },
+      name: {
+        type: "string",
+      },
+      previous24Hours: {
+        type: "integer",
+      },
+    },
+    required: [
+      "name",
+      "mappingVersion",
+      "count7Days",
+      "count24Hours",
+      "previous24Hours",
+      "change24Hours",
+      "articles",
+    ],
+    type: "object",
+  },
+  Valuation: {
+    additionalProperties: false,
+    properties: {
+      earningsYield: {
+        $ref: "#/components/schemas/Metric",
+      },
+      freeCashFlowYield: {
+        $ref: "#/components/schemas/Metric",
+      },
+      marketCap: {
+        $ref: "#/components/schemas/Metric",
+      },
+      pb: {
+        $ref: "#/components/schemas/Metric",
+      },
+      pe: {
+        $ref: "#/components/schemas/Metric",
+      },
+    },
+    required: ["pe", "pb", "marketCap", "earningsYield", "freeCashFlowYield"],
+    type: "object",
+  },
+  VersionView: {
+    additionalProperties: false,
+    properties: {
+      createdAt: {
+        format: "date-time",
+        type: "string",
+      },
+      effectiveAt: {
+        format: "date-time",
+        type: "string",
+      },
+      id: {
+        type: "string",
+      },
+      instrumentIds: {
+        items: {
+          type: "string",
+        },
+        type: "array",
+      },
+      mode: {
+        type: "string",
+      },
+      name: {
+        type: "string",
+      },
+      parameters: {
+        anyOf: [
+          {
+            $ref: "#/components/schemas/StrategyParameters",
+          },
+          {
+            type: "null",
+          },
+        ],
+      },
+      parentId: {
+        type: "string",
+      },
+    },
+    required: [
+      "id",
+      "parentId",
+      "name",
+      "mode",
+      "createdAt",
+      "effectiveAt",
+      "instrumentIds",
+      "parameters",
+    ],
+    type: "object",
+  },
+  VersionsPage: {
+    additionalProperties: false,
+    properties: {
+      items: {
+        items: {
+          $ref: "#/components/schemas/VersionView",
+        },
+        maxItems: 100,
+        type: "array",
+      },
+      nextCursor: {
+        type: "string",
+      },
+    },
+    required: ["items", "nextCursor"],
+    type: "object",
+  },
+};

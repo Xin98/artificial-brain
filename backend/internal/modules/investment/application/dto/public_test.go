@@ -7,6 +7,12 @@ import (
 	"testing"
 )
 
+func TestPublicNameNewsURL(t *testing.T) {
+	if got := PublicName("URL"); got != "url" {
+		t.Fatal(got)
+	}
+}
+
 func TestInvestmentPublicDecimals(t *testing.T) {
 	v := struct {
 		Point domain.NAVPoint

@@ -12,7 +12,7 @@ import (
 // Public is the representation boundary: currencies/prices/shares stay decimal strings and ownership stays internal.
 func Public(value any) any { return publicValue(reflect.ValueOf(value)) }
 func PublicName(name string) string {
-	for _, a := range []string{"TTM", "SMA", "RSI", "NAV", "CIK", "SIC", "EPS", "ROE", "USD", "ID", "PE", "PB"} {
+	for _, a := range []string{"TTM", "SMA", "RSI", "NAV", "CIK", "SIC", "EPS", "ROE", "USD", "URL", "ID", "PE", "PB"} {
 		name = strings.ReplaceAll(name, a, a[:1]+strings.ToLower(a[1:]))
 	}
 	if name == "" {

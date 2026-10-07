@@ -1,0 +1,195 @@
+"use client";
+import Link from "next/link";
+import { useState } from "react";
+import {
+  investmentClient,
+  failureText,
+  type InvestmentClient,
+} from "./fetch-investment";
+import { useResource } from "./hooks";
+import type { DataStatus, InstrumentsPage } from "./types";
+import { SourceNotice, StatusBadge } from "./status-badge";
+import { UniverseForm, StrategyForm, SyncForm } from "./universe-form";
+export function ResearchPanel({
+  client = investmentClient,
+}: {
+  client?: InvestmentClient;
+}) {
+  const [search, setSearch] = useState("");
+  const [risk, setRisk] = useState("");
+  const [potential, setPotential] = useState("");
+  const [cursor, setCursor] = useState("");
+  const query = new URLSearchParams({ search, risk, potential, cursor });
+  const status = useResource<DataStatus>(client, "/data-status", "DataStatus");
+  const rows = useResource<InstrumentsPage>(
+    client,
+    "/instruments?" + query,
+    "InstrumentsPage",
+  );
+  return (
+    <div className="investment-layout">
+      <nav className="investment-tabs" aria-label="投资模块">
+        <Link href="/investment" aria-current="page">
+          股票研究
+        </Link>
+        <Link href="/investment/accounts">模拟账户</Link>
+        <Link href="/investment/research">回测实验</Link>
+      </nav>
+      {status.result?.ok ? (
+        <>
+          <SourceNotice data={status.result.value} />
+          <div className="investment-data-status">
+            {Object.entries({
+              行情: status.result.value.market,
+              财报: status.result.value.financial,
+              新闻: status.result.value.news,
+              日历: status.result.value.calendar,
+            }).map(([name, v]) => (
+              <span key={name}>
+                {name}：{v.state === "available" ? "可用" : v.reason || v.state}
+              </span>
+            ))}
+          </div>
+        </>
+      ) : status.result ? (
+        <p role="alert">
+          {failureText(status.result.code)}{" "}
+          <button onClick={status.retry}>重试数据状态</button>
+        </p>
+      ) : (
+        <p role="status">正在读取数据来源…</p>
+      )}
+      <section>
+        <h2>量化排名</h2>
+        <p>
+          动量 30% · 趋势 20% · 低波动 15% · 估值 15% · 质量
+          20%。评分是股票池内的相对排名，不代表盈利概率。
+        </p>
+        <div className="investment-toolbar">
+          <label>
+            搜索股票
+            <input
+              value={search}
+              onChange={(e) => {
+                setSearch(e.target.value);
+                setCursor("");
+              }}
+            />
+          </label>
+          <label>
+            风险
+            <select
+              value={risk}
+              onChange={(e) => {
+                setRisk(e.target.value);
+                setCursor("");
+              }}
+            >
+              <option value="">全部风险</option>
+              <option value="low">低</option>
+              <option value="medium">中</option>
+              <option value="high">高</option>
+              <option value="unknown">未知</option>
+            </select>
+          </label>
+          <label>
+            潜力
+            <select
+              value={potential}
+              onChange={(e) => {
+                setPotential(e.target.value);
+                setCursor("");
+              }}
+            >
+              <option value="">全部潜力</option>
+              <option value="high">较高</option>
+              <option value="observe">待观察</option>
+              <option value="weak">偏弱</option>
+              <option value="unknown">未知</option>
+            </select>
+          </label>
+        </div>
+        {!rows.result ? (
+          <p role="status">正在评估股票…</p>
+        ) : !rows.result.ok ? (
+          <p role="alert">
+            {failureText(rows.result.code)}{" "}
+            <button onClick={rows.retry}>重试排名</button>
+          </p>
+        ) : (
+          <>
+            <div className="investment-table-wrap">
+              <table className="investment-table">
+                <caption>潜力与风险独立展示；高潜力也可能伴随高风险。</caption>
+                <thead>
+                  <tr>
+                    <th>排名</th>
+                    <th>股票</th>
+                    <th>评分</th>
+                    <th>收盘价 USD</th>
+                    <th>潜力</th>
+                    <th>风险</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.result.value.items.map((v) => (
+                    <tr key={v.instrument.id}>
+                      <td>{v.signal?.rank ?? "未入选"}</td>
+                      <td>
+                        <Link
+                          href={
+                            "/investment/stocks/" +
+                            encodeURIComponent(v.instrument.id)
+                          }
+                        >
+                          {v.instrument.ticker}
+                        </Link>
+                        <small>{v.instrument.name}</small>
+                      </td>
+                      <td>
+                        {v.signal?.score.toFixed(1) ?? "不适用"}
+                        <small>{v.reason}</small>
+                      </td>
+                      <td>{v.price ?? "缺失"}</td>
+                      <td>
+                        <StatusBadge kind="potential" value={v.potential} />
+                      </td>
+                      <td>
+                        <StatusBadge kind="risk" value={v.risk.level} />
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {rows.result.value.items.length === 0 ? (
+              <p>暂无股票。真实行情模式请先配置证券 ID 股票池，再同步数据。</p>
+            ) : null}
+            <div className="investment-toolbar">
+              {cursor ? (
+                <button onClick={() => setCursor("")}>返回首屏</button>
+              ) : null}
+              {rows.result.value.nextCursor ? (
+                <button
+                  onClick={() =>
+                    setCursor(
+                      rows.result!.ok ? rows.result!.value.nextCursor : "",
+                    )
+                  }
+                >
+                  下一页股票
+                </button>
+              ) : null}
+            </div>
+          </>
+        )}
+      </section>
+      <details className="investment-section">
+        <summary>股票池与策略版本</summary>
+        <UniverseForm client={client} onCreated={() => rows.retry()} />
+        <StrategyForm client={client} />
+        <SyncForm client={client} />
+      </details>
+    </div>
+  );
+}

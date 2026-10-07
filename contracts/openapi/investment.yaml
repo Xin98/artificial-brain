@@ -914,7 +914,7 @@
                   "sourceRecordId": { "type": "string" },
                   "summary": { "type": "string" },
                   "title": { "type": "string" },
-                  "uRL": { "type": "string" },
+                  "url": { "type": "string" },
                 },
               "required":
                 [
@@ -924,7 +924,7 @@
                   "id",
                   "title",
                   "summary",
-                  "uRL",
+                  "url",
                   "instrumentIds",
                   "publishedAt",
                   "availableAt",

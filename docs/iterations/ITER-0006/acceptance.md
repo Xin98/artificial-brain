@@ -41,3 +41,5 @@ Windows has no native make and its newline-filename harness fixture fails. The s
 All shipped default data is `fixture/synthetic/v2`, explicitly marked demonstration data. Actual Alpaca/SEC access, SIP entitlement, news permissions, settlement-calendar operations and real strategy performance remain **unconfigured / unverified**. No private High-Flyer model, trained Qlib artifact or real broker-account trading is claimed. Read [the runbook](../../runbooks/investment.md) before configuring read-only sources.
 
 The isolated branch/worktree is the reviewable local deliverable. No push, merge, publishing or production deployment is part of this task. Original checkout and its untracked manual verification files remain preserved.
+
+Task-owned PostgreSQL container/anonymous volume and disposable Linux verifier were cleaned up. Automatic approval rejected native recursive removal of the ignored plan scratch; the returned reason was only blocked by policy. That scratch and reviewer probes remain local and untracked, with no effect on the clean committed product tree.

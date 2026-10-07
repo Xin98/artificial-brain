@@ -1275,7 +1275,7 @@ export const investmentSchemas: Record<string, Schema> = {
     additionalProperties: false,
     properties: {
       nav: {
-        $ref: "#/components/schemas/SignedMoney",
+        $ref: "#/components/schemas/Money",
       },
       sessionDate: {
         format: "date-time",
@@ -1529,6 +1529,9 @@ export const investmentSchemas: Record<string, Schema> = {
       feed: {
         type: "string",
       },
+      initialCash: {
+        $ref: "#/components/schemas/Money",
+      },
       kind: {
         type: "string",
       },
@@ -1553,6 +1556,7 @@ export const investmentSchemas: Record<string, Schema> = {
       },
     },
     required: [
+      "initialCash",
       "mode",
       "feed",
       "datasetVersion",
@@ -1590,7 +1594,7 @@ export const investmentSchemas: Record<string, Schema> = {
     additionalProperties: false,
     properties: {
       costBasis: {
-        $ref: "#/components/schemas/SignedMoney",
+        $ref: "#/components/schemas/Money",
       },
       industry: {
         type: "string",
@@ -1599,10 +1603,10 @@ export const investmentSchemas: Record<string, Schema> = {
         type: "string",
       },
       quantity: {
-        $ref: "#/components/schemas/SignedQuantity",
+        $ref: "#/components/schemas/Quantity",
       },
       reservedQuantity: {
-        $ref: "#/components/schemas/SignedQuantity",
+        $ref: "#/components/schemas/Quantity",
       },
     },
     required: [
@@ -1709,7 +1713,7 @@ export const investmentSchemas: Record<string, Schema> = {
         type: "boolean",
       },
       maxQuantity: {
-        $ref: "#/components/schemas/SignedQuantity",
+        $ref: "#/components/schemas/Quantity",
       },
       reasonCode: {
         type: "string",

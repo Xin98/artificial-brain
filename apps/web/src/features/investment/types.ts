@@ -289,7 +289,7 @@ export type Metric = {
 };
 export type Money = string;
 export type NAVPoint = {
-  nav: SignedMoney;
+  nav: Money;
   sessionDate: string;
 };
 export type NewsItem = {
@@ -343,6 +343,7 @@ export type PerformanceView = {
   curve: NAVPoint[];
   datasetVersion: string;
   feed: string;
+  initialCash: Money;
   kind: string;
   metrics: Performance | null;
   mode: string;
@@ -355,11 +356,11 @@ export type PlaceOrderRequest = {
   side: string;
 };
 export type Position = {
-  costBasis: SignedMoney;
+  costBasis: Money;
   industry: string;
   instrumentId: string;
-  quantity: SignedQuantity;
-  reservedQuantity: SignedQuantity;
+  quantity: Quantity;
+  reservedQuantity: Quantity;
 };
 export type PositionsPage = {
   items: Position[];
@@ -383,7 +384,7 @@ export type RiskAssessment = {
 };
 export type RiskDecision = {
   allowed: boolean;
-  maxQuantity: SignedQuantity;
+  maxQuantity: Quantity;
   reasonCode: string;
 };
 export type RiskPolicy = {

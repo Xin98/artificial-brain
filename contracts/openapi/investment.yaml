@@ -893,7 +893,7 @@
               "additionalProperties": false,
               "properties":
                 {
-                  "nav": { "$ref": "#/components/schemas/SignedMoney" },
+                  "nav": { "$ref": "#/components/schemas/Money" },
                   "sessionDate": { "format": "date-time", "type": "string" },
                 },
               "required": ["sessionDate", "nav"],
@@ -1053,6 +1053,7 @@
                     },
                   "datasetVersion": { "type": "string" },
                   "feed": { "type": "string" },
+                  "initialCash": { "$ref": "#/components/schemas/Money" },
                   "kind": { "type": "string" },
                   "metrics":
                     {
@@ -1068,6 +1069,7 @@
                 },
               "required":
                 [
+                  "initialCash",
                   "mode",
                   "feed",
                   "datasetVersion",
@@ -1101,12 +1103,12 @@
               "additionalProperties": false,
               "properties":
                 {
-                  "costBasis": { "$ref": "#/components/schemas/SignedMoney" },
+                  "costBasis": { "$ref": "#/components/schemas/Money" },
                   "industry": { "type": "string" },
                   "instrumentId": { "type": "string" },
-                  "quantity": { "$ref": "#/components/schemas/SignedQuantity" },
+                  "quantity": { "$ref": "#/components/schemas/Quantity" },
                   "reservedQuantity":
-                    { "$ref": "#/components/schemas/SignedQuantity" },
+                    { "$ref": "#/components/schemas/Quantity" },
                 },
               "required":
                 [
@@ -1181,8 +1183,7 @@
               "properties":
                 {
                   "allowed": { "type": "boolean" },
-                  "maxQuantity":
-                    { "$ref": "#/components/schemas/SignedQuantity" },
+                  "maxQuantity": { "$ref": "#/components/schemas/Quantity" },
                   "reasonCode": { "type": "string" },
                 },
               "required": ["allowed", "reasonCode", "maxQuantity"],

@@ -12,6 +12,7 @@ import { AccountForm } from "./account-form";
 import { AutomationForm } from "./automation-form";
 import { OrderForm, OrderRow } from "./order-form";
 import { EvaluationControl } from "./evaluation-control";
+import { PerformancePanel, PositionDistribution } from "./performance-panel";
 import type {
   AccountView,
   AccountsPage,
@@ -260,6 +261,8 @@ function AccountDetail({
           </tr>
         )}
       />
+      <PositionDistribution client={client} accountId={accountId} />
+      <PerformancePanel client={client} resource="account" id={accountId} />
       <PagedTable<LedgerEntry>
         client={client}
         path={"/accounts/" + accountId + "/ledger"}

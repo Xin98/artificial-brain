@@ -80,4 +80,18 @@ func TestInvestmentContractRoutesAndDecimalSchemas(t *testing.T) {
 	if metric["anyOf"] == nil {
 		t.Fatal(metric)
 	}
+	for _, name := range []string{"NAVPoint", "Position"} {
+		p := schemas[name].(map[string]any)["properties"].(map[string]any)
+		field := "nav"
+		if name == "Position" {
+			field = "costBasis"
+		}
+		if p[field].(map[string]any)["$ref"] != "#/components/schemas/Money" {
+			t.Fatal(name, field, p[field])
+		}
+	}
+	delta := schemas["Balances"].(map[string]any)["properties"].(map[string]any)
+	if delta["available"].(map[string]any)["$ref"] != "#/components/schemas/SignedMoney" {
+		t.Fatal("ledger signed delta", delta)
+	}
 }

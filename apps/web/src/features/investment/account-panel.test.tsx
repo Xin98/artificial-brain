@@ -1,12 +1,17 @@
 import { act, render, screen } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { AccountPanel } from "./account-panel";
-import { accountFixture, orderFixture } from "./test-fixtures";
+import {
+  accountFixture,
+  orderFixture,
+  performanceFixture,
+} from "./test-fixtures";
 it("reserved unsettled and dividends remain separate and pause preserves effective orders", async () => {
   const request = vi.fn().mockImplementation(async (path: string) => ({
     ok: true,
-    value:
-      path === "/accounts/one"
+    value: path.endsWith("/performance")
+      ? performanceFixture()
+      : path === "/accounts/one"
         ? accountFixture()
         : {
             items: path.includes("/orders?") ? [orderFixture()] : [],
@@ -30,8 +35,9 @@ it("switch account ignores old response", async () => {
         })
       : Promise.resolve({
           ok: true,
-          value:
-            path === "/accounts/two"
+          value: path.endsWith("/performance")
+            ? performanceFixture()
+            : path === "/accounts/two"
               ? accountFixture("two")
               : { items: [], nextCursor: "" },
         }),

@@ -45,6 +45,7 @@ type AutomationEventView struct {
 	EffectiveAt, RecordedAt time.Time
 }
 type PerformanceView struct {
+	InitialCash                string
 	Mode, Feed, DatasetVersion string
 	AsOf                       time.Time
 	Curve, BenchmarkCurve      []domain.NAVPoint

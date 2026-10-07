@@ -1,4 +1,21 @@
-import type { AccountView, OrderView } from "./types";
+import type { AccountView, OrderView, PerformanceView } from "./types";
+
+export function performanceFixture(): PerformanceView {
+  return {
+    initialCash: "100000.00",
+    mode: "fixture",
+    feed: "synthetic",
+    datasetVersion: "fixture/synthetic/v2",
+    asOf: "2026-10-06T21:00:00Z",
+    curve: [],
+    benchmarkCurve: [],
+    metrics: null,
+    benchmarkMetrics: null,
+    qualityFlags: [],
+    benchmarkReason: "benchmark_history_incomplete",
+    kind: "forward_paper",
+  };
+}
 export function accountFixture(id = "one"): AccountView {
   return {
     id,

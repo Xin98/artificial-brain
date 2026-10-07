@@ -21,7 +21,7 @@ func (h PerformanceQuery) Handle(ctx context.Context, scope domain.Scope, id str
 	if e != nil {
 		return dto.PerformanceView{}, e
 	}
-	v := dto.PerformanceView{Mode: a.Mode, DatasetVersion: a.DatasetVersion, Curve: []domain.NAVPoint{}, BenchmarkCurve: []domain.NAVPoint{}, QualityFlags: []string{}, Kind: "forward_paper", BenchmarkReason: "benchmark_history_incomplete"}
+	v := dto.PerformanceView{InitialCash: a.InitialCash.String(), Mode: a.Mode, DatasetVersion: a.DatasetVersion, Curve: []domain.NAVPoint{}, BenchmarkCurve: []domain.NAVPoint{}, QualityFlags: []string{}, Kind: "forward_paper", BenchmarkReason: "benchmark_history_incomplete"}
 	parts := strings.Split(a.DatasetVersion, "/")
 	if len(parts) > 1 {
 		v.Feed = parts[1]

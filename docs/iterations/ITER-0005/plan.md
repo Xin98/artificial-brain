@@ -55,3 +55,4 @@ Every yellow-zone change in this iteration is listed here before it lands, per t
 | Smoke gates                      | `tests/smoke/stack_test.sh`                                                                                                                                                                          | 9    |
 
 Red-zone compliance for this iteration: migrations 001–009 stay byte-untouched (`git diff --name-only deploy/migrations/` shows only `010_conversation_sessions.sql`); the OpenAI-compatible adapter is never called from CI (unit tests use `httptest`; smoke and composition run `MODEL_ADAPTER=deterministic`); no credentials are committed (`scripts/check-secrets.sh` inside `make verify`); no CI gate is lowered; `go.mod`, `package.json`, and `pnpm-lock.yaml` show zero dependency changes.
+`ITER-0006` investment execution ledger: [progress](../ITER-0006/progress.md).

@@ -98,8 +98,9 @@ create table investment.evaluation_runs (
  foreign key(dataset_version,snapshot_id) references investment.data_snapshots(dataset_version,id),
  foreign key(workspace_id,owner_user_id,strategy_version_id) references investment.strategy_versions(workspace_id,owner_user_id,id),
  foreign key(workspace_id,owner_user_id,universe_version_id) references investment.universe_versions(workspace_id,owner_user_id,id),
- unique(account_id,session_date,strategy_version_id,mode)
+ check(coalesce(nullif(projection->>'Purpose',''),'automatic') in ('research','automatic'))
 );
+create unique index one_evaluation_per_purpose on investment.evaluation_runs(account_id,session_date,strategy_version_id,mode,(coalesce(nullif(projection->>'Purpose',''),'automatic')));
 create unique index one_order_batch_per_session on investment.evaluation_runs(account_id,session_date) where issued_orders;
 create table investment.signals (
  workspace_id uuid not null,owner_user_id uuid not null,run_id uuid not null,instrument_id text not null,score numeric(4,1) not null check(score between 0 and 100),rank integer not null,evidence jsonb not null,

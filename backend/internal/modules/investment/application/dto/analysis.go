@@ -29,6 +29,7 @@ type DataComponentStatus struct {
 	From, To, AsOf time.Time
 }
 type DataStatus struct {
+	LastSync                          *RunView
 	Mode, Feed, DatasetVersion        string
 	AsOf                              time.Time
 	Market, Financial, News, Calendar DataComponentStatus

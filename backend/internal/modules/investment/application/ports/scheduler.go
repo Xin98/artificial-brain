@@ -16,7 +16,7 @@ type WorkAccountStore interface {
 }
 type EvaluationStore interface {
 	RunStore
-	ClaimEvaluation(context.Context, domain.Scope, string, time.Time, string, string) (dto.EvaluationClaim, error)
+	ClaimEvaluation(context.Context, domain.Scope, string, time.Time, string, string, string) (dto.EvaluationClaim, error)
 	UpdateEvaluation(context.Context, domain.Scope, string, domain.Evaluation) error
 	IssuedOn(context.Context, domain.Scope, string, time.Time) (bool, error)
 	SaveNAV(context.Context, domain.Scope, string, domain.NAVPoint, domain.Money, time.Time, []string) error

@@ -87,7 +87,7 @@ func (h PlaceOrderHandler) Handle(ctx context.Context, r dto.PlaceOrderRequest) 
 		if e != nil {
 			return dto.OrderView{}, e
 		}
-		risk, e := domain.ValidateOrder(domain.OrderRiskInput{Account: a, Positions: book.Positions, Orders: book.Orders, Snapshot: s, InstrumentID: r.InstrumentID, Side: r.Side, Quantity: qty, Price: price, NAV: nav, Policy: a.Policy, SessionTurnover: book.SessionTurnover, TargetOpenAt: target.OpenAt})
+		risk, e := domain.ValidateOrder(domain.OrderRiskInput{Account: a, Positions: book.Positions, Orders: book.Orders, Snapshot: s, InstrumentID: r.InstrumentID, Side: r.Side, Quantity: qty, Price: price, NAV: nav, PeakNAV: book.PeakNAV, Policy: a.Policy, SessionTurnover: book.SessionTurnover, TargetOpenAt: target.OpenAt})
 		if e != nil {
 			return dto.OrderView{}, e
 		}

@@ -100,7 +100,7 @@ func MatchAtOpen(in MatchInput) (FillResult, error) {
 	if !found {
 		orders = append(orders, o)
 	}
-	risk, e := ValidateOrder(OrderRiskInput{Account: in.Portfolio.Account, Positions: in.Portfolio.Positions, Orders: orders, Snapshot: in.Portfolio.Snapshot, InstrumentID: o.InstrumentID, Side: o.Side, Reason: o.Reason, ExcludeOrderID: o.ID, Quantity: o.Quantity, Price: price, NAV: in.Portfolio.NAV, Policy: in.Portfolio.Policy, SessionTurnover: in.Portfolio.SessionTurnover, ReservationBudget: &budget, Prices: in.Portfolio.Prices, TargetOpenAt: o.TargetOpenAt})
+	risk, e := ValidateOrder(OrderRiskInput{Account: in.Portfolio.Account, Positions: in.Portfolio.Positions, Orders: orders, Snapshot: in.Portfolio.Snapshot, InstrumentID: o.InstrumentID, Side: o.Side, Reason: o.Reason, ExcludeOrderID: o.ID, Quantity: o.Quantity, Price: price, NAV: in.Portfolio.NAV, PeakNAV: in.Portfolio.PeakNAV, Policy: in.Portfolio.Policy, SessionTurnover: in.Portfolio.SessionTurnover, ReservationBudget: &budget, Prices: in.Portfolio.Prices, TargetOpenAt: o.TargetOpenAt})
 	if e != nil {
 		return out, e
 	}

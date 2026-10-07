@@ -67,7 +67,7 @@ func BuildRebalance(in PortfolioInput) (RebalancePlan, error) {
 			return nil
 		}
 		p := &positions[n]
-		decision, e := ValidateOrder(OrderRiskInput{Account: in.Account, Positions: positions, Snapshot: in.Snapshot, InstrumentID: p.InstrumentID, Side: "sell", Quantity: qty, Price: prices[p.InstrumentID], NAV: in.NAV, Policy: in.Policy, SessionTurnover: turnover, Reason: reason, Prices: in.Prices})
+		decision, e := ValidateOrder(OrderRiskInput{Account: in.Account, Positions: positions, Snapshot: in.Snapshot, InstrumentID: p.InstrumentID, Side: "sell", Quantity: qty, Price: prices[p.InstrumentID], NAV: in.NAV, PeakNAV: in.PeakNAV, Policy: in.Policy, SessionTurnover: turnover, Reason: reason, Prices: in.Prices})
 		if e != nil {
 			return e
 		}
@@ -198,7 +198,7 @@ func BuildRebalance(in PortfolioInput) (RebalancePlan, error) {
 		}
 		account := in.Account
 		account.Balances.Available = cash
-		decision, e := ValidateOrder(OrderRiskInput{Account: account, Positions: positions, Snapshot: in.Snapshot, Evaluation: in.Evaluation, InstrumentID: signal.InstrumentID, Side: "buy", Quantity: desired, Price: price, NAV: in.NAV, Policy: in.Policy, SessionTurnover: turnover, Automatic: true, Prices: in.Prices, Parameters: &parameters})
+		decision, e := ValidateOrder(OrderRiskInput{Account: account, Positions: positions, Snapshot: in.Snapshot, Evaluation: in.Evaluation, InstrumentID: signal.InstrumentID, Side: "buy", Quantity: desired, Price: price, NAV: in.NAV, PeakNAV: in.PeakNAV, Policy: in.Policy, SessionTurnover: turnover, Automatic: true, Prices: in.Prices, Parameters: &parameters})
 		if e != nil {
 			return out, e
 		}

@@ -27,6 +27,7 @@ type OrderRiskInput struct {
 	Quantity                                   Quantity
 	Price                                      Price
 	NAV                                        Money
+	PeakNAV                                    Money
 	Policy                                     RiskPolicy
 	SessionTurnover                            Money
 	Automatic                                  bool
@@ -197,6 +198,17 @@ func ValidateOrder(in OrderRiskInput) (RiskDecision, error) {
 	}
 	if e := in.Policy.Validate(); e != nil {
 		return out, e
+	}
+	peak := in.PeakNAV
+	if peak == 0 {
+		peak = in.Account.InitialCash
+	}
+	if peak < 0 {
+		return out, ErrInvalidInput
+	}
+	if in.Side == "buy" && drawdownReached(in.NAV, peak, in.Policy.DrawdownPause) {
+		out.ReasonCode = "drawdown_pause"
+		return out, nil
 	}
 	prices, instruments, e := quoteBook(in.Snapshot, in.Prices)
 	if e != nil {

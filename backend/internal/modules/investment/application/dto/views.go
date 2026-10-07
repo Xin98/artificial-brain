@@ -12,6 +12,11 @@ type CashView struct {
 	Dividends string `json:"dividends"`
 }
 type AccountView struct {
+	NAV               *string               `json:"nav"`
+	AsOf              time.Time             `json:"asOf"`
+	Feed              string                `json:"feed"`
+	QualityFlags      []string              `json:"qualityFlags"`
+	BlockReasons      []string              `json:"blockReasons"`
 	DatasetVersion    string                `json:"datasetVersion"`
 	ID                string                `json:"id"`
 	Name              string                `json:"name"`

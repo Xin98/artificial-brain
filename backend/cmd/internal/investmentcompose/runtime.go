@@ -43,6 +43,15 @@ type Runtime struct {
 }
 
 func New(cfg config.InvestmentConfig, pool *pgxpool.Pool, now func() time.Time) (*Runtime, error) {
+	if cfg.Mode == "" {
+		cfg.Mode = "fixture"
+	}
+	if cfg.Feed == "" {
+		cfg.Feed = "iex"
+	}
+	if cfg.Timeout == 0 {
+		cfg.Timeout = 15 * time.Second
+	}
 	if now == nil {
 		now = time.Now
 	}

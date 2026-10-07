@@ -84,7 +84,7 @@ func (h EvaluateAccountHandler) prepare(ctx context.Context, r dto.EvaluateReque
 	if now.Before(session.CloseAt) || (r.Purpose == "automatic" && now.Before(session.CloseAt.Add(30*time.Minute))) {
 		return domain.Evaluation{}, domain.ErrDataStale
 	}
-	claim, e := h.Runs.ClaimEvaluation(ctx, r.Scope, account.ID, session.Date, account.StrategyVersionID, account.Mode)
+	claim, e := h.Runs.ClaimEvaluation(ctx, r.Scope, account.ID, session.Date, account.StrategyVersionID, account.Mode, r.Purpose)
 	if e != nil {
 		return domain.Evaluation{}, e
 	}

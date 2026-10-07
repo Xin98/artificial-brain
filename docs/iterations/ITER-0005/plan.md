@@ -22,6 +22,10 @@ The user approved the [US equities investment design](../../superpowers/specs/20
 
 No root build, CI, architecture-policy, dependency or AGENTS.md changes are planned. If execution discovers a need for any of them, extend the register before changing that file and follow the repository's required checks rather than lowering a gate.
 
+Task 15 integration addition: Identity's session query/middleware currently collapses database failures into 401. The investment outage contract requires preserving infrastructure errors and returning 503 while missing/inactive sessions remain 401. Registered files: identity application/query/session.go, inbound/http/middleware.go and focused tests; contracts/openapi/identity.yaml documents session-check availability. This is a focused auth-boundary fix; existing session rules and credentials do not change.
+
+Task 15 migration refinement: the unreleased 011 evaluation uniqueness key includes research/automatic purpose from its stored projection, so a research request cannot suppress the automatic batch. The automatic account/session batch uniqueness remains enforced. Only the task-owned disposable database is adapted during verification; migrations 001–010 remain unchanged.
+
 ### User experience remediation (2026-10-06)
 
 The user authorized fixing every issue in the user-path audit. The remediation preserves module ownership, existing dependencies, CI gates, and migrations 001–010. Additional deliberately reviewed yellow changes: additive conversation/todo/identity/portability OpenAPI fields and pagination; composition-root wiring of conversation history/export/import application ports and completion logging; server session-result distinction and safe return navigation; additive globals.css rules for responsive chat/navigation and accessible feedback. No new database migration is planned; transcript outcomes are appended using existing message rows and conversation portability uses the existing session schema.

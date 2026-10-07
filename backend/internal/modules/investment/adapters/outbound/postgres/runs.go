@@ -55,9 +55,9 @@ func (s *RunStore) SaveEvaluation(ctx context.Context, scope domain.Scope, accou
 	}
 	return nil
 }
-func (s *RunStore) ClaimEvaluation(ctx context.Context, scope domain.Scope, account string, session time.Time, strategy, mode string) (dto.EvaluationClaim, error) {
+func (s *RunStore) ClaimEvaluation(ctx context.Context, scope domain.Scope, account string, session time.Time, strategy, mode, purpose string) (dto.EvaluationClaim, error) {
 	var b []byte
-	e := database.ExecutorFromContextOr(ctx, s.pool).QueryRow(ctx, `select projection from investment.evaluation_runs where workspace_id=$1 and owner_user_id=$2 and account_id=$3 and session_date=$4::date and strategy_version_id=$5 and mode=$6 for update`, scope.WorkspaceID, scope.OwnerUserID, account, session.UTC().Format("2006-01-02"), strategy, mode).Scan(&b)
+	e := database.ExecutorFromContextOr(ctx, s.pool).QueryRow(ctx, `select projection from investment.evaluation_runs where workspace_id=$1 and owner_user_id=$2 and account_id=$3 and session_date=$4::date and strategy_version_id=$5 and mode=$6 and coalesce(nullif(projection->>'Purpose',''),'automatic')=$7 for update`, scope.WorkspaceID, scope.OwnerUserID, account, session.UTC().Format("2006-01-02"), strategy, mode, purpose).Scan(&b)
 	if errors.Is(e, pgx.ErrNoRows) {
 		return dto.EvaluationClaim{}, nil
 	}

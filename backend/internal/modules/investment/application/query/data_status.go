@@ -10,6 +10,7 @@ import (
 )
 
 type DataStatusQuery struct {
+	Store       ports.ReadStore
 	Data        ports.ResearchData
 	Mode        string
 	NewsEnabled bool
@@ -18,6 +19,17 @@ type DataStatusQuery struct {
 
 func (h DataStatusQuery) Handle(ctx context.Context, scope domain.Scope, mode string) (dto.DataStatus, error) {
 	out := dto.DataStatus{Mode: mode, QualityFlags: []string{}}
+	if h.Store != nil {
+		rows, e := h.Store.ListRows(ctx, dto.ListRequest{Scope: scope, Resource: "data-syncs", Limit: 1}, dto.PageCursor{})
+		if e != nil {
+			return out, e
+		}
+		if len(rows) > 0 {
+			if v, ok := rows[0].Value.(dto.RunView); ok {
+				out.LastSync = &v
+			}
+		}
+	}
 	absent := dto.DataComponentStatus{State: "not_configured", Reason: "data_not_configured"}
 	out.Market = absent
 	out.Financial = absent

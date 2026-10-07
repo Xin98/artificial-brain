@@ -96,6 +96,21 @@ func (h AnalysisQuery) Handle(ctx context.Context, r dto.AnalysisRequest) (dto.A
 	}
 	out.Risk = domain.ClassifyRisk(out.Metrics.Indicators)
 	out.Risk.AsOf = r.AsOf
+	latest, calendarErr := snapshot.Calendar.LatestCompleted(r.AsOf)
+	fresh := false
+	for _, bar := range bars {
+		if bar.SessionDate.Equal(latest.Date) {
+			fresh = true
+		}
+	}
+	if domain.Industry(out.Instrument.SIC) == "unknown" {
+		out.Risk.Level = "unknown"
+		out.Risk.Reasons = append(out.Risk.Reasons, "industry_unknown")
+	}
+	if calendarErr != nil || !fresh {
+		out.Risk.Level = "unknown"
+		out.Risk.Reasons = append(out.Risk.Reasons, "data_stale")
+	}
 	strategy := domain.StrategyVersion{ID: "research/multifactor-v1", Parameters: domain.DefaultStrategyParameters()}
 	universe := domain.UniverseVersion{ID: "research/current-pool"}
 	for _, i := range snapshot.Instruments {
@@ -146,7 +161,7 @@ func (h AnalysisQuery) Handle(ctx context.Context, r dto.AnalysisRequest) (dto.A
 			} else if price <= 0 {
 				decision.ReasonCode = "data_stale"
 			} else {
-				decision, err = domain.ValidateOrder(domain.OrderRiskInput{Account: account, Positions: book.Positions, Orders: book.Orders, Snapshot: snapshot, Evaluation: evaluated, InstrumentID: r.InstrumentID, Side: "buy", Quantity: 1, Price: price, NAV: nav, Policy: account.Policy, SessionTurnover: book.SessionTurnover, Automatic: true, Parameters: &strategy.Parameters})
+				decision, err = domain.ValidateOrder(domain.OrderRiskInput{Account: account, Positions: book.Positions, Orders: book.Orders, Snapshot: snapshot, Evaluation: evaluated, InstrumentID: r.InstrumentID, Side: "buy", Quantity: 1, Price: price, NAV: nav, PeakNAV: book.PeakNAV, Policy: account.Policy, SessionTurnover: book.SessionTurnover, Automatic: true, Parameters: &strategy.Parameters})
 				if err != nil {
 					decision = domain.RiskDecision{ReasonCode: err.Error()}
 				}

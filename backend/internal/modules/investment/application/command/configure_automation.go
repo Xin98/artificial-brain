@@ -52,6 +52,11 @@ func (h ConfigureAutomationHandler) Handle(ctx context.Context, r dto.ConfigureA
 		if e != nil && r.Enabled {
 			return dto.AccountView{}, e
 		}
+		if r.Enabled {
+			if e = domain.ValidateAccountDataset(a, data); e != nil {
+				return dto.AccountView{}, e
+			}
+		}
 		var next domain.Session
 		changed := r.UniverseVersionID != a.UniverseVersionID || r.StrategyVersionID != a.StrategyVersionID || r.Policy != a.Policy
 		if r.Enabled || changed {

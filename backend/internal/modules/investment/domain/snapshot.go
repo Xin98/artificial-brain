@@ -40,16 +40,36 @@ func SelectSnapshot(input Snapshot, asOf time.Time) (Snapshot, error) {
 	for _, f := range facts {
 		out.Facts = append(out.Facts, f)
 	}
+	actions := map[string]CorporateAction{}
 	for _, a := range input.Actions {
-		if !a.AvailableAt.After(asOf) {
-			out.Actions = append(out.Actions, a)
+		if a.AvailableAt.After(asOf) {
+			continue
+		}
+		old, ok := actions[a.ID]
+		if !ok || a.AvailableAt.After(old.AvailableAt) || a.IngestedAt.After(old.IngestedAt) {
+			actions[a.ID] = a
 		}
 	}
+	for _, a := range actions {
+		out.Actions = append(out.Actions, a)
+	}
+	news := map[string]NewsItem{}
 	for _, n := range input.News {
-		if !n.AvailableAt.After(asOf) && !n.PublishedAt.After(asOf) {
-			out.News = append(out.News, n)
+		if n.AvailableAt.After(asOf) || n.PublishedAt.After(asOf) {
+			continue
+		}
+		old, ok := news[n.ID]
+		if !ok || n.AvailableAt.After(old.AvailableAt) {
+			news[n.ID] = n
 		}
 	}
+	for _, n := range news {
+		out.News = append(out.News, n)
+	}
+	out.Instruments = append([]Instrument(nil), input.Instruments...)
+	sort.Slice(out.Instruments, func(i, j int) bool { return out.Instruments[i].ID < out.Instruments[j].ID })
+	sort.Slice(out.Actions, func(i, j int) bool { return out.Actions[i].ID < out.Actions[j].ID })
+	sort.Slice(out.News, func(i, j int) bool { return out.News[i].ID < out.News[j].ID })
 	sort.Slice(out.Bars, func(i, j int) bool {
 		a, b := out.Bars[i], out.Bars[j]
 		if a.InstrumentID != b.InstrumentID {

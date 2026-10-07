@@ -44,7 +44,7 @@ func (h CreateAccountHandler) Handle(ctx context.Context, r dto.CreateAccountReq
 		return dto.AccountView{}, e
 	}
 	return application.RunMutation(h.Mutations, ctx, r.Mutation, r, func(ctx context.Context) (dto.AccountView, error) {
-		a := domain.Account{ID: h.NewID(), Name: r.Name, Mode: r.Mode, Scope: r.Scope, InitialCash: cash, Balances: domain.Balances{Available: cash}, Version: 1, Policy: domain.DefaultRiskPolicy(), CreatedAt: now}
+		a := domain.Account{DatasetVersion: data.DatasetVersion, ID: h.NewID(), Name: r.Name, Mode: r.Mode, Scope: r.Scope, InitialCash: cash, Balances: domain.Balances{Available: cash}, Version: 1, Policy: domain.DefaultRiskPolicy(), CreatedAt: now}
 		var u domain.UniverseVersion
 		var s domain.StrategyVersion
 		var e error

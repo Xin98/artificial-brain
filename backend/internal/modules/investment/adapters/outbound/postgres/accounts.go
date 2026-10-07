@@ -20,12 +20,12 @@ func nullID(s string) any {
 	return s
 }
 
-const accountColumns = `id::text,workspace_id::text,owner_user_id::text,name,mode,coalesce(strategy_version_id::text,''),coalesce(universe_version_id::text,''),initial_cash,available_cash,reserved_cash,unsettled_cash,dividend_receivable,version,automation_enabled,pause_reason,risk_policy,pending_config,created_at`
+const accountColumns = `id::text,workspace_id::text,owner_user_id::text,name,mode,coalesce(strategy_version_id::text,''),coalesce(universe_version_id::text,''),initial_cash,available_cash,reserved_cash,unsettled_cash,dividend_receivable,version,automation_enabled,pause_reason,risk_policy,pending_config,created_at,dataset_version`
 
 func scanAccount(row pgx.Row) (domain.Account, error) {
 	a := domain.Account{}
 	var policy, pending []byte
-	e := row.Scan(&a.ID, &a.Scope.WorkspaceID, &a.Scope.OwnerUserID, &a.Name, &a.Mode, &a.StrategyVersionID, &a.UniverseVersionID, &a.InitialCash, &a.Balances.Available, &a.Balances.Reserved, &a.Balances.Unsettled, &a.Balances.Dividends, &a.Version, &a.AutomationEnabled, &a.PauseReason, &policy, &pending, &a.CreatedAt)
+	e := row.Scan(&a.ID, &a.Scope.WorkspaceID, &a.Scope.OwnerUserID, &a.Name, &a.Mode, &a.StrategyVersionID, &a.UniverseVersionID, &a.InitialCash, &a.Balances.Available, &a.Balances.Reserved, &a.Balances.Unsettled, &a.Balances.Dividends, &a.Version, &a.AutomationEnabled, &a.PauseReason, &policy, &pending, &a.CreatedAt, &a.DatasetVersion)
 	if errors.Is(e, pgx.ErrNoRows) {
 		return a, domain.ErrNotFound
 	}
@@ -49,7 +49,7 @@ func (s *AccountStore) Insert(ctx context.Context, a domain.Account) error {
 	if e != nil {
 		return e
 	}
-	_, e = database.ExecutorFromContextOr(ctx, s.pool).Exec(ctx, `insert into investment.accounts(id,workspace_id,owner_user_id,name,mode,strategy_version_id,universe_version_id,initial_cash,available_cash,reserved_cash,unsettled_cash,dividend_receivable,version,automation_enabled,pause_reason,risk_policy,pending_config,created_at) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18)`, a.ID, a.Scope.WorkspaceID, a.Scope.OwnerUserID, a.Name, a.Mode, nullID(a.StrategyVersionID), nullID(a.UniverseVersionID), a.InitialCash, a.Balances.Available, a.Balances.Reserved, a.Balances.Unsettled, a.Balances.Dividends, a.Version, a.AutomationEnabled, a.PauseReason, policy, pending, a.CreatedAt)
+	_, e = database.ExecutorFromContextOr(ctx, s.pool).Exec(ctx, `insert into investment.accounts(id,workspace_id,owner_user_id,name,mode,strategy_version_id,universe_version_id,initial_cash,available_cash,reserved_cash,unsettled_cash,dividend_receivable,version,automation_enabled,pause_reason,risk_policy,pending_config,created_at,dataset_version) values($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19)`, a.ID, a.Scope.WorkspaceID, a.Scope.OwnerUserID, a.Name, a.Mode, nullID(a.StrategyVersionID), nullID(a.UniverseVersionID), a.InitialCash, a.Balances.Available, a.Balances.Reserved, a.Balances.Unsettled, a.Balances.Dividends, a.Version, a.AutomationEnabled, a.PauseReason, policy, pending, a.CreatedAt, a.DatasetVersion)
 	return e
 }
 func (s *AccountStore) Get(ctx context.Context, scope domain.Scope, id string) (domain.Account, error) {

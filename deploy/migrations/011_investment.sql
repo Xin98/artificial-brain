@@ -25,6 +25,7 @@ create trigger immutable_strategy before update on investment.strategy_versions 
 create table investment.accounts (
  id uuid primary key,workspace_id uuid not null,owner_user_id uuid not null,
  name text not null check(char_length(name) between 1 and 100),mode text not null check(mode in ('fixture','alpaca_sec')),
+ dataset_version text not null default '',
  strategy_version_id uuid,universe_version_id uuid,
  initial_cash bigint not null check(initial_cash>0 and initial_cash<=100000000000),
  available_cash bigint not null check(available_cash>=0),reserved_cash bigint not null default 0 check(reserved_cash>=0),
@@ -36,6 +37,13 @@ create table investment.accounts (
  foreign key(workspace_id,owner_user_id,universe_version_id) references investment.universe_versions(workspace_id,owner_user_id,id)
 );
 create index accounts_owner on investment.accounts(workspace_id,owner_user_id,created_at,id);
+create function investment.reject_account_identity_update() returns trigger language plpgsql as $$
+begin
+ if row(new.id,new.workspace_id,new.owner_user_id,new.mode,new.dataset_version,new.initial_cash) is distinct from row(old.id,old.workspace_id,old.owner_user_id,old.mode,old.dataset_version,old.initial_cash) then raise exception 'immutable account identity and funding'; end if;
+ return new;
+end;
+$$;
+create trigger immutable_account_identity before update on investment.accounts for each row execute function investment.reject_account_identity_update();
 create table investment.datasets (
  version text primary key,mode text not null check(mode in ('fixture','alpaca_sec')),feed text not null,source text not null,created_at timestamptz not null,coverage jsonb not null
 );

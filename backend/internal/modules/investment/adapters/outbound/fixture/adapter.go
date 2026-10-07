@@ -27,8 +27,63 @@ func (a *Adapter) Read(ctx context.Context, mode string, asOf time.Time) (domain
 	return domain.SelectSnapshot(a.Snapshot, asOf)
 }
 
+func (a *Adapter) Instruments(ctx context.Context, ids []string) ([]domain.Instrument, error) {
+	if e := ctx.Err(); e != nil {
+		return nil, e
+	}
+	wanted := map[string]bool{}
+	for _, id := range ids {
+		wanted[id] = true
+	}
+	var out []domain.Instrument
+	for _, i := range a.Snapshot.Instruments {
+		if len(ids) == 0 || wanted[i.ID] {
+			out = append(out, i)
+		}
+	}
+	return out, nil
+}
+func (a *Adapter) Bars(ctx context.Context, ids []string, from, to time.Time) ([]domain.Bar, error) {
+	if e := ctx.Err(); e != nil {
+		return nil, e
+	}
+	wanted := map[string]bool{}
+	for _, id := range ids {
+		wanted[id] = true
+	}
+	var out []domain.Bar
+	for _, b := range a.Snapshot.Bars {
+		if wanted[b.InstrumentID] && !b.SessionDate.Before(from) && !b.SessionDate.After(to) {
+			out = append(out, b)
+		}
+	}
+	return out, nil
+}
+func (a *Adapter) Calendar(ctx context.Context, from, to time.Time) (domain.Calendar, error) {
+	if e := ctx.Err(); e != nil {
+		return domain.Calendar{}, e
+	}
+	return a.Snapshot.Calendar, nil
+}
+func (a *Adapter) Actions(ctx context.Context, ids []string, from, to time.Time) ([]domain.CorporateAction, error) {
+	if e := ctx.Err(); e != nil {
+		return nil, e
+	}
+	wanted := map[string]bool{}
+	for _, id := range ids {
+		wanted[id] = true
+	}
+	var out []domain.CorporateAction
+	for _, v := range a.Snapshot.Actions {
+		if wanted[v.InstrumentID] && !v.EffectiveAt.Before(from) && !v.EffectiveAt.After(to) {
+			out = append(out, v)
+		}
+	}
+	return out, nil
+}
+
 func New() (*Adapter, error) {
-	s := domain.Snapshot{ID: "fixture-v1", DatasetVersion: "fixture-v1", Mode: "fixture", Feed: "synthetic", QualityFlags: []string{"demonstration_data", "fixed_universe_survivorship_bias"}}
+	s := domain.Snapshot{ID: "fixture-v2", DatasetVersion: "fixture/synthetic/v2", Mode: "fixture", Feed: "synthetic", QualityFlags: []string{"demonstration_data", "fixed_universe_survivorship_bias"}}
 	for _, f := range []struct {
 		name   string
 		target any

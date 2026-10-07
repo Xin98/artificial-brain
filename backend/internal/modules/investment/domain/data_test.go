@@ -34,3 +34,12 @@ func TestCalendarSeparateSettlementAndTradingDays(t *testing.T) {
 		t.Fatal("missing coverage")
 	}
 }
+
+func TestSnapshotIncrementalActionsDeduplicated(t *testing.T) {
+	a := CorporateAction{ID: "split", InstrumentID: "i", Kind: "split", RatioNumerator: 2, RatioDenominator: 1, AvailableAt: at("2026-01-01T00:00:00Z"), EffectiveAt: at("2026-01-02T00:00:00Z")}
+	s, _ := SelectSnapshot(Snapshot{Actions: []CorporateAction{a, a}}, at("2026-01-03T00:00:00Z"))
+	bars, e := AdjustedBars([]Bar{{InstrumentID: "i", SessionDate: at("2026-01-01T00:00:00Z"), Open: 100000000, High: 100000000, Low: 100000000, Close: 100000000}}, s.Actions, s.AsOf)
+	if e != nil || len(s.Actions) != 1 || bars[0].Close != 50000000 {
+		t.Fatal(s.Actions, bars, e)
+	}
+}

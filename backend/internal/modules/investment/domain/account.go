@@ -69,6 +69,7 @@ type AccountConfig struct {
 	EffectiveAt       time.Time  `json:"effectiveAt"`
 }
 type Account struct {
+	DatasetVersion                                       string
 	ID, Name, Mode, StrategyVersionID, UniverseVersionID string
 	Scope                                                Scope
 	Balances                                             Balances
@@ -80,6 +81,14 @@ type Account struct {
 	PendingConfig                                        *AccountConfig
 	CreatedAt                                            time.Time
 }
+
+func ValidateAccountDataset(a Account, s Snapshot) error {
+	if a.Mode != s.Mode || a.DatasetVersion == "" || a.DatasetVersion != s.DatasetVersion {
+		return ErrVersionConflict
+	}
+	return nil
+}
+
 type LedgerEntry struct {
 	ID, AccountID, EventKey, Kind, InstrumentID string
 	Delta                                       Balances

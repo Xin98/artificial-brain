@@ -12,6 +12,7 @@ type CashView struct {
 	Dividends string `json:"dividends"`
 }
 type AccountView struct {
+	DatasetVersion    string                `json:"datasetVersion"`
 	ID                string                `json:"id"`
 	Name              string                `json:"name"`
 	Mode              string                `json:"mode"`
@@ -28,7 +29,7 @@ type AccountView struct {
 }
 
 func ViewAccount(a domain.Account) AccountView {
-	return AccountView{ID: a.ID, Name: a.Name, Mode: a.Mode, StrategyVersionID: a.StrategyVersionID, UniverseVersionID: a.UniverseVersionID, Cash: CashView{a.Balances.Available.String(), a.Balances.Reserved.String(), a.Balances.Unsettled.String(), a.Balances.Dividends.String()}, InitialCash: a.InitialCash.String(), Version: a.Version, AutomationEnabled: a.AutomationEnabled, PauseReason: a.PauseReason, Policy: a.Policy, PendingConfig: a.PendingConfig, CreatedAt: a.CreatedAt}
+	return AccountView{DatasetVersion: a.DatasetVersion, ID: a.ID, Name: a.Name, Mode: a.Mode, StrategyVersionID: a.StrategyVersionID, UniverseVersionID: a.UniverseVersionID, Cash: CashView{a.Balances.Available.String(), a.Balances.Reserved.String(), a.Balances.Unsettled.String(), a.Balances.Dividends.String()}, InitialCash: a.InitialCash.String(), Version: a.Version, AutomationEnabled: a.AutomationEnabled, PauseReason: a.PauseReason, Policy: a.Policy, PendingConfig: a.PendingConfig, CreatedAt: a.CreatedAt}
 }
 
 type VersionView struct {

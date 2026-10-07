@@ -19,6 +19,7 @@ type InvestmentJobHandler struct {
 	Scheduler ports.JobScheduler
 	Data      ports.ResearchData
 	Evaluate  *EvaluateAccountHandler
+	Backtest  *RunBacktestHandler
 	Execute   ExecuteOrdersHandler
 	Reconcile ReconcileAccountHandler
 	Ledger    ports.AutomationEventStore
@@ -35,6 +36,9 @@ func (h *InvestmentJobHandler) HandleJob(ctx context.Context, args dto.Investmen
 		return domain.ErrInvalidInput
 	}
 	switch args.JobType {
+	case "backtest":
+		_, e := h.Backtest.Handle(ctx, dto.RunBacktestRequest{Scope: scope, RunID: args.RunID, FinalAttempt: final})
+		return e
 	case "sync":
 		return h.sync(ctx, scope, args.RunID, final)
 	case "evaluate":

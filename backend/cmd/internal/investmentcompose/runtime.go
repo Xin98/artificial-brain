@@ -34,6 +34,7 @@ type Runtime struct {
 	Runs                 *store.RunStore
 	Snapshots            *store.SnapshotStore
 	Data                 ports.ResearchData
+	History              ports.HistoryData
 	Reservations         command.ReservationWriter
 	Evaluate             *command.EvaluateAccountHandler
 	Jobs                 *command.InvestmentJobHandler
@@ -54,15 +55,18 @@ func New(cfg config.InvestmentConfig, pool *pgxpool.Pool, now func() time.Time) 
 			return nil, e
 		}
 		r.Data = data
+		r.History = data
 		r.DatasetVersion = data.Snapshot.DatasetVersion
 		source.fixture = data
 	} else {
 		r.DatasetVersion = command.DatasetVersion(cfg.Mode, cfg.Feed, "v1")
 		r.Data = store.ResearchReader{Store: r.Snapshots, Mode: r.Mode, DatasetVersion: r.DatasetVersion}
+		r.History = store.ResearchReader{Store: r.Snapshots, Mode: r.Mode, DatasetVersion: r.DatasetVersion}
 	}
 	r.Reservations = command.ReservationWriter{Accounts: r.Accounts, Orders: r.Orders, Ledger: r.Ledger, Now: now, NewID: r.NewID}
 	r.Evaluate = &command.EvaluateAccountHandler{Mutations: r.Mutations, UOW: r.UOW, Accounts: r.Accounts, Catalog: r.Catalog, Orders: r.Orders, Ledger: r.Ledger, Runs: r.Runs, Snapshots: r.Snapshots, Data: r.Data, Reservations: r.Reservations, Now: now, NewID: r.NewID}
 	r.Jobs = &command.InvestmentJobHandler{UOW: r.UOW, Accounts: r.Accounts, Orders: r.Orders, Ledger: r.Ledger, Runs: r.Runs, SyncRuns: r.Runs, Source: source, Data: r.Data, Evaluate: r.Evaluate, Execute: command.ExecuteOrdersHandler{UOW: r.UOW, Accounts: r.Accounts, Orders: r.Orders, Ledger: r.Ledger, Actions: r.Ledger, Data: r.Data, Now: now, NewID: r.NewID}, Reconcile: command.ReconcileAccountHandler{UOW: r.UOW, Accounts: r.Accounts, Orders: r.Orders, Ledger: r.Ledger, Catalog: r.Catalog, Data: r.Data, Now: now, NewID: r.NewID}, Now: now, NewID: r.NewID}
+	r.Jobs.Backtest = &command.RunBacktestHandler{UOW: r.UOW, Runs: r.Runs, Catalog: r.Catalog, Snapshots: r.Snapshots, Now: now}
 	return r, nil
 }
 func (r *Runtime) SetScheduler(s ports.JobScheduler) { r.Evaluate.Scheduler = s; r.Jobs.Scheduler = s }

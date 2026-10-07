@@ -37,3 +37,12 @@ type RunStore interface {
 type LedgerStore interface {
 	InsertLedger(context.Context, domain.Scope, string, []domain.LedgerEntry) error
 }
+type BacktestStore interface {
+	InsertBacktest(context.Context, domain.Scope, dto.BacktestRecord) error
+	LockBacktest(context.Context, domain.Scope, string) (dto.BacktestRecord, error)
+	GetBacktest(context.Context, domain.Scope, string) (dto.BacktestRecord, error)
+	SaveBacktest(context.Context, domain.Scope, dto.BacktestRecord, int) error
+}
+type HistoryData interface {
+	History(context.Context, string, time.Time) (domain.Snapshot, error)
+}

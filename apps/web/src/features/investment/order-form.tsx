@@ -2,8 +2,16 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { decode, failureText, type InvestmentClient } from "./fetch-investment";
-import { useMutation } from "./hooks";
-import type { AccountView, OrderView, PlaceOrderRequest } from "./types";
+import { groupMoney, localTime } from "./format";
+import { useDebouncedValue, useMutation, useResource } from "./hooks";
+import { reasonText } from "./status-badge";
+import type {
+  AccountView,
+  AnalysisView,
+  InstrumentsPage,
+  OrderView,
+  PlaceOrderRequest,
+} from "./types";
 export const orderState = (state: string) =>
   (
     ({
@@ -20,18 +28,39 @@ export function OrderForm({
   client,
   accountId,
   account,
+  prefillInstrumentId,
   onSubmitted,
 }: {
   client: InvestmentClient;
   accountId: string;
   account?: AccountView;
+  prefillInstrumentId?: string;
   onSubmitted: () => void;
 }) {
-  const [instrument, setInstrument] = useState("");
+  const [query, setQuery] = useState("");
+  const [open, setOpen] = useState(false);
+  const [selected, setSelected] = useState<{
+    id: string;
+    ticker: string;
+    name: string;
+  } | null>(
+    prefillInstrumentId
+      ? { id: prefillInstrumentId, ticker: "", name: "" }
+      : null,
+  );
   const [side, setSide] = useState("buy");
   const [quantity, setQuantity] = useState("1");
   const [error, setError] = useState("");
   const mutation = useMutation<OrderView>(client, "OrderView");
+  const debouncedQuery = useDebouncedValue(query, 300);
+  const instruments = useResource<InstrumentsPage>(
+    client,
+    "/instruments?limit=25&search=" + encodeURIComponent(debouncedQuery),
+    "InstrumentsPage",
+  );
+  const matches = (
+    instruments.result?.ok ? instruments.result.value.items : []
+  ).slice(0, 8);
   const frozen = useRef<{ signature: string; body: PlaceOrderRequest } | null>(
     null,
   );
@@ -44,8 +73,16 @@ export function OrderForm({
           setError("股数须为 1 至 1000000000 的整数。");
           return;
         }
+        if (!selected) {
+          setError("请先搜索并选择证券。");
+          return;
+        }
         setError("");
-        const signature = JSON.stringify({ instrument, side, quantity });
+        const signature = JSON.stringify({
+          instrument: selected.id,
+          side,
+          quantity,
+        });
         if (frozen.current?.signature !== signature) {
           let a = account;
           if (!a) {
@@ -63,7 +100,7 @@ export function OrderForm({
           frozen.current = {
             signature,
             body: {
-              instrumentId: instrument,
+              instrumentId: selected.id,
               side,
               quantity,
               expectedVersion: a.version,
@@ -77,6 +114,9 @@ export function OrderForm({
         );
         if (result?.ok) {
           frozen.current = null;
+          setSelected(null);
+          setQuery("");
+          setQuantity("1");
           onSubmitted();
         } else if (
           result?.code === "version_conflict" ||
@@ -89,15 +129,92 @@ export function OrderForm({
       }}
     >
       <h2>手动模拟订单</h2>
+      {account ? (
+        <p>可用现金 {groupMoney(account.cash.available)} USD</p>
+      ) : null}
       <div className="investment-fields">
-        <label>
-          证券 ID
-          <input
-            required
-            value={instrument}
-            onChange={(e) => setInstrument(e.target.value)}
-          />
-        </label>
+        <div
+          className="investment-picker"
+          onFocus={() => setOpen(true)}
+          onBlur={(e) => {
+            if (!e.currentTarget.contains(e.relatedTarget)) setOpen(false);
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Escape") setOpen(false);
+          }}
+        >
+          {selected ? (
+            <p className="investment-picker-selected">
+              已选证券：<strong>{selected.ticker || selected.id}</strong>
+              {selected.name ? " " + selected.name : null}{" "}
+              {selected.ticker ? (
+                <code className="investment-picker-id">{selected.id}</code>
+              ) : null}{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  setSelected(null);
+                  setQuery("");
+                }}
+              >
+                重新选择
+              </button>
+            </p>
+          ) : (
+            <label>
+              搜索证券
+              <input
+                value={query}
+                onChange={(e) => {
+                  setQuery(e.target.value);
+                  setOpen(true);
+                }}
+                placeholder="代码、名称或 ID"
+              />
+            </label>
+          )}
+          {!selected && open && instruments.result ? (
+            instruments.result.ok ? (
+              <ul role="listbox" aria-label="可选证券">
+                {matches.map((item) => (
+                  <li key={item.instrument.id}>
+                    <button
+                      type="button"
+                      role="option"
+                      aria-selected="false"
+                      onClick={() => {
+                        setSelected({
+                          id: item.instrument.id,
+                          ticker: item.instrument.ticker,
+                          name: item.instrument.name,
+                        });
+                        setOpen(false);
+                      }}
+                    >
+                      <strong>{item.instrument.ticker}</strong>{" "}
+                      <span className="investment-picker-name">
+                        {item.instrument.name}
+                      </span>{" "}
+                      <code className="investment-picker-id">
+                        {item.instrument.id}
+                      </code>
+                    </button>
+                  </li>
+                ))}
+                {matches.length === 0 ? (
+                  <li className="investment-picker-empty">没有匹配的证券。</li>
+                ) : null}
+              </ul>
+            ) : (
+              <p role="alert">
+                {failureText(instruments.result.code)}{" "}
+                <button type="button" onClick={instruments.retry}>
+                  重试
+                </button>
+              </p>
+            )
+          ) : null}
+        </div>
         <label>
           方向
           <select value={side} onChange={(e) => setSide(e.target.value)}>
@@ -115,6 +232,13 @@ export function OrderForm({
           />
         </label>
       </div>
+      {selected && side === "buy" ? (
+        <MaxQuantityHint
+          client={client}
+          accountId={accountId}
+          instrumentId={selected.id}
+        />
+      ) : null}
       <p>
         按下一常规开盘价加 10bp 滑点、1bp 费用（最低 0.01
         USD）模拟；不保证全额成交。未结算卖出款不可再次买入。
@@ -128,6 +252,32 @@ export function OrderForm({
       ) : null}
       <button disabled={mutation.busy}>提交模拟订单</button>
     </form>
+  );
+}
+function MaxQuantityHint({
+  client,
+  accountId,
+  instrumentId,
+}: {
+  client: InvestmentClient;
+  accountId: string;
+  instrumentId: string;
+}) {
+  const { result } = useResource<AnalysisView>(
+    client,
+    "/instruments/" +
+      encodeURIComponent(instrumentId) +
+      "/analysis?accountId=" +
+      encodeURIComponent(accountId),
+    "AnalysisView",
+  );
+  if (!result?.ok || !result.value.accountRisk) return null;
+  const decision = result.value.accountRisk;
+  return (
+    <p>
+      当前账户最多可买 {decision.maxQuantity} 股
+      {decision.reasonCode ? " · " + reasonText(decision.reasonCode) : ""}
+    </p>
   );
 }
 export function OrderRow({
@@ -177,8 +327,15 @@ export function OrderRow({
         <small>{order.reason}</small>
       </td>
       <td>
-        {order.targetOpenAt}
-        <small>最迟确认 {order.expiresAt}</small>
+        <time dateTime={order.targetOpenAt} title={order.targetOpenAt}>
+          {localTime(order.targetOpenAt)}
+        </time>
+        <small>
+          最迟确认{" "}
+          <time dateTime={order.expiresAt} title={order.expiresAt}>
+            {localTime(order.expiresAt)}
+          </time>
+        </small>
       </td>
       <td>
         {order.fill ? (

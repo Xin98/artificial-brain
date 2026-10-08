@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { failureText, type InvestmentClient } from "./fetch-investment";
 import { useMutation, useResource } from "./hooks";
+import { reasonText, runStateText } from "./status-badge";
 import type {
   RunView,
   VersionView,
@@ -293,7 +294,12 @@ function SyncProgress({
   return (
     <p role="status">
       {result?.ok
-        ? result.value.status + " · " + result.value.reason
+        ? [
+            runStateText(result.value.status),
+            result.value.reason ? reasonText(result.value.reason) : "",
+          ]
+            .filter(Boolean)
+            .join(" · ")
         : result && !result.ok
           ? failureText(result.code)
           : "同步已排队"}

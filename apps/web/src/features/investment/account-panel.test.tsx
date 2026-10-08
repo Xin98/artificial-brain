@@ -1,8 +1,9 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
-import { AccountPanel } from "./account-panel";
+import { AccountDirectory, AccountPanel } from "./account-panel";
 import {
   accountFixture,
+  instrumentsPageFixture,
   orderFixture,
   performanceFixture,
 } from "./test-fixtures";
@@ -20,9 +21,10 @@ it("reserved unsettled and dividends remain separate and pause preserves effecti
   }));
   render(<AccountPanel client={{ request }} accountId="one" />);
   expect(await screen.findByText("已生效，等待日线确认")).toBeVisible();
-  expect(screen.getByText("5000.00")).toBeVisible();
-  expect(screen.getByText("4000.00")).toBeVisible();
-  expect(screen.getByText("1000.00")).toBeVisible();
+  expect(screen.getByText("100,000.00")).toBeVisible();
+  expect(screen.getByText("5,000.00")).toBeVisible();
+  expect(screen.getByText("4,000.00")).toBeVisible();
+  expect(screen.getByText("1,000.00")).toBeVisible();
   expect(screen.getAllByText(/暂停后仍可能补记/)[0]).toBeVisible();
   expect(screen.queryByRole("button", { name: "撤销订单" })).toBeNull();
 });
@@ -74,6 +76,9 @@ it("a failed account poll preserves uncertain order intent and draft through rec
                 value: { ...accountFixture(), version: accountReads },
               };
         }
+        if (path.startsWith("/instruments")) {
+          return { ok: true, value: instrumentsPageFixture() };
+        }
         return {
           ok: true,
           value: path.endsWith("/performance")
@@ -83,9 +88,9 @@ it("a failed account poll preserves uncertain order intent and draft through rec
       });
     render(<AccountPanel client={{ request }} accountId="one" />);
     await act(async () => {});
-    fireEvent.change(screen.getByLabelText("证券 ID"), {
-      target: { value: "fixture-01" },
-    });
+    await act(async () => {});
+    fireEvent.focus(screen.getByLabelText("搜索证券"));
+    fireEvent.click(screen.getByRole("option", { name: /FX01 虚构企业 1/ }));
     fireEvent.change(screen.getByLabelText("整数股数"), {
       target: { value: "10" },
     });
@@ -111,4 +116,239 @@ it("a failed account poll preserves uncertain order intent and draft through rec
   } finally {
     vi.useRealTimers();
   }
+});
+it("translates ledger kinds, automation event kinds and evaluation states", async () => {
+  const request = vi.fn().mockImplementation(async (path: string) => ({
+    ok: true,
+    value:
+      path === "/accounts/one"
+        ? accountFixture()
+        : path.endsWith("/performance")
+          ? performanceFixture()
+          : path.includes("/evaluations")
+            ? {
+                items: [
+                  {
+                    id: "ev1",
+                    sessionDate: "2026-10-06",
+                    purpose: "automatic",
+                    state: "completed",
+                    reason: "",
+                    orderIds: [],
+                  },
+                ],
+                nextCursor: "",
+              }
+            : path.includes("/automation-events")
+              ? {
+                  items: [
+                    {
+                      id: "e1",
+                      kind: "enabled",
+                      reason: "",
+                      effectiveAt: "2026-10-06T21:00:00Z",
+                      recordedAt: "2026-10-06T21:00:00Z",
+                    },
+                  ],
+                  nextCursor: "",
+                }
+              : path.includes("/ledger")
+                ? {
+                    items: [
+                      {
+                        id: "l1",
+                        accountId: "one",
+                        eventKey: "k1",
+                        kind: "sell_fill",
+                        instrumentId: "fixture-01",
+                        delta: {
+                          available: "-2100.00",
+                          reserved: "0.00",
+                          unsettled: "100.00",
+                          dividends: "0.00",
+                        },
+                        quantityDelta: "0",
+                        effectiveAt: "2026-10-06T21:00:00Z",
+                        recordedAt: "2026-10-06T21:00:00Z",
+                      },
+                    ],
+                    nextCursor: "",
+                  }
+                : { items: [], nextCursor: "" },
+  }));
+  const { rerender } = render(
+    <AccountPanel client={{ request }} accountId="one" tab="automation" />,
+  );
+  expect(await screen.findByText("启用")).toBeVisible();
+  expect(screen.getByText("已完成")).toBeVisible();
+  rerender(<AccountPanel client={{ request }} accountId="one" tab="records" />);
+  expect(await screen.findByText("卖出成交")).toBeVisible();
+  expect(screen.getByText("-2,100.00")).toBeVisible();
+});
+it("paged tables walk back to the previous page", async () => {
+  const request = vi.fn().mockImplementation(async (path: string) => ({
+    ok: true,
+    value:
+      path === "/accounts/one"
+        ? accountFixture()
+        : path.endsWith("/performance")
+          ? performanceFixture()
+          : path.includes("/orders?")
+            ? path.includes("cursor=c2")
+              ? {
+                  items: [
+                    { ...orderFixture(), id: "b", instrumentId: "fixture-02" },
+                  ],
+                  nextCursor: "",
+                }
+              : { items: [orderFixture()], nextCursor: "c2" }
+            : { items: [], nextCursor: "" },
+  }));
+  render(<AccountPanel client={{ request }} accountId="one" />);
+  expect(await screen.findByText("fixture-01")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "下一页订单" }));
+  expect(await screen.findByText("fixture-02")).toBeVisible();
+  expect(screen.queryByText("fixture-01")).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "上一页订单" }));
+  expect(await screen.findByText("fixture-01")).toBeVisible();
+});
+it("stops polling a paged table after leaving its first page", async () => {
+  vi.useFakeTimers();
+  try {
+    const request = vi.fn().mockImplementation(async (path: string) => ({
+      ok: true,
+      value:
+        path === "/accounts/one"
+          ? accountFixture()
+          : path.endsWith("/performance")
+            ? performanceFixture()
+            : path.includes("/orders?")
+              ? path.includes("cursor=c2")
+                ? {
+                    items: [
+                      {
+                        ...orderFixture(),
+                        id: "b",
+                        instrumentId: "fixture-02",
+                      },
+                    ],
+                    nextCursor: "",
+                  }
+                : { items: [orderFixture()], nextCursor: "c2" }
+              : { items: [], nextCursor: "" },
+    }));
+    render(<AccountPanel client={{ request }} accountId="one" />);
+    await act(async () => {});
+    await act(async () => {});
+    expect(screen.getByText("fixture-01")).toBeVisible();
+    const orderCalls = () =>
+      request.mock.calls.filter(([p]) => String(p).includes("/orders?")).length;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(5000);
+    });
+    expect(orderCalls()).toBeGreaterThan(1);
+    fireEvent.click(screen.getByRole("button", { name: "下一页订单" }));
+    await act(async () => {});
+    await act(async () => {});
+    expect(screen.getByText("fixture-02")).toBeVisible();
+    const onSecondPage = orderCalls();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15000);
+    });
+    expect(orderCalls()).toBe(onSecondPage);
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("account directory walks back to the previous page", async () => {
+  const request = vi.fn().mockImplementation(async (path: string) => ({
+    ok: true,
+    value: path.startsWith("/accounts?")
+      ? path.includes("cursor=c2")
+        ? { items: [accountFixture("two")], nextCursor: "" }
+        : { items: [accountFixture("one")], nextCursor: "c2" }
+      : { items: [], nextCursor: "" },
+  }));
+  render(<AccountDirectory client={{ request }} />);
+  expect(await screen.findByRole("link", { name: "one" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "下一页账户" }));
+  expect(await screen.findByRole("link", { name: "two" })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "上一页账户" }));
+  expect(await screen.findByRole("link", { name: "one" })).toBeVisible();
+});
+it("account directory offers per-account order links for a carried instrument", async () => {
+  const request = vi.fn().mockImplementation(async (path: string) => ({
+    ok: true,
+    value: path.startsWith("/accounts?")
+      ? { items: [accountFixture("one")], nextCursor: "" }
+      : { items: [], nextCursor: "" },
+  }));
+  render(
+    <AccountDirectory client={{ request }} prefillInstrumentId="fixture-01" />,
+  );
+  expect(await screen.findByRole("link", { name: "one" })).toBeVisible();
+  const order = screen.getByRole("link", { name: "下单" });
+  expect(order).toHaveAttribute(
+    "href",
+    "/investment/accounts/one?instrument=fixture-01",
+  );
+});
+it("renders module tabs and groups sections under account tabs", async () => {
+  const request = vi.fn().mockImplementation(async (path: string) => ({
+    ok: true,
+    value:
+      path === "/accounts/one"
+        ? accountFixture()
+        : path.endsWith("/performance")
+          ? performanceFixture()
+          : { items: [], nextCursor: "" },
+  }));
+  render(<AccountPanel client={{ request }} accountId="one" />);
+  await screen.findByRole("heading", { name: "one" });
+  const moduleNav = screen.getByRole("navigation", { name: "投资模块" });
+  expect(
+    within(moduleNav).getByRole("link", { name: "模拟账户" }),
+  ).toHaveAttribute("aria-current", "page");
+  const accountNav = screen.getByRole("navigation", { name: "账户区块" });
+  expect(
+    within(accountNav).getByRole("link", { name: "交易" }),
+  ).toHaveAttribute("aria-current", "page");
+  expect(
+    within(accountNav).getByRole("link", { name: "记录" }),
+  ).toHaveAttribute("href", "?tab=records");
+  expect(screen.getByRole("link", { name: "下单" })).toHaveAttribute(
+    "href",
+    "?tab=trade",
+  );
+  expect(screen.getByRole("heading", { name: "手动模拟订单" })).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "资金流水", hidden: true }),
+  ).not.toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "自动交易", hidden: true }),
+  ).not.toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "持仓", hidden: true }),
+  ).not.toBeVisible();
+});
+it("shows the records section when the tab param selects it", async () => {
+  const request = vi.fn().mockImplementation(async (path: string) => ({
+    ok: true,
+    value:
+      path === "/accounts/one"
+        ? accountFixture()
+        : path.endsWith("/performance")
+          ? performanceFixture()
+          : { items: [], nextCursor: "" },
+  }));
+  render(<AccountPanel client={{ request }} accountId="one" tab="records" />);
+  await screen.findByRole("heading", { name: "one" });
+  expect(screen.getByRole("heading", { name: "资金流水" })).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "手动模拟订单", hidden: true }),
+  ).not.toBeVisible();
+  const accountNav = screen.getByRole("navigation", { name: "账户区块" });
+  expect(
+    within(accountNav).getByRole("link", { name: "记录" }),
+  ).toHaveAttribute("aria-current", "page");
 });

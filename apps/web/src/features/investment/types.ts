@@ -40,6 +40,7 @@ export type AnalysisView = {
   mode: string;
   newsReason: string;
   newsStatus: string;
+  prices: PricePoint[];
   qualityFlags: string[];
   recommendation: Recommendation;
   risk: RiskAssessment;
@@ -290,6 +291,10 @@ export type Metric = {
 export type Money = string;
 export type NAVPoint = {
   nav: Money;
+  sessionDate: string;
+};
+export type PricePoint = {
+  close: Price;
   sessionDate: string;
 };
 export type NewsItem = {

@@ -10,12 +10,17 @@ type AnalysisRequest struct {
 	InstrumentID, AccountID string
 	AsOf                    time.Time
 }
+type PricePoint struct {
+	SessionDate time.Time
+	Close       domain.Price
+}
 type AnalysisView struct {
 	AccountRisk                *domain.RiskDecision
 	Instrument                 domain.Instrument
 	AsOf                       time.Time
 	Mode, Feed, DatasetVersion string
 	Metrics                    domain.FinancialMetrics
+	Prices                     []PricePoint
 	Signal                     *domain.Signal
 	Risk                       domain.RiskAssessment
 	Recommendation             domain.Recommendation

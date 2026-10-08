@@ -187,6 +187,13 @@ export const investmentSchemas: Record<string, Schema> = {
       newsStatus: {
         type: "string",
       },
+      prices: {
+        items: {
+          $ref: "#/components/schemas/PricePoint",
+        },
+        maxItems: 120,
+        type: "array",
+      },
       qualityFlags: {
         items: {
           type: "string",
@@ -230,6 +237,7 @@ export const investmentSchemas: Record<string, Schema> = {
       "newsStatus",
       "newsReason",
       "topics",
+      "prices",
       "qualityFlags",
     ],
     type: "object",
@@ -1638,6 +1646,20 @@ export const investmentSchemas: Record<string, Schema> = {
   Price: {
     pattern: "^[0-9]+\\.[0-9]{6}$",
     type: "string",
+  },
+  PricePoint: {
+    additionalProperties: false,
+    properties: {
+      close: {
+        $ref: "#/components/schemas/Price",
+      },
+      sessionDate: {
+        format: "date-time",
+        type: "string",
+      },
+    },
+    required: ["close", "sessionDate"],
+    type: "object",
   },
   Quantity: {
     pattern: "^[0-9]+$",

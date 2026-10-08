@@ -12,6 +12,7 @@ import type {
   PositionsPage,
 } from "./types";
 import { PerformanceChart, DrawdownChart, cents } from "./performance-chart";
+import { groupMoney } from "./format";
 import { SourceNotice, reasonText } from "./status-badge";
 function Metrics({
   value,
@@ -106,7 +107,7 @@ export function PerformancePanel({
           />
           <p>
             研究区间 {v.from.slice(0, 10)} 至 {v.to.slice(0, 10)} · 初始资金{" "}
-            {v.initialCash} USD
+            {groupMoney(v.initialCash)} USD
           </p>
           <p>
             股票池版本 {v.universeVersionId}
@@ -212,7 +213,7 @@ export function PositionDistribution({
               <div key={p.instrumentId}>
                 <strong>{p.instrumentId}</strong>
                 <span>
-                  {p.costBasis} USD · {share.toFixed(2)}%
+                  {groupMoney(p.costBasis)} USD · {share.toFixed(2)}%
                 </span>
                 <meter
                   min="0"

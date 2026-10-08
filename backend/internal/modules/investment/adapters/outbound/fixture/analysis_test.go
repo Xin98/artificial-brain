@@ -27,6 +27,33 @@ func TestAnalysisAccountScope(t *testing.T) {
 	}
 }
 
+func TestAnalysisReturnsRecentPriceSeries(t *testing.T) {
+	f, _ := fixture.New()
+	now := time.Date(2026, 10, 7, 21, 0, 0, 0, time.UTC)
+	q := query.AnalysisQuery{Data: f, Mode: "fixture", Now: func() time.Time { return now }}
+	v, e := q.Handle(context.Background(), dto.AnalysisRequest{InstrumentID: "fixture-01"})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if len(v.Prices) != 120 {
+		t.Fatal("prices length", len(v.Prices))
+	}
+	previous := time.Time{}
+	for _, p := range v.Prices {
+		if p.Close <= 0 || !p.SessionDate.After(previous) {
+			t.Fatal("prices not ascending or nonpositive", p)
+		}
+		previous = p.SessionDate
+	}
+	if last := v.Prices[len(v.Prices)-1]; !last.SessionDate.Equal(time.Date(2026, 10, 7, 0, 0, 0, 0, time.UTC)) {
+		t.Fatal("last price session", last.SessionDate)
+	}
+	unknown, e := q.Handle(context.Background(), dto.AnalysisRequest{InstrumentID: "fixture-99"})
+	if !errors.Is(e, domain.ErrNotFound) || len(unknown.Prices) != 0 {
+		t.Fatal(unknown.Prices, e)
+	}
+}
+
 func TestAnalysisWithholdsUnprovenSplitFinancialUnits(t *testing.T) {
 	f, _ := fixture.New()
 	now := time.Date(2026, 10, 7, 21, 0, 0, 0, time.UTC)

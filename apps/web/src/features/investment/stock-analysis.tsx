@@ -6,8 +6,10 @@ import {
   type InvestmentClient,
 } from "./fetch-investment";
 import { useResource } from "./hooks";
+import { PriceChart } from "./price-chart";
 import type { AnalysisView, Metric } from "./types";
 import { reasonText, SourceNotice, StatusBadge } from "./status-badge";
+import { InvestmentTabs } from "./tabs";
 function MetricRow({ name, metric }: { name: string; metric?: Metric }) {
   return (
     <div>
@@ -35,10 +37,12 @@ export function StockAnalysis({
   client = investmentClient,
   instrumentId,
   accountId,
+  returnQuery = "",
 }: {
   client?: InvestmentClient;
   instrumentId: string;
   accountId?: string;
+  returnQuery?: string;
 }) {
   const query = accountId ? "?accountId=" + encodeURIComponent(accountId) : "";
   const { result, retry } = useResource<AnalysisView>(
@@ -56,7 +60,10 @@ export function StockAnalysis({
   const v = result.value;
   return (
     <div className="investment-layout">
-      <Link href="/investment">返回股票研究</Link>
+      <InvestmentTabs current="research" />
+      <Link href={returnQuery ? "/investment?" + returnQuery : "/investment"}>
+        返回股票研究
+      </Link>
       <SourceNotice data={v} />
       <header>
         <h1>
@@ -66,8 +73,33 @@ export function StockAnalysis({
           <StatusBadge kind="potential" value={v.recommendation.potential} />
           <StatusBadge kind="risk" value={v.risk.level} />
           <span>相对评分 {v.signal?.score.toFixed(1) ?? "证据不足"}</span>
+          {accountId ? (
+            <Link
+              href={
+                "/investment/accounts/" +
+                encodeURIComponent(accountId) +
+                "?instrument=" +
+                encodeURIComponent(instrumentId)
+              }
+            >
+              前往账户下单
+            </Link>
+          ) : (
+            <Link
+              href={
+                "/investment/accounts?instrument=" +
+                encodeURIComponent(instrumentId)
+              }
+            >
+              前往模拟账户下单
+            </Link>
+          )}
         </div>
       </header>
+      <section className="investment-section">
+        <h2>价格走势</h2>
+        <PriceChart series={v.prices} sourceLabel={v.datasetVersion} />
+      </section>
       <section className="investment-section">
         <h2>量化结论</h2>
         <p>

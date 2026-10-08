@@ -1,40 +1,71 @@
 "use client";
 import Link from "next/link";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   investmentClient,
   failureText,
   type InvestmentClient,
 } from "./fetch-investment";
-import { useResource } from "./hooks";
+import { useCursorPager, useDebouncedValue, useResource } from "./hooks";
 import type { DataStatus, InstrumentsPage } from "./types";
-import { SourceNotice, StatusBadge } from "./status-badge";
+import {
+  dataStateText,
+  reasonText,
+  SourceNotice,
+  StatusBadge,
+} from "./status-badge";
+import { InvestmentTabs } from "./tabs";
 import { UniverseForm, StrategyForm, SyncForm } from "./universe-form";
 export function ResearchPanel({
   client = investmentClient,
 }: {
   client?: InvestmentClient;
 }) {
-  const [search, setSearch] = useState("");
-  const [risk, setRisk] = useState("");
-  const [potential, setPotential] = useState("");
-  const [cursor, setCursor] = useState("");
-  const query = new URLSearchParams({ search, risk, potential, cursor });
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [search, setSearch] = useState(() => searchParams.get("search") ?? "");
+  const [risk, setRisk] = useState(() => searchParams.get("risk") ?? "");
+  const [potential, setPotential] = useState(
+    () => searchParams.get("potential") ?? "",
+  );
+  const pager = useCursorPager();
+  const debouncedSearch = useDebouncedValue(search, 300);
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (debouncedSearch) params.set("search", debouncedSearch);
+    if (risk) params.set("risk", risk);
+    if (potential) params.set("potential", potential);
+    const next = params.toString();
+    if (next !== searchParams.toString())
+      router.replace(next ? "/investment?" + next : "/investment", {
+        scroll: false,
+      });
+  }, [debouncedSearch, risk, potential, router, searchParams]);
+  const query = new URLSearchParams({
+    search: debouncedSearch,
+    risk,
+    potential,
+    cursor: pager.cursor,
+  });
   const status = useResource<DataStatus>(client, "/data-status", "DataStatus");
   const rows = useResource<InstrumentsPage>(
     client,
     "/instruments?" + query,
     "InstrumentsPage",
   );
+  const refreshing = !rows.result && rows.lastOk !== null;
+  const page = rows.result?.ok ? rows.result.value : rows.lastOk;
+  const filterQuery = [
+    debouncedSearch ? "search=" + encodeURIComponent(debouncedSearch) : "",
+    risk ? "risk=" + encodeURIComponent(risk) : "",
+    potential ? "potential=" + encodeURIComponent(potential) : "",
+  ]
+    .filter(Boolean)
+    .join("&");
   return (
     <div className="investment-layout">
-      <nav className="investment-tabs" aria-label="投资模块">
-        <Link href="/investment" aria-current="page">
-          股票研究
-        </Link>
-        <Link href="/investment/accounts">模拟账户</Link>
-        <Link href="/investment/research">回测实验</Link>
-      </nav>
+      <InvestmentTabs current="research" />
       {status.result?.ok ? (
         <>
           <SourceNotice data={status.result.value} />
@@ -46,7 +77,12 @@ export function ResearchPanel({
               日历: status.result.value.calendar,
             }).map(([name, v]) => (
               <span key={name}>
-                {name}：{v.state === "available" ? "可用" : v.reason || v.state}
+                {name}：
+                {v.state === "available"
+                  ? "可用"
+                  : v.reason
+                    ? reasonText(v.reason)
+                    : dataStateText(v.state)}
               </span>
             ))}
           </div>
@@ -72,7 +108,7 @@ export function ResearchPanel({
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
-                setCursor("");
+                pager.reset();
               }}
             />
           </label>
@@ -82,7 +118,7 @@ export function ResearchPanel({
               value={risk}
               onChange={(e) => {
                 setRisk(e.target.value);
-                setCursor("");
+                pager.reset();
               }}
             >
               <option value="">全部风险</option>
@@ -98,7 +134,7 @@ export function ResearchPanel({
               value={potential}
               onChange={(e) => {
                 setPotential(e.target.value);
-                setCursor("");
+                pager.reset();
               }}
             >
               <option value="">全部潜力</option>
@@ -109,15 +145,16 @@ export function ResearchPanel({
             </select>
           </label>
         </div>
-        {!rows.result ? (
+        {!rows.result && !page ? (
           <p role="status">正在评估股票…</p>
-        ) : !rows.result.ok ? (
+        ) : rows.result && !rows.result.ok ? (
           <p role="alert">
             {failureText(rows.result.code)}{" "}
             <button onClick={rows.retry}>重试排名</button>
           </p>
         ) : (
           <>
+            {refreshing ? <p role="status">正在更新排名…</p> : null}
             <div className="investment-table-wrap">
               <table className="investment-table">
                 <caption>潜力与风险独立展示；高潜力也可能伴随高风险。</caption>
@@ -132,14 +169,17 @@ export function ResearchPanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.result.value.items.map((v) => (
+                  {page!.items.map((v) => (
                     <tr key={v.instrument.id}>
                       <td>{v.signal?.rank ?? "未入选"}</td>
                       <td>
                         <Link
                           href={
                             "/investment/stocks/" +
-                            encodeURIComponent(v.instrument.id)
+                            encodeURIComponent(v.instrument.id) +
+                            (filterQuery
+                              ? "?from=" + encodeURIComponent(filterQuery)
+                              : "")
                           }
                         >
                           {v.instrument.ticker}
@@ -162,23 +202,26 @@ export function ResearchPanel({
                 </tbody>
               </table>
             </div>
-            {rows.result.value.items.length === 0 ? (
-              <p>暂无股票。真实行情模式请先配置证券 ID 股票池，再同步数据。</p>
+            {page!.items.length === 0 ? (
+              debouncedSearch || risk || potential ? (
+                <p>没有匹配当前筛选条件的股票，可调整搜索或风险/潜力筛选。</p>
+              ) : (
+                <p>
+                  暂无股票。真实行情模式请先配置证券 ID 股票池，再同步数据。
+                </p>
+              )
             ) : null}
             <div className="investment-toolbar">
-              {cursor ? (
-                <button onClick={() => setCursor("")}>返回首屏</button>
+              {pager.canPrev ? (
+                <button onClick={pager.prev}>上一页股票</button>
               ) : null}
-              {rows.result.value.nextCursor ? (
-                <button
-                  onClick={() =>
-                    setCursor(
-                      rows.result!.ok ? rows.result!.value.nextCursor : "",
-                    )
-                  }
-                >
+              {page!.nextCursor ? (
+                <button onClick={() => pager.next(page!.nextCursor)}>
                   下一页股票
                 </button>
+              ) : null}
+              {pager.canPrev ? (
+                <button onClick={pager.reset}>返回首屏</button>
               ) : null}
             </div>
           </>

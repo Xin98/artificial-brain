@@ -1,4 +1,46 @@
-import type { AccountView, OrderView, PerformanceView } from "./types";
+import type {
+  AccountView,
+  InstrumentResearchView,
+  InstrumentsPage,
+  OrderView,
+  PerformanceView,
+} from "./types";
+
+export function instrumentsPageFixture(): InstrumentsPage {
+  const item = (
+    id: string,
+    ticker: string,
+    name: string,
+  ): InstrumentResearchView => ({
+    instrument: {
+      cik: "9000000",
+      exchange: "FIXTURE",
+      id,
+      ingestedAt: "2023-01-01T00:00:00Z",
+      kind: "stock",
+      name,
+      sic: "3571",
+      source: "fixture",
+      sourceRecordId: id,
+      ticker,
+      tickerHistory: [],
+      tradable: true,
+    },
+    potential: "medium",
+    price: "25.000000",
+    priceAsOf: "2026-10-06T00:00:00Z",
+    reason: "",
+    risk: { asOf: "2026-10-06T21:00:00Z", level: "medium", reasons: [] },
+    signal: null,
+  });
+  return {
+    items: [
+      item("fixture-01", "FX01", "虚构企业 1"),
+      item("fixture-02", "FX02", "虚构企业 2"),
+    ],
+    nextCursor: "",
+  };
+}
 
 export function performanceFixture(): PerformanceView {
   return {

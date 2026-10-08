@@ -1,6 +1,16 @@
 import { act, fireEvent, render, screen } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { beforeEach, expect, it, vi } from "vitest";
 import { ResearchPanel } from "./research-panel";
+
+const nav = vi.hoisted(() => ({ search: "", replace: vi.fn() }));
+vi.mock("next/navigation", () => ({
+  useRouter: () => ({ replace: nav.replace }),
+  useSearchParams: () => new URLSearchParams(nav.search),
+}));
+beforeEach(() => {
+  nav.search = "";
+  nav.replace.mockClear();
+});
 
 const dataStatusFixture = () => ({
   mode: "fixture",
@@ -142,4 +152,61 @@ it("shows demo feed asOf and independent potential and risk", async () => {
   expect(screen.getByText("演示数据")).toBeVisible();
   expect(screen.getAllByText(/synthetic/)[0]).toBeVisible();
   expect(screen.getByText(/2026-10-06/)).toBeVisible();
+});
+it("distinguishes no data from no filter matches", async () => {
+  vi.useFakeTimers();
+  try {
+    const request = vi.fn().mockImplementation((path: string) => {
+      if (path.startsWith("/data-status"))
+        return Promise.resolve({ ok: true, value: dataStatusFixture() });
+      return Promise.resolve({
+        ok: true,
+        value: { items: [], nextCursor: "" },
+      });
+    });
+    render(<ResearchPanel client={{ request }} />);
+    await act(async () => {});
+    await act(async () => {});
+    expect(screen.getByText(/暂无股票/)).toBeVisible();
+    fireEvent.change(screen.getByLabelText("搜索股票"), {
+      target: { value: "demo" },
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(300);
+    });
+    await act(async () => {});
+    expect(screen.getByText(/没有匹配当前筛选条件/)).toBeVisible();
+    expect(screen.queryByText(/暂无股票/)).toBeNull();
+  } finally {
+    vi.useRealTimers();
+  }
+});
+it("restores filters from the URL and pushes changes back", async () => {
+  nav.search = "search=demo&risk=low";
+  const request = vi.fn().mockImplementation(async (path: string) => ({
+    ok: true,
+    value: path.startsWith("/data-status")
+      ? dataStatusFixture()
+      : path.startsWith("/universes") || path.startsWith("/strategies")
+        ? { items: [], nextCursor: "" }
+        : { items: [rankRow("fixture-01", "DEMO01")], nextCursor: "" },
+  }));
+  render(<ResearchPanel client={{ request }} />);
+  expect(await screen.findByText("DEMO01")).toBeVisible();
+  const first = request.mock.calls.find(([p]) =>
+    String(p).startsWith("/instruments"),
+  );
+  expect(String(first![0])).toContain("search=demo");
+  expect(String(first![0])).toContain("risk=low");
+  expect(
+    screen.getByRole("link", { name: "DEMO01" }).getAttribute("href"),
+  ).toContain("from=search%3Ddemo%26risk%3Dlow");
+  fireEvent.change(screen.getByLabelText("潜力"), {
+    target: { value: "high" },
+  });
+  await screen.findByText("DEMO01");
+  const last = nav.replace.mock.calls.at(-1);
+  expect(last).toBeTruthy();
+  expect(String(last![0])).toContain("potential=high");
+  expect(String(last![0])).toContain("search=demo");
 });

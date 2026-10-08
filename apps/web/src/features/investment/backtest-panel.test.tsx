@@ -63,3 +63,17 @@ it("insufficient history never draws a fake backtest curve", async () => {
   expect(screen.queryByRole("img")).toBeNull();
   expect(screen.getAllByText(/幸存者偏差/)[0]).toBeVisible();
 });
+it("defaults the research window to the last year", async () => {
+  const request = vi.fn().mockImplementation(async () => ({
+    ok: true,
+    value: { items: [], nextCursor: "" },
+  }));
+  render(<BacktestPanel client={{ request }} />);
+  const to = await screen.findByLabelText("结束日期");
+  const from = screen.getByLabelText("开始日期");
+  const expectedTo = new Date();
+  const expectedFrom = new Date(expectedTo);
+  expectedFrom.setUTCFullYear(expectedFrom.getUTCFullYear() - 1);
+  expect(from).toHaveValue(expectedFrom.toISOString().slice(0, 10));
+  expect(to).toHaveValue(expectedTo.toISOString().slice(0, 10));
+});

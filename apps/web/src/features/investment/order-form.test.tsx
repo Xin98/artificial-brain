@@ -45,14 +45,24 @@ it("requires integer shares and preserves inputs after 503", async () => {
   expect(await screen.findByRole("alert")).toHaveTextContent(/服务暂不可用/);
   expect(screen.getByLabelText("整数股数")).toHaveValue("10");
 });
-it("searches instruments and submits the selected id, not the ticker", async () => {
-  const request = vi
-    .fn()
-    .mockImplementation((path: string) =>
-      path.startsWith("/instruments")
-        ? Promise.resolve({ ok: true, value: instrumentsPageFixture() })
-        : Promise.resolve({ ok: true, value: orderFixture("pending") }),
-    );
+it("searches instruments on the server and submits the selected id, not the ticker", async () => {
+  const request = vi.fn().mockImplementation((path: string) => {
+    if (path.startsWith("/instruments")) {
+      const search =
+        new URL(path, "http://local").searchParams.get("search") ?? "";
+      const items = instrumentsPageFixture().items.filter((item) =>
+        (
+          item.instrument.ticker +
+          " " +
+          item.instrument.name +
+          " " +
+          item.instrument.id
+        ).includes(search),
+      );
+      return Promise.resolve({ ok: true, value: { items, nextCursor: "" } });
+    }
+    return Promise.resolve({ ok: true, value: orderFixture("pending") });
+  });
   render(
     <OrderForm
       client={{ request }}
@@ -63,8 +73,18 @@ it("searches instruments and submits the selected id, not the ticker", async () 
   );
   const search = await screen.findByLabelText("搜索证券");
   fireEvent.change(search, { target: { value: "虚构企业 2" } });
-  expect(screen.queryByRole("option", { name: /FX01/ })).toBeNull();
-  fireEvent.click(screen.getByRole("option", { name: /FX02 虚构企业 2/ }));
+  await waitFor(() =>
+    expect(screen.queryByRole("option", { name: /FX01/ })).toBeNull(),
+  );
+  const searches = request.mock.calls.filter(
+    ([path]) =>
+      new URL(String(path), "http://local").searchParams.get("search") ===
+      "虚构企业 2",
+  );
+  expect(searches).toHaveLength(1);
+  fireEvent.click(
+    await screen.findByRole("option", { name: /FX02 虚构企业 2/ }),
+  );
   expect(screen.getByText(/已选证券：/)).toBeVisible();
   expect(screen.getByText("FX02")).toBeVisible();
   fireEvent.change(screen.getByLabelText("整数股数"), {
@@ -184,7 +204,7 @@ it("shows available cash and the account max buyable quantity for buys", async (
       onSubmitted={vi.fn()}
     />,
   );
-  expect(await screen.findByText(/可用现金 90000.00 USD/)).toBeVisible();
+  expect(await screen.findByText(/可用现金 90,000.00 USD/)).toBeVisible();
   fireEvent.focus(await screen.findByLabelText("搜索证券"));
   fireEvent.click(
     await screen.findByRole("option", { name: /FX01 虚构企业 1/ }),

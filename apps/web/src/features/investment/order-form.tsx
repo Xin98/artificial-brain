@@ -2,8 +2,8 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { decode, failureText, type InvestmentClient } from "./fetch-investment";
-import { localTime } from "./format";
-import { useMutation, useResource } from "./hooks";
+import { groupMoney, localTime } from "./format";
+import { useDebouncedValue, useMutation, useResource } from "./hooks";
 import { reasonText } from "./status-badge";
 import type {
   AccountView,
@@ -52,20 +52,15 @@ export function OrderForm({
   const [quantity, setQuantity] = useState("1");
   const [error, setError] = useState("");
   const mutation = useMutation<OrderView>(client, "OrderView");
+  const debouncedQuery = useDebouncedValue(query, 300);
   const instruments = useResource<InstrumentsPage>(
     client,
-    "/instruments?limit=100",
+    "/instruments?limit=25&search=" + encodeURIComponent(debouncedQuery),
     "InstrumentsPage",
   );
-  const needle = query.trim().toLowerCase();
-  const matches = (instruments.result?.ok ? instruments.result.value.items : [])
-    .filter((item) => {
-      if (!needle) return true;
-      const text =
-        `${item.instrument.ticker} ${item.instrument.name} ${item.instrument.id}`.toLowerCase();
-      return text.includes(needle);
-    })
-    .slice(0, 8);
+  const matches = (
+    instruments.result?.ok ? instruments.result.value.items : []
+  ).slice(0, 8);
   const frozen = useRef<{ signature: string; body: PlaceOrderRequest } | null>(
     null,
   );
@@ -134,7 +129,9 @@ export function OrderForm({
       }}
     >
       <h2>手动模拟订单</h2>
-      {account ? <p>可用现金 {account.cash.available} USD</p> : null}
+      {account ? (
+        <p>可用现金 {groupMoney(account.cash.available)} USD</p>
+      ) : null}
       <div className="investment-fields">
         <div
           className="investment-picker"

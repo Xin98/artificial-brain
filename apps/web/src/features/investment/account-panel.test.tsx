@@ -21,9 +21,10 @@ it("reserved unsettled and dividends remain separate and pause preserves effecti
   }));
   render(<AccountPanel client={{ request }} accountId="one" />);
   expect(await screen.findByText("已生效，等待日线确认")).toBeVisible();
-  expect(screen.getByText("5000.00")).toBeVisible();
-  expect(screen.getByText("4000.00")).toBeVisible();
-  expect(screen.getByText("1000.00")).toBeVisible();
+  expect(screen.getByText("100,000.00")).toBeVisible();
+  expect(screen.getByText("5,000.00")).toBeVisible();
+  expect(screen.getByText("4,000.00")).toBeVisible();
+  expect(screen.getByText("1,000.00")).toBeVisible();
   expect(screen.getAllByText(/暂停后仍可能补记/)[0]).toBeVisible();
   expect(screen.queryByRole("button", { name: "撤销订单" })).toBeNull();
 });
@@ -161,7 +162,7 @@ it("translates ledger kinds, automation event kinds and evaluation states", asyn
                         kind: "sell_fill",
                         instrumentId: "fixture-01",
                         delta: {
-                          available: "-100.00",
+                          available: "-2100.00",
                           reserved: "0.00",
                           unsettled: "100.00",
                           dividends: "0.00",
@@ -177,6 +178,7 @@ it("translates ledger kinds, automation event kinds and evaluation states", asyn
   }));
   render(<AccountPanel client={{ request }} accountId="one" />);
   expect(await screen.findByText("卖出成交")).toBeVisible();
+  expect(screen.getByText("-2,100.00")).toBeVisible();
   expect(screen.getByText("启用")).toBeVisible();
   expect(screen.getByText("已完成")).toBeVisible();
 });

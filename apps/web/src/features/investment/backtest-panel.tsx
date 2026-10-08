@@ -20,8 +20,12 @@ export function BacktestPanel({
 }) {
   const [universe, setUniverse] = useState("");
   const [strategy, setStrategy] = useState("");
-  const [from, setFrom] = useState("2026-01-01");
-  const [to, setTo] = useState("2026-07-31");
+  const [from, setFrom] = useState(() => {
+    const date = new Date();
+    date.setUTCFullYear(date.getUTCFullYear() - 1);
+    return date.toISOString().slice(0, 10);
+  });
+  const [to, setTo] = useState(() => new Date().toISOString().slice(0, 10));
   const [cash, setCash] = useState("100000.00");
   const [selected, setSelected] = useState(initialRunId);
   const pager = useCursorPager();

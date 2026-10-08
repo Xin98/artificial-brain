@@ -36,10 +36,12 @@ export function StockAnalysis({
   client = investmentClient,
   instrumentId,
   accountId,
+  returnQuery = "",
 }: {
   client?: InvestmentClient;
   instrumentId: string;
   accountId?: string;
+  returnQuery?: string;
 }) {
   const query = accountId ? "?accountId=" + encodeURIComponent(accountId) : "";
   const { result, retry } = useResource<AnalysisView>(
@@ -57,7 +59,9 @@ export function StockAnalysis({
   const v = result.value;
   return (
     <div className="investment-layout">
-      <Link href="/investment">返回股票研究</Link>
+      <Link href={returnQuery ? "/investment?" + returnQuery : "/investment"}>
+        返回股票研究
+      </Link>
       <SourceNotice data={v} />
       <header>
         <h1>

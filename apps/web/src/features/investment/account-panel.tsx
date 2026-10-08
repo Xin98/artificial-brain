@@ -7,7 +7,7 @@ import {
   type InvestmentClient,
 } from "./fetch-investment";
 import { useCursorPager, useResource } from "./hooks";
-import { localTime } from "./format";
+import { groupMoney, localTime } from "./format";
 import {
   automationEventText,
   ledgerKindText,
@@ -97,7 +97,7 @@ export function AccountDirectory({
                       <td>
                         {a.mode === "fixture" ? "演示数据" : "真实只读数据"}
                       </td>
-                      <td>{a.cash.available}</td>
+                      <td>{groupMoney(a.cash.available)}</td>
                       <td>{a.automationEnabled ? "已启用" : "已暂停"}</td>
                     </tr>
                   ))}
@@ -179,8 +179,9 @@ function AccountDetail({
       <header>
         <h1>{a.name || "模拟账户"}</h1>
         <p>
-          净资产 USD：<strong>{a.nav ?? "等待完整估值"}</strong> · 数据截止{" "}
-          {a.asOf}
+          净资产 USD：
+          <strong>{a.nav ? groupMoney(a.nav) : "等待完整估值"}</strong> ·
+          数据截止 {a.asOf}
         </p>
       </header>
       <dl className="investment-cash">
@@ -192,7 +193,7 @@ function AccountDetail({
         }).map(([key, label]) => (
           <div key={key}>
             <dt>{label}</dt>
-            <dd>{a.cash[key as keyof AccountView["cash"]]}</dd>
+            <dd>{groupMoney(a.cash[key as keyof AccountView["cash"]])}</dd>
           </div>
         ))}
       </dl>
@@ -293,7 +294,7 @@ function AccountDetail({
             </td>
             <td>{p.quantity}</td>
             <td>{p.reservedQuantity}</td>
-            <td>{p.costBasis}</td>
+            <td>{groupMoney(p.costBasis)}</td>
           </tr>
         )}
       />
@@ -318,10 +319,10 @@ function AccountDetail({
               {ledgerKindText(l.kind)}
               <small>{l.instrumentId}</small>
             </td>
-            <td>{l.delta.available}</td>
-            <td>{l.delta.reserved}</td>
-            <td>{l.delta.unsettled}</td>
-            <td>{l.delta.dividends}</td>
+            <td>{groupMoney(l.delta.available)}</td>
+            <td>{groupMoney(l.delta.reserved)}</td>
+            <td>{groupMoney(l.delta.unsettled)}</td>
+            <td>{groupMoney(l.delta.dividends)}</td>
             <td>
               <time dateTime={l.effectiveAt} title={l.effectiveAt}>
                 {localTime(l.effectiveAt)}

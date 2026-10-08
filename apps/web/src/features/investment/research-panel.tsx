@@ -1,6 +1,7 @@
 "use client";
 import Link from "next/link";
-import { useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   investmentClient,
   failureText,
@@ -20,11 +21,26 @@ export function ResearchPanel({
 }: {
   client?: InvestmentClient;
 }) {
-  const [search, setSearch] = useState("");
-  const [risk, setRisk] = useState("");
-  const [potential, setPotential] = useState("");
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const [search, setSearch] = useState(() => searchParams.get("search") ?? "");
+  const [risk, setRisk] = useState(() => searchParams.get("risk") ?? "");
+  const [potential, setPotential] = useState(
+    () => searchParams.get("potential") ?? "",
+  );
   const pager = useCursorPager();
   const debouncedSearch = useDebouncedValue(search, 300);
+  useEffect(() => {
+    const params = new URLSearchParams();
+    if (debouncedSearch) params.set("search", debouncedSearch);
+    if (risk) params.set("risk", risk);
+    if (potential) params.set("potential", potential);
+    const next = params.toString();
+    if (next !== searchParams.toString())
+      router.replace(next ? "/investment?" + next : "/investment", {
+        scroll: false,
+      });
+  }, [debouncedSearch, risk, potential, router, searchParams]);
   const query = new URLSearchParams({
     search: debouncedSearch,
     risk,
@@ -39,6 +55,13 @@ export function ResearchPanel({
   );
   const refreshing = !rows.result && rows.lastOk !== null;
   const page = rows.result?.ok ? rows.result.value : rows.lastOk;
+  const filterQuery = [
+    debouncedSearch ? "search=" + encodeURIComponent(debouncedSearch) : "",
+    risk ? "risk=" + encodeURIComponent(risk) : "",
+    potential ? "potential=" + encodeURIComponent(potential) : "",
+  ]
+    .filter(Boolean)
+    .join("&");
   return (
     <div className="investment-layout">
       <nav className="investment-tabs" aria-label="投资模块">
@@ -158,7 +181,10 @@ export function ResearchPanel({
                         <Link
                           href={
                             "/investment/stocks/" +
-                            encodeURIComponent(v.instrument.id)
+                            encodeURIComponent(v.instrument.id) +
+                            (filterQuery
+                              ? "?from=" + encodeURIComponent(filterQuery)
+                              : "")
                           }
                         >
                           {v.instrument.ticker}
@@ -182,7 +208,13 @@ export function ResearchPanel({
               </table>
             </div>
             {page!.items.length === 0 ? (
-              <p>暂无股票。真实行情模式请先配置证券 ID 股票池，再同步数据。</p>
+              debouncedSearch || risk || potential ? (
+                <p>没有匹配当前筛选条件的股票，可调整搜索或风险/潜力筛选。</p>
+              ) : (
+                <p>
+                  暂无股票。真实行情模式请先配置证券 ID 股票池，再同步数据。
+                </p>
+              )
             ) : null}
             <div className="investment-toolbar">
               {pager.canPrev ? (

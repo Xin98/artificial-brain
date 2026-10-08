@@ -132,3 +132,16 @@ it("links to the account order form only when an account context exists", async 
   expect(await screen.findByText(/风险较高，自动策略避免新买入/)).toBeVisible();
   expect(screen.queryByRole("link", { name: "前往账户下单" })).toBeNull();
 });
+it("returns to the filtered research list when a return query exists", async () => {
+  render(
+    <StockAnalysis
+      instrumentId="a"
+      returnQuery="search=demo&risk=low"
+      client={{
+        request: vi.fn().mockResolvedValue({ ok: true, value: analysis("A") }),
+      }}
+    />,
+  );
+  const back = await screen.findByRole("link", { name: "返回股票研究" });
+  expect(back).toHaveAttribute("href", "/investment?search=demo&risk=low");
+});

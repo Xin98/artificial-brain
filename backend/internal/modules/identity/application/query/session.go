@@ -18,7 +18,7 @@ type SessionQuery struct {
 func (q *SessionQuery) Authenticate(ctx context.Context, token string) (dto.Principal, error) {
 	session, err := q.Sessions.ByTokenHash(ctx, domain.HashCode(token))
 	if err != nil {
-		return dto.Principal{}, domain.ErrSessionNotFound
+		return dto.Principal{}, err
 	}
 	if !session.IsActive(q.Now()) {
 		return dto.Principal{}, domain.ErrSessionInactive

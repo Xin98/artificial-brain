@@ -137,8 +137,8 @@ schema_version=$(compose exec -T postgres psql \
 	--dbname "$database_name" \
 	--tuples-only --no-align \
 	--command 'select version from public.schema_version limit 1')
-[ "$schema_version" = 10 ] || {
-	printf 'migration test: schema version is %s, want 10\n' "$schema_version" >&2
+[ "$schema_version" = 11 ] || {
+	printf 'migration test: schema version is %s, want 11\n' "$schema_version" >&2
 	exit 1
 }
 
@@ -149,6 +149,20 @@ worker_table_count=$(compose exec -T postgres psql \
 	--command "select count(*) from information_schema.tables where table_schema = 'runtime' and table_name = 'worker_heartbeats'")
 [ "$worker_table_count" = 1 ] || {
 	printf 'migration test: runtime.worker_heartbeats count is %s, want 1\n' "$worker_table_count" >&2
+	exit 1
+}
+
+investment_constraints=$(compose exec -T postgres psql \
+	--username "$database_user" --dbname "$database_name" --tuples-only --no-align \
+	--command "select
+	  (select count(*) from information_schema.tables where table_schema='investment') >= 20
+	  and to_regclass('investment.one_evaluation_per_purpose') is not null
+	  and to_regclass('investment.one_order_batch_per_session') is not null
+	  and (select count(*) from pg_constraint where conrelid='investment.accounts'::regclass and contype='c') >= 7
+	  and (select count(*) from pg_constraint where conrelid='investment.orders'::regclass and contype='f') = 1
+	  and (select count(*) from information_schema.columns where table_schema='investment' and table_name='accounts' and column_name='dataset_version') = 1")
+[ "$investment_constraints" = t ] || {
+	printf 'migration test: investment tables, scoped relations or money constraints missing\n' >&2
 	exit 1
 }
 

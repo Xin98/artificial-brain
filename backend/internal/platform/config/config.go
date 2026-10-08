@@ -87,6 +87,7 @@ type Role string
 type LookupEnv func(string) (string, bool)
 
 type Config struct {
+	Investment        InvestmentConfig
 	Role              Role
 	ServiceName       string
 	ServiceVersion    string
@@ -409,7 +410,12 @@ func Load(role Role, lookup LookupEnv) (Config, error) {
 		return Config{}, fmt.Errorf("config: invalid PORTABILITY_MAX_BUNDLE_BYTES")
 	}
 
+	investment, err := loadInvestment(lookup)
+	if err != nil {
+		return Config{}, err
+	}
 	return Config{
+		Investment:        investment,
 		Role:              role,
 		ServiceName:       serviceName,
 		ServiceVersion:    valueOrDefault(lookup, "SERVICE_VERSION", defaultServiceVersion),

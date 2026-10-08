@@ -1,0 +1,1 @@
+[{"ID":"fixture-news-01","Title":"演示：虚构企业更新季度财报与人工智能研发计划","Summary":"此为固定测试新闻，用于验证主题聚合，不代表真实事件。","URL":"https://example.com/fixture-news","InstrumentIDs":["fixture-01","fixture-02"],"PublishedAt":"2026-10-06T12:00:00Z","AvailableAt":"2026-10-06T12:00:00Z","Source":"fixture","SourceRecordID":"fixture-news-01","IngestedAt":"2026-10-06T12:00:00Z"}]

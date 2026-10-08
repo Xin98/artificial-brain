@@ -24,7 +24,7 @@ func identityRoutes() []struct {
 		{"/api/v1/auth/logout", "post",
 			map[string]string{"200": "EmptyObject", "401": "ErrorEnvelope"}, ""},
 		{"/api/v1/auth/session", "get",
-			map[string]string{"200": "SessionView", "401": "ErrorEnvelope"}, ""},
+			map[string]string{"200": "SessionView", "401": "ErrorEnvelope", "503": "ErrorEnvelope"}, ""},
 		{"/api/v1/settings/contact-channels", "get",
 			map[string]string{"200": "ChannelList", "401": "ErrorEnvelope"}, ""},
 		{"/api/v1/settings/contact-channels", "post",
@@ -134,6 +134,13 @@ func TestIdentityContractRejectsMutation(t *testing.T) {
 	mutated.Paths["/api/v1/auth/login/request"] = request
 	if identityContractValid(mutated) {
 		t.Fatal("mutation (missing 429) unexpectedly passed validation")
+	}
+	mutated = loadDoc(t, "identity.yaml")
+	session := mutated.Paths["/api/v1/auth/session"]
+	delete(session.Get.Responses, "503")
+	mutated.Paths["/api/v1/auth/session"] = session
+	if identityContractValid(mutated) {
+		t.Fatal("mutation (missing session outage 503) unexpectedly passed validation")
 	}
 }
 

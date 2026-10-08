@@ -2,9 +2,11 @@ package http
 
 import (
 	"context"
+	"errors"
 	"net/http"
 
 	"github.com/Xin98/artificial-brain/backend/internal/modules/identity/application/dto"
+	"github.com/Xin98/artificial-brain/backend/internal/modules/identity/domain"
 )
 
 // Authenticator resolves a bearer token to a principal.
@@ -23,7 +25,11 @@ func NewAuthMiddleware(authenticator Authenticator) func(http.Handler) http.Hand
 			}
 			principal, err := authenticator(r.Context(), cookie.Value)
 			if err != nil {
-				writeUnauthenticated(w, r)
+				if errors.Is(err, domain.ErrSessionNotFound) || errors.Is(err, domain.ErrSessionInactive) || errors.Is(err, http.ErrNoCookie) {
+					writeUnauthenticated(w, r)
+				} else {
+					writeError(w, r, http.StatusServiceUnavailable, "service_unavailable", "session service is unavailable")
+				}
 				return
 			}
 			next.ServeHTTP(w, r.WithContext(dto.WithPrincipal(r.Context(), principal)))

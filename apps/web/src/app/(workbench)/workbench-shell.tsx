@@ -14,6 +14,7 @@ const workbenchLinks = [
   { href: "/", label: "概况" },
   { href: "/todos", label: "待办" },
   { href: "/conversation", label: "对话" },
+  { href: "/investment", label: "投资" },
   { href: "/settings", label: "设置" },
   { href: "/data", label: "数据" },
 ];
@@ -76,9 +77,15 @@ export function WorkbenchShell({
         <span className="workbench-links">
           {workbenchLinks.map((link) => (
             <Link
-              aria-current={pathname === link.href ? "page" : undefined}
+              aria-current={
+                pathname === link.href ||
+                (link.href !== "/" && pathname.startsWith(link.href + "/"))
+                  ? "page"
+                  : undefined
+              }
               className={
-                pathname === link.href
+                pathname === link.href ||
+                (link.href !== "/" && pathname.startsWith(link.href + "/"))
                   ? "workbench-link workbench-link-active"
                   : "workbench-link"
               }

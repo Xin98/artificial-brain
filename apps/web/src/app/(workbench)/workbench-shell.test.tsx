@@ -1,13 +1,17 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { useEffect } from "react";
 
 import { WorkbenchShell } from "./workbench-shell";
 
 // The shell reads the active route from the app router; unit tests render it
 // outside a router, so the hook is stubbed to a fixed path.
+const location = vi.hoisted(() => ({ pathname: "/" }));
+afterEach(() => {
+  location.pathname = "/";
+});
 vi.mock("next/navigation", () => ({
-  usePathname: () => "/",
+  usePathname: () => location.pathname,
 }));
 
 it("renders navigation to the workbench areas", () => {
@@ -93,3 +97,22 @@ it("does not leak internal URLs or configuration names", () => {
   expect(container.innerHTML).not.toContain("https://");
   expect(container.innerHTML).not.toContain("API_INTERNAL_URL");
 });
+
+it.each(["/investment/stocks/fixture-01", "/investment/accounts/one"])(
+  "investment subroutes keep navigation active: %s",
+  (path) => {
+    location.pathname = path;
+    render(
+      <WorkbenchShell>
+        <p>content</p>
+      </WorkbenchShell>,
+    );
+    expect(screen.getByRole("link", { name: "投资" })).toHaveAttribute(
+      "aria-current",
+      "page",
+    );
+    expect(screen.getByRole("link", { name: "概况" })).not.toHaveAttribute(
+      "aria-current",
+    );
+  },
+);

@@ -82,6 +82,7 @@ func buildHandler(cfg config.Config, pool *pgxpool.Pool, ready server.Readiness,
 	registerTodoRoutes(mux, auth, todos)
 	registerConversationRoutes(cfg, pool, mux, auth, todos)
 	registerReminderRoutes(cfg, pool, mux, auth, todos.Deliveries)
+	registerInvestmentRoutes(cfg, pool, mux, auth, riverClient)
 	registerPortabilityRoutes(cfg, mux, auth, buildPortabilityHandlers(cfg, pool, time.Now))
 	if cfg.DevInboxEnabled && cfg.AppEnv != config.AppEnvProduction {
 		mux.Handle("GET /api/v1/dev/sms-inbox", identityhttp.NewDevInboxHandler(identitypostgres.NewOutboxReader(pool)))

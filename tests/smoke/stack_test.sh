@@ -183,6 +183,21 @@ wait_for_system_state() {
 	done
 }
 
+assert_authenticated_dashboard() {
+	markup=$1
+	if printf '%s\n' "$markup" | grep -F 'data-page="dashboard"' >/dev/null; then
+		return 0
+	fi
+	# The existing owner-restore gate withholds children until hydration. Verify
+	# both its authenticated shell and the exact serialized dashboard payload.
+	printf '%s\n' "$markup" | grep -F 'class="workbench-account"' >/dev/null || \
+		fail 'authenticated dashboard has no account shell'
+	printf '%s\n' "$markup" | grep -F '正在恢复工作台' >/dev/null || \
+		fail 'dashboard is missing the expected owner-restore state'
+	printf '%s\n' "$markup" | tr -d '\\' | grep -F '"data-page":"dashboard"' >/dev/null || \
+		fail 'authenticated dashboard payload is missing'
+}
+
 assert_page() {
 	wanted_status=$1
 	page_path=$2
@@ -287,6 +302,7 @@ full_stack_test() {
 	sh tests/smoke/wait_for_url.sh "http://127.0.0.1:${WEB_PORT}/health/live" 30
 	wait_for_system_state healthy healthy 30
 	assert_page healthy /status
+	sh tests/smoke/investment_test.sh "$WEB_PORT" "$API_PORT"
 
 	# ITER-0002 authenticated end-to-end loop through the web /api/v1 rewrite.
 	e2e_phone="+8613800137001"
@@ -311,11 +327,13 @@ full_stack_test() {
 		sed -n 's/^[Ss]et-[Cc]ookie: ab_session=\([^;]*\).*$/\1/p' | sed -n '1p')
 	[ -n "$e2e_session" ] || fail "verify did not set the ab_session cookie"
 	e2e_auth="Cookie: ab_session=${e2e_session}"
+	e2e_session_status=$(curl --silent --show-error --max-time 5 --output /dev/null \
+		--write-out '%{http_code}' --header "$e2e_auth" "http://127.0.0.1:${WEB_PORT}/api/v1/auth/session")
+	[ "$e2e_session_status" = 200 ] || fail "session lookup returned ${e2e_session_status}, want 200"
 
 	e2e_home=$(curl --fail --silent --show-error --max-time 5 \
 		--header "$e2e_auth" "http://127.0.0.1:${WEB_PORT}/")
-	printf '%s\n' "$e2e_home" | grep -F 'data-page="dashboard"' >/dev/null || \
-		fail "authenticated home did not render the dashboard page"
+	assert_authenticated_dashboard "$e2e_home"
 
 	# Cloud-deploy iteration: email-identifier login through the same dev
 	# inbox (the fake outbox records email codes by address).
@@ -678,20 +696,26 @@ full_stack_test() {
 
 	port_entries=$(unzip -Z1 "$port_bundle" | sort)
 	port_expected_entries=$(printf '%s\n' \
-		manifest.json preferences.json reminder-deliveries.json todos.csv todos.json)
+		conversation-messages.json conversation-sessions.json manifest.json preferences.json reminder-deliveries.json todos.csv todos.json)
 	[ "$port_entries" = "$port_expected_entries" ] || \
-		fail "export bundle entries are not the expected five: $(printf '%s' "$port_entries" | tr '\n' ' ')"
+		fail "export bundle entries are not the expected seven: $(printf '%s' "$port_entries" | tr '\n' ' ')"
 
 	port_manifest=$(unzip -p "$port_bundle" manifest.json) || \
 		fail "unzip cannot read manifest.json from the export bundle"
-	printf '%s\n' "$port_manifest" | jq -e '.schemaVersion == "1"' >/dev/null || \
-		fail "export manifest schemaVersion is not 1: ${port_manifest}"
+	printf '%s\n' "$port_manifest" | jq -e '.schemaVersion == "2"' >/dev/null || \
+		fail "export manifest schemaVersion is not 2: ${port_manifest}"
 	printf '%s\n' "$port_manifest" | jq -e '.counts.todos >= 1' >/dev/null || \
 		fail "export manifest does not report at least one todo: ${port_manifest}"
 	port_todos=$(printf '%s\n' "$port_manifest" | jq -r '.counts.todos')
 	port_deliveries=$(printf '%s\n' "$port_manifest" | jq -r '.counts.deliveries')
 	port_channels=$(printf '%s\n' "$port_manifest" | jq -r '.counts.channels')
-	port_total=$((port_todos + port_deliveries + port_channels))
+	port_sessions=$(printf '%s\n' "$port_manifest" | jq -r '.counts.sessions')
+	port_messages=$(printf '%s\n' "$port_manifest" | jq -r '.counts.messages')
+	port_total=$((port_todos + port_deliveries + port_channels + port_sessions + port_messages))
+	[ "$(unzip -p "$port_bundle" conversation-sessions.json | jq 'length')" = "$port_sessions" ] || \
+		fail 'export session count differs from manifest'
+	[ "$(unzip -p "$port_bundle" conversation-messages.json | jq 'length')" = "$port_messages" ] || \
+		fail 'export message count differs from manifest'
 
 	port_upload=$(curl --silent --show-error --max-time 10 \
 		--write-out '\n%{http_code}' \
@@ -742,8 +766,8 @@ full_stack_test() {
 	# Self-import executes against a user whose channels already exist: each
 	# duplicate (user, kind, address) channel downgrades to skipped and
 	# registers against the existing row (T9), so the executed report copies
-	# every todo and delivery but skips every channel.
-	port_new_expected=$((port_todos + port_deliveries))
+	# every todo, delivery and conversation record but skips every channel.
+	port_new_expected=$((port_todos + port_deliveries + port_sessions + port_messages))
 	printf '%s\n' "$port_report" | jq -e \
 		--argjson new "$port_new_expected" --argjson skipped "$port_channels" '
 		.new == $new and
@@ -1052,8 +1076,7 @@ full_stack_test() {
 	private_home=$(curl --fail --silent --show-error --max-time 5 \
 		--header "Cookie: ab_session=${private_session}" \
 		"http://127.0.0.1:${private_web_port}/")
-	printf '%s\n' "$private_home" | grep -F 'data-page="dashboard"' >/dev/null || \
-		fail "private admin home did not render the dashboard page"
+	assert_authenticated_dashboard "$private_home"
 
 	private_stranger_phone="+8613800137998"
 	private_stranger=$(curl --silent --show-error --max-time 5 \
@@ -1111,8 +1134,7 @@ full_stack_test() {
 	private_email_home=$(curl --fail --silent --show-error --max-time 5 \
 		--header "Cookie: ab_session=${private_email_session}" \
 		"http://127.0.0.1:${private_email_web_port}/")
-	printf '%s\n' "$private_email_home" | grep -F 'data-page="dashboard"' >/dev/null || \
-		fail "private email admin home did not render the dashboard page"
+	assert_authenticated_dashboard "$private_email_home"
 
 	private_email_stranger=$(curl --silent --show-error --max-time 5 \
 		--write-out '\n%{http_code}' \
@@ -1237,8 +1259,8 @@ full_stack_test() {
 		--dbname "${POSTGRES_DB:-artificial_brain}" \
 		--tuples-only --no-align \
 		--command "select version from public.schema_version limit 1")
-	[ "$upgrade_schema_version" = 10 ] || \
-		fail "schema version after the upgrade is ${upgrade_schema_version}, want 10"
+	[ "$upgrade_schema_version" = 11 ] || \
+		fail "schema version after the upgrade is ${upgrade_schema_version}, want 11"
 	upgrade_todo_after=$(compose exec -T postgres psql \
 		--username "${POSTGRES_USER:-artificial_brain}" \
 		--dbname "${POSTGRES_DB:-artificial_brain}" \

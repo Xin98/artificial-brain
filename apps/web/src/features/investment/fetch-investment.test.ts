@@ -62,3 +62,26 @@ it("one unchanged intent keeps its key after network failure", async () => {
   );
   expect(fetcher.mock.calls[0][1].body).toBe(fetcher.mock.calls[1][1].body);
 });
+it("mints idempotency keys without crypto.randomUUID on insecure origins", () => {
+  const real = globalThis.crypto;
+  vi.stubGlobal("crypto", {
+    getRandomValues: real.getRandomValues.bind(real),
+  });
+  try {
+    const intent = createIntent("POST", "/accounts", {
+      initialCash: "100.00",
+    });
+    const headers = intent.options.headers as Record<string, string>;
+    expect(headers["Idempotency-Key"]).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
+    const second = createIntent("POST", "/accounts", {
+      initialCash: "100.00",
+    });
+    expect(
+      (second.options.headers as Record<string, string>)["Idempotency-Key"],
+    ).not.toBe(headers["Idempotency-Key"]);
+  } finally {
+    vi.unstubAllGlobals();
+  }
+});

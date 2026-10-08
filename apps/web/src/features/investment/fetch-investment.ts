@@ -125,6 +125,19 @@ export function failureText(code: string): string {
     version_conflict: "版本已变化，请刷新并检查配置后重新提交。",
     invalid_response: "响应格式不完整，请稍后重试。",
     unauthenticated: "登录已失效，正在返回登录页。",
+    data_stale: "行情或财报数据尚未齐备，请稍后重试。",
+    data_not_configured: "数据源未配置，请先完成数据配置。",
+    insufficient_cash: "可用已结算资金不足。",
+    risk_limit_exceeded:
+      "触发风控上限（单股10%/同行业30%/总仓位80%/当日换手20%/回撤15%暂停/止损10%）；股票详情页可查看当前最多可买数量。",
+    insufficient_universe: "满足条件的候选证券不足。",
+    factor_unavailable: "因子数据不可用，无法评分。",
+    corporate_action_incomplete: "公司行动数据不完整，已阻断交易。",
+    automation_paused: "自动交易已暂停。",
+    order_not_cancellable: "订单已进入生效时段，不能撤销。",
+    idempotency_conflict: "相同请求键携带了不同内容，请检查后重试。",
+    not_found: "资源不存在或不属于当前账户。",
+    invalid_input: "输入不合法，请检查后重试。",
   };
   return messages[code] ?? "请求未完成：" + code;
 }

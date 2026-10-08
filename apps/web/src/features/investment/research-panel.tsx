@@ -6,9 +6,14 @@ import {
   failureText,
   type InvestmentClient,
 } from "./fetch-investment";
-import { useResource } from "./hooks";
+import { useCursorPager, useDebouncedValue, useResource } from "./hooks";
 import type { DataStatus, InstrumentsPage } from "./types";
-import { SourceNotice, StatusBadge } from "./status-badge";
+import {
+  dataStateText,
+  reasonText,
+  SourceNotice,
+  StatusBadge,
+} from "./status-badge";
 import { UniverseForm, StrategyForm, SyncForm } from "./universe-form";
 export function ResearchPanel({
   client = investmentClient,
@@ -18,14 +23,22 @@ export function ResearchPanel({
   const [search, setSearch] = useState("");
   const [risk, setRisk] = useState("");
   const [potential, setPotential] = useState("");
-  const [cursor, setCursor] = useState("");
-  const query = new URLSearchParams({ search, risk, potential, cursor });
+  const pager = useCursorPager();
+  const debouncedSearch = useDebouncedValue(search, 300);
+  const query = new URLSearchParams({
+    search: debouncedSearch,
+    risk,
+    potential,
+    cursor: pager.cursor,
+  });
   const status = useResource<DataStatus>(client, "/data-status", "DataStatus");
   const rows = useResource<InstrumentsPage>(
     client,
     "/instruments?" + query,
     "InstrumentsPage",
   );
+  const refreshing = !rows.result && rows.lastOk !== null;
+  const page = rows.result?.ok ? rows.result.value : rows.lastOk;
   return (
     <div className="investment-layout">
       <nav className="investment-tabs" aria-label="投资模块">
@@ -46,7 +59,12 @@ export function ResearchPanel({
               日历: status.result.value.calendar,
             }).map(([name, v]) => (
               <span key={name}>
-                {name}：{v.state === "available" ? "可用" : v.reason || v.state}
+                {name}：
+                {v.state === "available"
+                  ? "可用"
+                  : v.reason
+                    ? reasonText(v.reason)
+                    : dataStateText(v.state)}
               </span>
             ))}
           </div>
@@ -72,7 +90,7 @@ export function ResearchPanel({
               value={search}
               onChange={(e) => {
                 setSearch(e.target.value);
-                setCursor("");
+                pager.reset();
               }}
             />
           </label>
@@ -82,7 +100,7 @@ export function ResearchPanel({
               value={risk}
               onChange={(e) => {
                 setRisk(e.target.value);
-                setCursor("");
+                pager.reset();
               }}
             >
               <option value="">全部风险</option>
@@ -98,7 +116,7 @@ export function ResearchPanel({
               value={potential}
               onChange={(e) => {
                 setPotential(e.target.value);
-                setCursor("");
+                pager.reset();
               }}
             >
               <option value="">全部潜力</option>
@@ -109,15 +127,16 @@ export function ResearchPanel({
             </select>
           </label>
         </div>
-        {!rows.result ? (
+        {!rows.result && !page ? (
           <p role="status">正在评估股票…</p>
-        ) : !rows.result.ok ? (
+        ) : rows.result && !rows.result.ok ? (
           <p role="alert">
             {failureText(rows.result.code)}{" "}
             <button onClick={rows.retry}>重试排名</button>
           </p>
         ) : (
           <>
+            {refreshing ? <p role="status">正在更新排名…</p> : null}
             <div className="investment-table-wrap">
               <table className="investment-table">
                 <caption>潜力与风险独立展示；高潜力也可能伴随高风险。</caption>
@@ -132,7 +151,7 @@ export function ResearchPanel({
                   </tr>
                 </thead>
                 <tbody>
-                  {rows.result.value.items.map((v) => (
+                  {page!.items.map((v) => (
                     <tr key={v.instrument.id}>
                       <td>{v.signal?.rank ?? "未入选"}</td>
                       <td>
@@ -162,23 +181,20 @@ export function ResearchPanel({
                 </tbody>
               </table>
             </div>
-            {rows.result.value.items.length === 0 ? (
+            {page!.items.length === 0 ? (
               <p>暂无股票。真实行情模式请先配置证券 ID 股票池，再同步数据。</p>
             ) : null}
             <div className="investment-toolbar">
-              {cursor ? (
-                <button onClick={() => setCursor("")}>返回首屏</button>
+              {pager.canPrev ? (
+                <button onClick={pager.prev}>上一页股票</button>
               ) : null}
-              {rows.result.value.nextCursor ? (
-                <button
-                  onClick={() =>
-                    setCursor(
-                      rows.result!.ok ? rows.result!.value.nextCursor : "",
-                    )
-                  }
-                >
+              {page!.nextCursor ? (
+                <button onClick={() => pager.next(page!.nextCursor)}>
                   下一页股票
                 </button>
+              ) : null}
+              {pager.canPrev ? (
+                <button onClick={pager.reset}>返回首屏</button>
               ) : null}
             </div>
           </>

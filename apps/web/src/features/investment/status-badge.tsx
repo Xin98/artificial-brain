@@ -69,3 +69,55 @@ export const reasonText = (reason: string) =>
       insufficient_universe: "共同合格候选不足，等待数据补齐",
     }) as Record<string, string>
   )[reason] ?? reason;
+
+export const runStateText = (state: string) =>
+  (
+    ({
+      queued: "已排队",
+      running: "运行中",
+      completed: "已完成",
+      failed: "已失败",
+      blocked: "已阻断",
+      insufficient_universe: "候选证券不足",
+    }) as Record<string, string>
+  )[state] ?? state;
+
+export const dataStateText = (state: string) =>
+  (
+    ({
+      available: "可用",
+      not_configured: "未配置",
+      unavailable: "暂不可用",
+      failed: "读取失败",
+      stale: "数据过旧",
+    }) as Record<string, string>
+  )[state] ?? state;
+
+export const automationEventText = (kind: string) =>
+  (
+    ({
+      enabled: "启用",
+      paused: "暂停",
+      blocked: "阻断",
+    }) as Record<string, string>
+  )[kind] ?? kind;
+
+export const ledgerKindText = (kind: string) => {
+  const known = (
+    {
+      initial_credit: "初始入金",
+      reserve_buy: "买入预留",
+      reserve_sell: "卖出预留",
+      buy_fill: "买入成交",
+      sell_fill: "卖出成交",
+      settlement: "结算交收",
+      dividend_payment: "股息入账",
+      user_cancelled: "撤单释放",
+      expired: "订单过期释放",
+      rejected: "订单拒绝释放",
+      split_cancel: "拆股撤单释放",
+      corporate_action_pre_open: "公司行动释放",
+    } as Record<string, string>
+  )[kind];
+  return known ?? reasonText(kind);
+};

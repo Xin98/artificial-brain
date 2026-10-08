@@ -6,6 +6,7 @@ import {
   type InvestmentClient,
 } from "./fetch-investment";
 import { useResource } from "./hooks";
+import { PriceChart } from "./price-chart";
 import type { AnalysisView, Metric } from "./types";
 import { reasonText, SourceNotice, StatusBadge } from "./status-badge";
 function MetricRow({ name, metric }: { name: string; metric?: Metric }) {
@@ -66,8 +67,24 @@ export function StockAnalysis({
           <StatusBadge kind="potential" value={v.recommendation.potential} />
           <StatusBadge kind="risk" value={v.risk.level} />
           <span>相对评分 {v.signal?.score.toFixed(1) ?? "证据不足"}</span>
+          {accountId ? (
+            <Link
+              href={
+                "/investment/accounts/" +
+                encodeURIComponent(accountId) +
+                "?instrument=" +
+                encodeURIComponent(instrumentId)
+              }
+            >
+              前往账户下单
+            </Link>
+          ) : null}
         </div>
       </header>
+      <section className="investment-section">
+        <h2>价格走势</h2>
+        <PriceChart series={v.prices} sourceLabel={v.datasetVersion} />
+      </section>
       <section className="investment-section">
         <h2>量化结论</h2>
         <p>

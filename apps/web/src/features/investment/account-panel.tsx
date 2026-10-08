@@ -6,8 +6,15 @@ import {
   investmentClient,
   type InvestmentClient,
 } from "./fetch-investment";
-import { useResource } from "./hooks";
-import { SourceNotice, reasonText } from "./status-badge";
+import { useCursorPager, useResource } from "./hooks";
+import { localTime } from "./format";
+import {
+  automationEventText,
+  ledgerKindText,
+  reasonText,
+  runStateText,
+  SourceNotice,
+} from "./status-badge";
 import { AccountForm } from "./account-form";
 import { AutomationForm } from "./automation-form";
 import { OrderForm, OrderRow } from "./order-form";
@@ -28,10 +35,10 @@ export function AccountDirectory({
   client?: InvestmentClient;
 }) {
   const [created, setCreated] = useState<AccountView | null>(null);
-  const [cursor, setCursor] = useState("");
+  const pager = useCursorPager();
   const { result, retry } = useResource<AccountsPage>(
     client,
-    "/accounts?cursor=" + encodeURIComponent(cursor),
+    "/accounts?cursor=" + encodeURIComponent(pager.cursor),
     "AccountsPage",
   );
   return (
@@ -101,12 +108,15 @@ export function AccountDirectory({
               <p>还没有模拟账户，可用上方表单创建。</p>
             ) : null}
             {result.value.nextCursor ? (
-              <button onClick={() => setCursor(result.value.nextCursor)}>
+              <button onClick={() => pager.next(result.value.nextCursor)}>
                 下一页账户
               </button>
             ) : null}
-            {cursor ? (
-              <button onClick={() => setCursor("")}>返回账户首屏</button>
+            {pager.canPrev ? (
+              <button onClick={pager.prev}>上一页账户</button>
+            ) : null}
+            {pager.canPrev ? (
+              <button onClick={pager.reset}>返回账户首屏</button>
             ) : null}
           </>
         )}
@@ -117,20 +127,29 @@ export function AccountDirectory({
 export function AccountPanel({
   client = investmentClient,
   accountId,
+  prefillInstrumentId = "",
 }: {
   client?: InvestmentClient;
   accountId: string;
+  prefillInstrumentId?: string;
 }) {
   return (
-    <AccountDetail key={accountId} client={client} accountId={accountId} />
+    <AccountDetail
+      key={accountId}
+      client={client}
+      accountId={accountId}
+      prefillInstrumentId={prefillInstrumentId}
+    />
   );
 }
 function AccountDetail({
   client,
   accountId,
+  prefillInstrumentId,
 }: {
   client: InvestmentClient;
   accountId: string;
+  prefillInstrumentId: string;
 }) {
   const { result, lastGood, retry } = useResource<AccountView>(
     client,
@@ -186,9 +205,11 @@ function AccountDetail({
       <section className="investment-section">
         <AutomationForm client={client} account={a} onChanged={retry} />
         <OrderForm
+          key={prefillInstrumentId || "manual"}
           client={client}
           accountId={accountId}
           account={a}
+          prefillInstrumentId={prefillInstrumentId || undefined}
           onSubmitted={retry}
         />
       </section>
@@ -220,7 +241,7 @@ function AccountDetail({
           <tr key={v.id}>
             <td>{v.sessionDate}</td>
             <td>{v.purpose === "automatic" ? "自动调仓" : "研究评估"}</td>
-            <td>{v.state}</td>
+            <td>{runStateText(v.state)}</td>
             <td>{v.orderIds.length}</td>
             <td>{reasonText(v.reason)}</td>
           </tr>
@@ -234,10 +255,18 @@ function AccountDetail({
         headers={["事件", "原因", "经济时间", "记录时间"]}
         row={(v) => (
           <tr key={v.id}>
-            <td>{v.kind}</td>
+            <td>{automationEventText(v.kind)}</td>
             <td>{reasonText(v.reason)}</td>
-            <td>{v.effectiveAt}</td>
-            <td>{v.recordedAt}</td>
+            <td>
+              <time dateTime={v.effectiveAt} title={v.effectiveAt}>
+                {localTime(v.effectiveAt)}
+              </time>
+            </td>
+            <td>
+              <time dateTime={v.recordedAt} title={v.recordedAt}>
+                {localTime(v.recordedAt)}
+              </time>
+            </td>
           </tr>
         )}
       />
@@ -286,7 +315,7 @@ function AccountDetail({
         row={(l) => (
           <tr key={l.id}>
             <td>
-              {l.kind}
+              {ledgerKindText(l.kind)}
               <small>{l.instrumentId}</small>
             </td>
             <td>{l.delta.available}</td>
@@ -294,8 +323,14 @@ function AccountDetail({
             <td>{l.delta.unsettled}</td>
             <td>{l.delta.dividends}</td>
             <td>
-              {l.effectiveAt}
-              <small>{l.recordedAt}</small>
+              <time dateTime={l.effectiveAt} title={l.effectiveAt}>
+                {localTime(l.effectiveAt)}
+              </time>
+              <small>
+                <time dateTime={l.recordedAt} title={l.recordedAt}>
+                  {localTime(l.recordedAt)}
+                </time>
+              </small>
             </td>
           </tr>
         )}
@@ -318,12 +353,12 @@ export function PagedTable<T>({
   headers: string[];
   row: (v: T) => React.ReactNode;
 }) {
-  const [cursor, setCursor] = useState("");
+  const pager = useCursorPager();
   const { result, retry } = useResource<{ items: T[]; nextCursor: string }>(
     client,
-    path + "?cursor=" + encodeURIComponent(cursor),
+    path + "?cursor=" + encodeURIComponent(pager.cursor),
     schema,
-    true,
+    !pager.canPrev,
   );
   return (
     <section className="investment-section">
@@ -352,13 +387,16 @@ export function PagedTable<T>({
           </div>
           {result.value.items.length === 0 ? <p>暂无{title}记录。</p> : null}
           <div className="investment-toolbar">
+            {pager.canPrev ? (
+              <button onClick={pager.prev}>上一页{title}</button>
+            ) : null}
             {result.value.nextCursor ? (
-              <button onClick={() => setCursor(result.value.nextCursor)}>
+              <button onClick={() => pager.next(result.value.nextCursor)}>
                 下一页{title}
               </button>
             ) : null}
-            {cursor ? (
-              <button onClick={() => setCursor("")}>返回{title}首屏</button>
+            {pager.canPrev ? (
+              <button onClick={pager.reset}>返回{title}首屏</button>
             ) : null}
           </div>
         </>

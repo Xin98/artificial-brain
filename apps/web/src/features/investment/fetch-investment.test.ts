@@ -3,7 +3,22 @@ import {
   createInvestmentClient,
   decode,
   createIntent,
+  failureText,
 } from "./fetch-investment";
+import { localTime } from "./format";
+it("translates investment error codes into actionable Chinese messages", () => {
+  expect(failureText("risk_limit_exceeded")).toContain("风控上限");
+  expect(failureText("data_stale")).not.toContain("data_stale");
+  expect(failureText("insufficient_cash")).toContain("资金不足");
+  expect(failureText("order_not_cancellable")).toContain("不能撤销");
+  expect(failureText("something_unknown")).toContain("请求未完成");
+});
+it("localTime renders instants in the browser timezone with UTC fallback", () => {
+  const rendered = localTime("2026-10-08T13:30:00Z");
+  expect(rendered).not.toBe("2026-10-08T13:30:00Z");
+  expect(rendered).toContain("10");
+  expect(localTime("not-a-date")).toBe("not-a-date");
+});
 it("does not treat 503 as expired session", async () => {
   const navigate = vi.fn();
   const fetcher = vi

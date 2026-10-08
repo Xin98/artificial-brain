@@ -7,6 +7,31 @@ import {
   type Intent,
   type Outcome,
 } from "./fetch-investment";
+
+export function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const timer = setTimeout(() => setDebounced(value), delayMs);
+    return () => clearTimeout(timer);
+  }, [value, delayMs]);
+  return debounced;
+}
+
+export function useCursorPager() {
+  const [trail, setTrail] = useState<string[]>([""]);
+  const next = useCallback(
+    (nextCursor: string) => setTrail((t) => [...t, nextCursor]),
+    [],
+  );
+  const prev = useCallback(
+    () => setTrail((t) => (t.length > 1 ? t.slice(0, -1) : t)),
+    [],
+  );
+  const reset = useCallback(() => setTrail([""]), []);
+  const cursor = trail[trail.length - 1] ?? "";
+  return { cursor, canPrev: trail.length > 1, next, prev, reset };
+}
+
 export function useResource<T>(
   client: InvestmentClient,
   path: string,
@@ -18,6 +43,7 @@ export function useResource<T>(
     key: string;
     result: Outcome<T>;
     lastGood: T | null;
+    lastOk: T | null;
   } | null>(null);
   const key = path + "|" + schema;
   const retry = useCallback(() => setRevision((x) => x + 1), []);
@@ -37,6 +63,7 @@ export function useResource<T>(
         setState((previous) => ({
           key,
           result,
+          lastOk: result.ok ? result.value : (previous?.lastOk ?? null),
           lastGood: result.ok
             ? result.value
             : [
@@ -76,6 +103,7 @@ export function useResource<T>(
   return {
     result: state?.key === key ? state.result : null,
     lastGood: state?.key === key ? state.lastGood : null,
+    lastOk: state?.lastOk ?? null,
     retry,
   };
 }

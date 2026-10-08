@@ -6,8 +6,9 @@ import {
   investmentClient,
   type InvestmentClient,
 } from "./fetch-investment";
-import { useMutation, useResource } from "./hooks";
+import { useCursorPager, useMutation, useResource } from "./hooks";
 import type { BacktestsPage, RunView } from "./types";
+import { reasonText, runStateText } from "./status-badge";
 import { VersionSelect } from "./account-form";
 import { PerformancePanel } from "./performance-panel";
 export function BacktestPanel({
@@ -23,12 +24,12 @@ export function BacktestPanel({
   const [to, setTo] = useState("2026-07-31");
   const [cash, setCash] = useState("100000.00");
   const [selected, setSelected] = useState(initialRunId);
-  const [cursor, setCursor] = useState("");
+  const pager = useCursorPager();
   const [error, setError] = useState("");
   const mutation = useMutation<RunView>(client, "RunView");
   const runs = useResource<BacktestsPage>(
     client,
-    "/backtests?cursor=" + encodeURIComponent(cursor),
+    "/backtests?cursor=" + encodeURIComponent(pager.cursor),
     "BacktestsPage",
     true,
   );
@@ -166,8 +167,10 @@ export function BacktestPanel({
                         {r.from.slice(0, 10)} 至 {r.to.slice(0, 10)}
                       </td>
                       <td>
-                        {r.status}
-                        <small>{r.reason}</small>
+                        {runStateText(r.status)}
+                        {r.reason ? (
+                          <small>{reasonText(r.reason)}</small>
+                        ) : null}
                       </td>
                       <td>{r.datasetVersion}</td>
                       <td>
@@ -184,10 +187,13 @@ export function BacktestPanel({
               <p>暂无历史回测。</p>
             ) : null}
             <div className="investment-toolbar">
+              {pager.canPrev ? (
+                <button onClick={pager.prev}>上一页回测</button>
+              ) : null}
               {runs.result.value.nextCursor ? (
                 <button
                   onClick={() =>
-                    setCursor(
+                    pager.next(
                       runs.result!.ok ? runs.result!.value.nextCursor : "",
                     )
                   }
@@ -195,8 +201,8 @@ export function BacktestPanel({
                   下一页回测
                 </button>
               ) : null}
-              {cursor ? (
-                <button onClick={() => setCursor("")}>返回回测首屏</button>
+              {pager.canPrev ? (
+                <button onClick={pager.reset}>返回回测首屏</button>
               ) : null}
             </div>
           </>

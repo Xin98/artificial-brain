@@ -2,6 +2,7 @@
 import { useState } from "react";
 import { useMutation, useResource } from "./hooks";
 import { failureText, type InvestmentClient } from "./fetch-investment";
+import { reasonText, runStateText } from "./status-badge";
 import type { RunView, EvaluationReadView } from "./types";
 export function EvaluationControl({
   client,
@@ -58,12 +59,13 @@ function EvaluationProgress({
   return (
     <p role="status">
       {result?.ok
-        ? result.value.state +
-          " · " +
-          result.value.reason +
-          " · 订单 " +
-          result.value.orderIds.length +
-          " 笔"
+        ? [
+            runStateText(result.value.state),
+            result.value.reason ? reasonText(result.value.reason) : "",
+            "订单 " + result.value.orderIds.length + " 笔",
+          ]
+            .filter(Boolean)
+            .join(" · ")
         : result && !result.ok
           ? failureText(result.code)
           : "评估已排队"}

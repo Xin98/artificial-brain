@@ -5,8 +5,13 @@ import (
 	"github.com/Xin98/artificial-brain/backend/internal/modules/investment/application/dto"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/investment/application/ports"
 	"github.com/Xin98/artificial-brain/backend/internal/modules/investment/domain"
+	"sort"
 	"time"
 )
+
+// analysisPricePoints caps the recent price series attached to an analysis
+// view; the chart shows roughly six months of daily closes.
+const analysisPricePoints = 120
 
 type AnalysisQuery struct {
 	Data        ports.ResearchData
@@ -19,7 +24,7 @@ type AnalysisQuery struct {
 }
 
 func (h AnalysisQuery) Handle(ctx context.Context, r dto.AnalysisRequest) (dto.AnalysisView, error) {
-	out := dto.AnalysisView{Topics: []domain.Topic{}, QualityFlags: []string{}}
+	out := dto.AnalysisView{Topics: []domain.Topic{}, QualityFlags: []string{}, Prices: []dto.PricePoint{}}
 	var account domain.Account
 	var e error
 	if r.AccountID != "" {
@@ -93,6 +98,14 @@ func (h AnalysisQuery) Handle(ctx context.Context, r dto.AnalysisRequest) (dto.A
 	out.Metrics, e = domain.ComputeFinancialMetrics(facts, bars, r.AsOf, actions...)
 	if e != nil {
 		out.QualityFlags = append(out.QualityFlags, e.Error())
+	}
+	ordered := append([]domain.Bar(nil), bars...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].SessionDate.Before(ordered[j].SessionDate) })
+	if len(ordered) > analysisPricePoints {
+		ordered = ordered[len(ordered)-analysisPricePoints:]
+	}
+	for _, b := range ordered {
+		out.Prices = append(out.Prices, dto.PricePoint{SessionDate: b.SessionDate, Close: b.Close})
 	}
 	out.Risk = domain.ClassifyRisk(out.Metrics.Indicators)
 	out.Risk.AsOf = r.AsOf

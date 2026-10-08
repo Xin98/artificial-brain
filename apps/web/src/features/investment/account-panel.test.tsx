@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { AccountDirectory, AccountPanel } from "./account-panel";
 import {
@@ -176,11 +176,14 @@ it("translates ledger kinds, automation event kinds and evaluation states", asyn
                   }
                 : { items: [], nextCursor: "" },
   }));
-  render(<AccountPanel client={{ request }} accountId="one" />);
+  const { rerender } = render(
+    <AccountPanel client={{ request }} accountId="one" tab="automation" />,
+  );
+  expect(await screen.findByText("启用")).toBeVisible();
+  expect(screen.getByText("已完成")).toBeVisible();
+  rerender(<AccountPanel client={{ request }} accountId="one" tab="records" />);
   expect(await screen.findByText("卖出成交")).toBeVisible();
   expect(screen.getByText("-2,100.00")).toBeVisible();
-  expect(screen.getByText("启用")).toBeVisible();
-  expect(screen.getByText("已完成")).toBeVisible();
 });
 it("paged tables walk back to the previous page", async () => {
   const request = vi.fn().mockImplementation(async (path: string) => ({
@@ -289,4 +292,63 @@ it("account directory offers per-account order links for a carried instrument", 
     "href",
     "/investment/accounts/one?instrument=fixture-01",
   );
+});
+it("renders module tabs and groups sections under account tabs", async () => {
+  const request = vi.fn().mockImplementation(async (path: string) => ({
+    ok: true,
+    value:
+      path === "/accounts/one"
+        ? accountFixture()
+        : path.endsWith("/performance")
+          ? performanceFixture()
+          : { items: [], nextCursor: "" },
+  }));
+  render(<AccountPanel client={{ request }} accountId="one" />);
+  await screen.findByRole("heading", { name: "one" });
+  const moduleNav = screen.getByRole("navigation", { name: "投资模块" });
+  expect(
+    within(moduleNav).getByRole("link", { name: "模拟账户" }),
+  ).toHaveAttribute("aria-current", "page");
+  const accountNav = screen.getByRole("navigation", { name: "账户区块" });
+  expect(
+    within(accountNav).getByRole("link", { name: "交易" }),
+  ).toHaveAttribute("aria-current", "page");
+  expect(
+    within(accountNav).getByRole("link", { name: "记录" }),
+  ).toHaveAttribute("href", "?tab=records");
+  expect(screen.getByRole("link", { name: "下单" })).toHaveAttribute(
+    "href",
+    "?tab=trade",
+  );
+  expect(screen.getByRole("heading", { name: "手动模拟订单" })).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "资金流水", hidden: true }),
+  ).not.toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "自动交易", hidden: true }),
+  ).not.toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "持仓", hidden: true }),
+  ).not.toBeVisible();
+});
+it("shows the records section when the tab param selects it", async () => {
+  const request = vi.fn().mockImplementation(async (path: string) => ({
+    ok: true,
+    value:
+      path === "/accounts/one"
+        ? accountFixture()
+        : path.endsWith("/performance")
+          ? performanceFixture()
+          : { items: [], nextCursor: "" },
+  }));
+  render(<AccountPanel client={{ request }} accountId="one" tab="records" />);
+  await screen.findByRole("heading", { name: "one" });
+  expect(screen.getByRole("heading", { name: "资金流水" })).toBeVisible();
+  expect(
+    screen.getByRole("heading", { name: "手动模拟订单", hidden: true }),
+  ).not.toBeVisible();
+  const accountNav = screen.getByRole("navigation", { name: "账户区块" });
+  expect(
+    within(accountNav).getByRole("link", { name: "记录" }),
+  ).toHaveAttribute("aria-current", "page");
 });

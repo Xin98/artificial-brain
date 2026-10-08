@@ -15,6 +15,7 @@ import {
   SourceNotice,
   StatusBadge,
 } from "./status-badge";
+import { InvestmentTabs } from "./tabs";
 import { UniverseForm, StrategyForm, SyncForm } from "./universe-form";
 export function ResearchPanel({
   client = investmentClient,
@@ -64,13 +65,7 @@ export function ResearchPanel({
     .join("&");
   return (
     <div className="investment-layout">
-      <nav className="investment-tabs" aria-label="投资模块">
-        <Link href="/investment" aria-current="page">
-          股票研究
-        </Link>
-        <Link href="/investment/accounts">模拟账户</Link>
-        <Link href="/investment/research">回测实验</Link>
-      </nav>
+      <InvestmentTabs current="research" />
       {status.result?.ok ? (
         <>
           <SourceNotice data={status.result.value} />

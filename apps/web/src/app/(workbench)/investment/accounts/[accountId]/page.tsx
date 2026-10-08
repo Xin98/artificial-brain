@@ -4,15 +4,16 @@ export default async function AccountPage({
   searchParams,
 }: {
   params: Promise<{ accountId: string }>;
-  searchParams: Promise<{ instrument?: string }>;
+  searchParams: Promise<{ instrument?: string; tab?: string }>;
 }) {
   const { accountId } = await params;
-  const { instrument } = await searchParams;
+  const { instrument, tab } = await searchParams;
   return (
     <main data-page="investment">
       <AccountPanel
         accountId={accountId}
         prefillInstrumentId={typeof instrument === "string" ? instrument : ""}
+        tab={typeof tab === "string" ? tab : ""}
       />
     </main>
   );

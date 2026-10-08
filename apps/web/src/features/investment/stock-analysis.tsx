@@ -9,6 +9,7 @@ import { useResource } from "./hooks";
 import { PriceChart } from "./price-chart";
 import type { AnalysisView, Metric } from "./types";
 import { reasonText, SourceNotice, StatusBadge } from "./status-badge";
+import { InvestmentTabs } from "./tabs";
 function MetricRow({ name, metric }: { name: string; metric?: Metric }) {
   return (
     <div>
@@ -59,6 +60,7 @@ export function StockAnalysis({
   const v = result.value;
   return (
     <div className="investment-layout">
+      <InvestmentTabs current="research" />
       <Link href={returnQuery ? "/investment?" + returnQuery : "/investment"}>
         返回股票研究
       </Link>

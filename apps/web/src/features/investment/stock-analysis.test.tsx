@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, render, screen, within } from "@testing-library/react";
 import { expect, it, vi } from "vitest";
 import { StockAnalysis } from "./stock-analysis";
 const analysis = (name: string) => ({
@@ -157,4 +157,19 @@ it("links to the account directory with the instrument when no account context e
   const link = await screen.findByRole("link", { name: "前往模拟账户下单" });
   expect(link).toHaveAttribute("href", "/investment/accounts?instrument=a");
   expect(screen.queryByRole("link", { name: "前往账户下单" })).toBeNull();
+});
+it("renders module tabs with research highlighted", async () => {
+  render(
+    <StockAnalysis
+      instrumentId="a"
+      client={{
+        request: vi.fn().mockResolvedValue({ ok: true, value: analysis("A") }),
+      }}
+    />,
+  );
+  const nav = await screen.findByRole("navigation", { name: "投资模块" });
+  expect(within(nav).getByRole("link", { name: "股票研究" })).toHaveAttribute(
+    "aria-current",
+    "page",
+  );
 });

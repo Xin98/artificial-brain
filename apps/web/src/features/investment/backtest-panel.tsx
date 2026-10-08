@@ -1,5 +1,4 @@
 "use client";
-import Link from "next/link";
 import { useState } from "react";
 import {
   failureText,
@@ -9,6 +8,7 @@ import {
 import { useCursorPager, useMutation, useResource } from "./hooks";
 import type { BacktestsPage, RunView } from "./types";
 import { reasonText, runStateText } from "./status-badge";
+import { InvestmentTabs } from "./tabs";
 import { VersionSelect } from "./account-form";
 import { PerformancePanel } from "./performance-panel";
 export function BacktestPanel({
@@ -39,13 +39,7 @@ export function BacktestPanel({
   );
   return (
     <div className="investment-layout">
-      <nav className="investment-tabs" aria-label="投资模块">
-        <Link href="/investment">股票研究</Link>
-        <Link href="/investment/accounts">模拟账户</Link>
-        <Link href="/investment/research" aria-current="page">
-          回测实验
-        </Link>
-      </nav>
+      <InvestmentTabs current="backtests" />
       <p>
         回测使用独立资金账本，不改变模拟账户。至少需要 201 日预热和 20
         个执行交易日。

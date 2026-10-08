@@ -273,3 +273,20 @@ it("account directory walks back to the previous page", async () => {
   fireEvent.click(screen.getByRole("button", { name: "上一页账户" }));
   expect(await screen.findByRole("link", { name: "one" })).toBeVisible();
 });
+it("account directory offers per-account order links for a carried instrument", async () => {
+  const request = vi.fn().mockImplementation(async (path: string) => ({
+    ok: true,
+    value: path.startsWith("/accounts?")
+      ? { items: [accountFixture("one")], nextCursor: "" }
+      : { items: [], nextCursor: "" },
+  }));
+  render(
+    <AccountDirectory client={{ request }} prefillInstrumentId="fixture-01" />,
+  );
+  expect(await screen.findByRole("link", { name: "one" })).toBeVisible();
+  const order = screen.getByRole("link", { name: "下单" });
+  expect(order).toHaveAttribute(
+    "href",
+    "/investment/accounts/one?instrument=fixture-01",
+  );
+});

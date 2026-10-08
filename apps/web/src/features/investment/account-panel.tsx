@@ -31,8 +31,10 @@ import type {
 } from "./types";
 export function AccountDirectory({
   client = investmentClient,
+  prefillInstrumentId = "",
 }: {
   client?: InvestmentClient;
+  prefillInstrumentId?: string;
 }) {
   const [created, setCreated] = useState<AccountView | null>(null);
   const pager = useCursorPager();
@@ -93,6 +95,20 @@ export function AccountDirectory({
                         <Link href={"/investment/accounts/" + a.id}>
                           {a.name || "模拟账户"}
                         </Link>
+                        {prefillInstrumentId ? (
+                          <small>
+                            <Link
+                              href={
+                                "/investment/accounts/" +
+                                a.id +
+                                "?instrument=" +
+                                encodeURIComponent(prefillInstrumentId)
+                              }
+                            >
+                              下单
+                            </Link>
+                          </small>
+                        ) : null}
                       </td>
                       <td>
                         {a.mode === "fixture" ? "演示数据" : "真实只读数据"}

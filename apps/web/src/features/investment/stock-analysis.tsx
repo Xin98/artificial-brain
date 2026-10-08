@@ -82,7 +82,16 @@ export function StockAnalysis({
             >
               前往账户下单
             </Link>
-          ) : null}
+          ) : (
+            <Link
+              href={
+                "/investment/accounts?instrument=" +
+                encodeURIComponent(instrumentId)
+              }
+            >
+              前往模拟账户下单
+            </Link>
+          )}
         </div>
       </header>
       <section className="investment-section">

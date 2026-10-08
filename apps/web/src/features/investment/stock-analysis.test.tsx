@@ -145,3 +145,16 @@ it("returns to the filtered research list when a return query exists", async () 
   const back = await screen.findByRole("link", { name: "返回股票研究" });
   expect(back).toHaveAttribute("href", "/investment?search=demo&risk=low");
 });
+it("links to the account directory with the instrument when no account context exists", async () => {
+  render(
+    <StockAnalysis
+      instrumentId="a"
+      client={{
+        request: vi.fn().mockResolvedValue({ ok: true, value: analysis("A") }),
+      }}
+    />,
+  );
+  const link = await screen.findByRole("link", { name: "前往模拟账户下单" });
+  expect(link).toHaveAttribute("href", "/investment/accounts?instrument=a");
+  expect(screen.queryByRole("link", { name: "前往账户下单" })).toBeNull();
+});
